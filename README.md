@@ -52,6 +52,9 @@ Install `yfinance` from PYPI using `pip`:
 ``` {.sourceCode .bash}
 $ pip install yfinance
 ```
+python3 -m venv venv
+source venv/bin/activate
+
 
 To install without `curl_cffi` for requests fallback, see [Advanced ▸ Installation](https://ranaroussi.github.io/yfinance/advanced/install.html).
 

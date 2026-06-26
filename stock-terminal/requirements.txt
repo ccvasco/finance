@@ -1,0 +1,6 @@
+# Stock Terminal — runtime dependencies
+# yfinance is used from the parent repo (this app lives inside it); if you run
+# the app standalone, also `pip install yfinance`.
+yfinance>=1.4.1
+openpyxl>=3.1.0   # Excel (.xlsx) export
+lxml>=4.9.0       # parses the per-ticker earnings-history table (Calendar tab)

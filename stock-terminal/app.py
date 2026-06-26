@@ -1,0 +1,1069 @@
+#!/usr/bin/env python3
+"""Stock Terminal — a self-contained stock analysis app powered by yfinance.
+
+No web frameworks: just Python's stdlib http.server for a small JSON API plus
+static file serving. Excel export uses openpyxl. All market data comes from
+yfinance.
+
+Run:
+    python app.py            # serves on http://localhost:8765
+    python app.py --port 9000
+"""
+import argparse
+import datetime as _dt
+import io
+import json
+import os
+import sys
+import threading
+import time
+from functools import lru_cache
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+# Make the in-repo yfinance importable when run from the repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import yfinance as yf  # noqa: E402
+import pandas as pd  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    _HAS_OPENPYXL = True
+except Exception:  # pragma: no cover
+    _HAS_OPENPYXL = False
+
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# --------------------------------------------------------------------------- #
+# Tiny TTL cache so we don't hammer Yahoo on every request                     #
+# --------------------------------------------------------------------------- #
+_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def cached(key, ttl, producer):
+    now = time.time()
+    with _CACHE_LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    value = producer()  # produce outside the lock (network call)
+    with _CACHE_LOCK:
+        _CACHE[key] = (now, value)
+    return value
+
+
+def clear_cache():
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Helpers                                                                      #
+# --------------------------------------------------------------------------- #
+def _num(v):
+    """Coerce to a JSON-friendly float or None."""
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        if f != f or f in (float("inf"), float("-inf")):  # NaN / inf
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+def _epoch_to_iso(v):
+    try:
+        if not v:
+            return None
+        return _dt.datetime.utcfromtimestamp(int(v)).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def get_info(ticker):
+    return cached(f"info:{ticker}", 300, lambda: yf.Ticker(ticker).info or {})
+
+
+def _get_stmt(ticker, attr):
+    def produce():
+        try:
+            return getattr(yf.Ticker(ticker), attr)
+        except Exception:
+            return None
+    return cached(f"{attr}:{ticker}", 1800, produce)
+
+
+def get_dividends(ticker):
+    def produce():
+        try:
+            return yf.Ticker(ticker).dividends
+        except Exception:
+            return None
+    return cached(f"divs:{ticker}", 1800, produce)
+
+
+def get_raw_close(ticker):
+    """Dividend-UNadjusted (but split-adjusted) close series for price-only
+    performance. period=10y so we can cover the 10Y window."""
+    def produce():
+        try:
+            df = yf.Ticker(ticker).history(period="10y", auto_adjust=False)
+        except Exception:
+            return None
+        if df is None or df.empty or "Close" not in df:
+            return None
+        return df["Close"].dropna()
+    return cached(f"rawclose:{ticker}", 1800, produce)
+
+
+def _stmt_val(df, *labels, col=0):
+    """Value of the first matching row at the `col`-th most-recent period."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    cols = sorted(df.columns, reverse=True)  # newest first
+    if col >= len(cols):
+        return None
+    c = cols[col]
+    for lab in labels:
+        if lab in df.index:
+            return _num(df.loc[lab, c])
+    return None
+
+
+def performance(ticker):
+    """Price-only return (excludes dividends) over several windows, in %."""
+    out = {"ytd": None, "1y": None, "3y": None, "5y": None, "10y": None}
+    s = get_raw_close(ticker)
+    if s is None or len(s) == 0:
+        return out
+    latest = float(s.iloc[-1])
+    last_date = s.index[-1]
+    span_years = (last_date - s.index[0]).days / 365.25
+
+    def at_or_before(ts):
+        sub = s[s.index <= ts]
+        return float(sub.iloc[-1]) if len(sub) else None
+
+    def pct(base):
+        return ((latest / base) - 1.0) * 100.0 if base else None
+
+    try:
+        jan1 = pd.Timestamp(year=last_date.year, month=1, day=1, tz=s.index.tz)
+        prev = s[s.index < jan1]
+        out["ytd"] = _num(pct(float(prev.iloc[-1]) if len(prev) else None))
+    except Exception:
+        pass
+    for label, yrs in (("1y", 1), ("3y", 3), ("5y", 5), ("10y", 10)):
+        try:
+            base = at_or_before(last_date - pd.DateOffset(years=yrs))
+            if base is None and span_years >= yrs * 0.95:
+                base = float(s.iloc[0])
+            out[label] = _num(pct(base))
+        except Exception:
+            pass
+    return out
+
+
+def consecutive_div_increases(divs):
+    """Number of consecutive completed years of rising annual dividends."""
+    if divs is None or len(divs) == 0:
+        return None
+    annual = divs.groupby(divs.index.year).sum()
+    annual = annual[annual.index < _dt.date.today().year]
+    vals = list(annual.items())  # ascending by year
+    if len(vals) < 2:
+        return None
+    count = 0
+    for i in range(len(vals) - 1, 0, -1):
+        if vals[i][1] > vals[i - 1][1] * 1.0001:
+            count += 1
+        else:
+            break
+    return count
+
+
+def screener_row(ticker):
+    """One row of comparison metrics. Missing values come back as None -> N/A."""
+    try:
+        info = get_info(ticker)
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+    if not info or info.get("regularMarketPrice") is None and info.get("currentPrice") is None and not info.get("shortName"):
+        return {"ticker": ticker, "error": "No data"}
+
+    price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
+    market_cap = _num(info.get("marketCap"))
+    total_cash = _num(info.get("totalCash"))
+    div_rate = _num(info.get("dividendRate"))            # forward annual estimate
+    div_yield = (div_rate / price * 100) if (div_rate and price) else None
+
+    # Heavier pulls (cached): statements, dividends, raw price history.
+    inc = _get_stmt(ticker, "income_stmt")
+    bal = _get_stmt(ticker, "balance_sheet")
+    cf = _get_stmt(ticker, "cash_flow")
+    divs = get_dividends(ticker)
+
+    equity = _stmt_val(bal, "Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity")
+    lt_debt = _stmt_val(bal, "Long Term Debt", "Long Term Debt And Capital Lease Obligation")
+    total_debt = _num(info.get("totalDebt")) or _stmt_val(bal, "Total Debt")
+    ebit = _stmt_val(inc, "EBIT", "Operating Income", "Operating Income Or Loss")
+    pretax = _stmt_val(inc, "Pretax Income", "Income Before Tax")
+    tax = _stmt_val(inc, "Tax Provision", "Income Tax Expense")
+    net_income = _num(info.get("netIncomeToCommon")) or _stmt_val(inc, "Net Income", "Net Income Common Stockholders")
+    fcf = _stmt_val(cf, "Free Cash Flow") or _num(info.get("freeCashflow"))
+    div_paid = _stmt_val(cf, "Cash Dividends Paid", "Common Stock Dividend Paid", "Common Stock Dividends Paid")
+
+    # Derived ratios -----------------------------------------------------
+    p_c = (market_cap / total_cash) if (market_cap and total_cash) else None
+    p_fcf = (market_cap / fcf) if (market_cap and fcf and fcf > 0) else None
+    lt_debt_eq = (lt_debt / equity * 100) if (lt_debt and equity and equity != 0) else None
+    fcf_coverage = (fcf / abs(div_paid)) if (fcf is not None and div_paid) else None
+
+    roic = None
+    if ebit and equity and total_debt is not None:
+        tax_rate = 0.21
+        if pretax and tax and pretax > 0:
+            tax_rate = min(max(tax / pretax, 0.0), 0.5)
+        invested = (total_debt or 0) + equity
+        if invested:
+            roic = ebit * (1 - tax_rate) / invested * 100
+
+    perf = performance(ticker)
+
+    return {
+        "ticker": ticker,
+        "name": info.get("shortName") or info.get("longName") or ticker,
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "currency": info.get("currency"),
+        "price": price,
+        "market_cap": market_cap,
+        # valuation
+        "pe": _num(info.get("trailingPE")),
+        "forward_pe": _num(info.get("forwardPE")),
+        "peg": _num(info.get("trailingPegRatio")) or _num(info.get("pegRatio")),
+        "pb": _num(info.get("priceToBook")),
+        "ps": _num(info.get("priceToSalesTrailing12Months")),
+        "pc": _num(p_c),
+        "p_fcf": _num(p_fcf),
+        "ev_ebitda": _num(info.get("enterpriseToEbitda")),
+        "eps": _num(info.get("trailingEps")),
+        # profitability / income
+        "income": _num(net_income),
+        "profit_margin": _num(info.get("profitMargins")),
+        "fcf": _num(fcf),
+        "roa": _num(info.get("returnOnAssets")),
+        "roe": _num(info.get("returnOnEquity")),
+        "roic": _num(roic),
+        # financial health
+        "beta": _num(info.get("beta")),
+        "debt_to_equity": _num(info.get("debtToEquity")),
+        "lt_debt_to_equity": _num(lt_debt_eq),
+        # dividend
+        "div_yield": _num(div_yield),
+        "five_year_avg_yield": _num(info.get("fiveYearAvgDividendYield")),
+        "dividend_estimate": _num(div_rate),
+        "dividend_ttm": _num(info.get("trailingAnnualDividendRate")),
+        "payout_ratio": _num(info.get("payoutRatio")),
+        "fcf_coverage": _num(fcf_coverage),
+        "years_div_increase": consecutive_div_increases(divs),
+        # performance (price only, excludes dividends), %
+        "perf_ytd": perf["ytd"],
+        "perf_1y": perf["1y"],
+        "perf_3y": perf["3y"],
+        "perf_5y": perf["5y"],
+        "perf_10y": perf["10y"],
+    }
+
+
+def dividend_growth(ticker):
+    def produce():
+        try:
+            divs = yf.Ticker(ticker).dividends
+        except Exception:
+            return {"cagr_3y": None, "cagr_5y": None, "annual": []}
+        out = {"cagr_3y": None, "cagr_5y": None, "annual": []}
+        if divs is None or len(divs) == 0:
+            return out
+        annual = divs.groupby(divs.index.year).sum()
+        cur_year = _dt.date.today().year
+        annual = annual[annual.index < cur_year]  # only completed years
+        out["annual"] = [{"year": int(y), "value": _num(v)} for y, v in annual.items()][-8:]
+
+        def cagr(n):
+            if len(annual) < n + 1:
+                return None
+            end = float(annual.iloc[-1])
+            start = float(annual.iloc[-1 - n])
+            if start <= 0 or end <= 0:
+                return None
+            return ((end / start) ** (1.0 / n) - 1.0) * 100.0
+
+        out["cagr_3y"] = _num(cagr(3))
+        out["cagr_5y"] = _num(cagr(5))
+        return out
+
+    return cached(f"divgrowth:{ticker}", 1800, produce)
+
+
+def _series_from_stmt(df, *labels):
+    """Pull the first matching row from a statement df -> oldest->newest series."""
+    if df is None or getattr(df, "empty", True):
+        return []
+    for label in labels:
+        if label in df.index:
+            row = df.loc[label]
+            cols = sorted(df.columns)  # period timestamps ascending
+            return [
+                {"period": str(getattr(c, "date", lambda: c)()), "value": _num(row[c])}
+                for c in cols
+            ]
+    return []
+
+
+def _yoy(series):
+    """Year-over-year growth (%) keyed by period, from an oldest->newest series
+    of {period, value}. A period only appears when the prior year is positive."""
+    out = {}
+    for i in range(1, len(series)):
+        prev = series[i - 1].get("value")
+        cur = series[i].get("value")
+        per = series[i].get("period")
+        if prev is not None and cur is not None and prev > 0:
+            out[per] = (cur / prev - 1.0) * 100.0
+    return out
+
+
+def altman_z(income, balance, market_cap):
+    """Altman Z-Score (public-company form). Higher = safer: >2.99 'safe',
+    1.81-2.99 'grey', <1.81 'distress'. None when inputs are unavailable.
+        Z = 1.2*WC/TA + 1.4*RE/TA + 3.3*EBIT/TA + 0.6*MktCap/TL + 1.0*Sales/TA
+    """
+    ta = _stmt_val(balance, "Total Assets")
+    ca = _stmt_val(balance, "Current Assets", "Total Current Assets")
+    cl = _stmt_val(balance, "Current Liabilities", "Total Current Liabilities")
+    tl = _stmt_val(balance, "Total Liabilities Net Minority Interest", "Total Liabilities")
+    re = _stmt_val(balance, "Retained Earnings")
+    rev = _stmt_val(income, "Total Revenue")
+    ebit = _stmt_val(income, "EBIT", "Operating Income", "Operating Income Or Loss")
+    if not ta or not tl or not market_cap or None in (ca, cl, re, rev, ebit):
+        return None
+    wc = ca - cl
+    z = (1.2 * wc / ta + 1.4 * re / ta + 3.3 * ebit / ta
+         + 0.6 * market_cap / tl + 1.0 * rev / ta)
+    return _num(z)
+
+
+def piotroski_f(income, balance, cashflow):
+    """Piotroski F-Score (0-9): higher = stronger fundamentals, scored across 9
+    profitability, leverage/liquidity and efficiency tests (1 point each).
+    Needs a prior year; None when current/prior core figures are missing."""
+    def cur(df, *l):
+        return _stmt_val(df, *l, col=0)
+
+    def prev(df, *l):
+        return _stmt_val(df, *l, col=1)
+
+    ni = cur(income, "Net Income", "Net Income Common Stockholders")
+    ni_p = prev(income, "Net Income", "Net Income Common Stockholders")
+    ta = cur(balance, "Total Assets")
+    ta_p = prev(balance, "Total Assets")
+    if None in (ni, ni_p, ta, ta_p) or not ta or not ta_p:
+        return None
+
+    cfo = cur(cashflow, "Operating Cash Flow",
+              "Cash Flow From Continuing Operating Activities",
+              "Total Cash From Operating Activities")
+    ca, ca_p = (cur(balance, "Current Assets", "Total Current Assets"),
+                prev(balance, "Current Assets", "Total Current Assets"))
+    cl, cl_p = (cur(balance, "Current Liabilities", "Total Current Liabilities"),
+                prev(balance, "Current Liabilities", "Total Current Liabilities"))
+    ltd, ltd_p = (cur(balance, "Long Term Debt", "Long Term Debt And Capital Lease Obligation"),
+                  prev(balance, "Long Term Debt", "Long Term Debt And Capital Lease Obligation"))
+    gp, gp_p = cur(income, "Gross Profit"), prev(income, "Gross Profit")
+    rev, rev_p = cur(income, "Total Revenue"), prev(income, "Total Revenue")
+    sh = cur(income, "Diluted Average Shares", "Basic Average Shares")
+    sh_p = prev(income, "Diluted Average Shares", "Basic Average Shares")
+    if sh is None:
+        sh = cur(balance, "Ordinary Shares Number", "Share Issued")
+        sh_p = prev(balance, "Ordinary Shares Number", "Share Issued")
+
+    score = 0
+    # Profitability
+    if ni > 0:
+        score += 1
+    if cfo is not None and cfo > 0:
+        score += 1
+    if (ni / ta) > (ni_p / ta_p):                       # ROA improving
+        score += 1
+    if cfo is not None and cfo > ni:                    # earnings backed by cash
+        score += 1
+    # Leverage, liquidity, dilution
+    if None not in (ltd, ltd_p) and (ltd / ta) < (ltd_p / ta_p):
+        score += 1
+    if None not in (ca, cl, ca_p, cl_p) and cl and cl_p and (ca / cl) > (ca_p / cl_p):
+        score += 1
+    if None not in (sh, sh_p) and sh <= sh_p:           # no share dilution
+        score += 1
+    # Operating efficiency
+    if None not in (gp, gp_p, rev, rev_p) and rev and rev_p and (gp / rev) > (gp_p / rev_p):
+        score += 1
+    if None not in (rev, rev_p) and (rev / ta) > (rev_p / ta_p):
+        score += 1
+    return score
+
+
+def _dividend_yields(divs, prices):
+    """{calendar_year: dividend yield %} = calendar-year dividends / year-end
+    close. Empty dict when dividends or prices are unavailable."""
+    out = {}
+    if divs is None or len(divs) == 0 or prices is None or len(prices) == 0:
+        return out
+    try:
+        ann = divs.groupby(divs.index.year).sum()
+        yc = {int(y): float(p)
+              for y, p in prices.groupby(prices.index.year).last().items()}
+    except Exception:
+        return out
+    for y, d in ann.items():
+        px = yc.get(int(y))
+        if px and d:
+            out[int(y)] = float(d) / px * 100.0
+    return out
+
+
+def share_dilution(income, balance, cashflow, ticker, info):
+    """Last-5y share-count breakdown (outstanding / float / treasury) plus the
+    dividend-yield and payout-ratio lines. Float shares are only available as a
+    current snapshot, so they populate the latest year only."""
+    shares = [s for s in _series_from_stmt(balance, "Ordinary Shares Number", "Share Issued")
+              if s["value"] is not None]
+    if not shares:
+        return []
+    treasury = {t["period"]: t["value"]
+                for t in _series_from_stmt(balance, "Treasury Shares Number")}
+    ni = {n["period"]: n["value"]
+          for n in _series_from_stmt(income, "Net Income", "Net Income Common Stockholders")}
+    dp = {d["period"]: d["value"]
+          for d in _series_from_stmt(cashflow, "Cash Dividends Paid",
+                                     "Common Stock Dividend Paid", "Common Stock Dividends Paid")}
+    yields = _dividend_yields(get_dividends(ticker), get_raw_close(ticker))
+    float_shares = _num(info.get("floatShares"))
+
+    sel = shares[-5:]
+    last_period = sel[-1]["period"] if sel else None
+    rows = []
+    for s in sel:
+        p = s["period"]
+        yr = int(p[:4]) if p[:4].isdigit() else None
+        net, paid = ni.get(p), dp.get(p)
+        payout = (abs(paid) / net * 100) if (paid and net and net > 0) else None
+        rows.append({
+            "period": p[:4],
+            "shares_outstanding": _num(s["value"]),
+            "float_shares": float_shares if p == last_period else None,
+            "treasury_shares": _num(treasury.get(p)),
+            "div_yield": _num(yields.get(yr)) if yr is not None else None,
+            "payout_ratio": _num(payout),
+        })
+    return rows
+
+
+def deepdive(ticker):
+    def produce():
+        tk = yf.Ticker(ticker)
+        info = get_info(ticker)
+        try:
+            income = tk.income_stmt
+        except Exception:
+            income = None
+        try:
+            cashflow = tk.cash_flow
+        except Exception:
+            cashflow = None
+        try:
+            balance = tk.balance_sheet
+        except Exception:
+            balance = None
+
+        price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
+        div_rate = _num(info.get("dividendRate"))
+        div_yield = (div_rate / price * 100) if (div_rate and price) else None
+        growth = dividend_growth(ticker)
+
+        revenue = _series_from_stmt(income, "Total Revenue", "TotalRevenue")
+        gross = _series_from_stmt(income, "Gross Profit", "GrossProfit")
+        op_income = _series_from_stmt(income, "Operating Income", "Operating Income Or Loss",
+                                      "Total Operating Income As Reported", "OperatingIncome")
+        net_income = _series_from_stmt(income, "Net Income", "NetIncome",
+                                       "Net Income Common Stockholders")
+        fcf = _series_from_stmt(cashflow, "Free Cash Flow", "FreeCashFlow")
+        # align all series on the income-statement periods
+        periods = ([r["period"] for r in revenue]
+                   or [n["period"] for n in net_income]
+                   or [g["period"] for g in gross])
+        rev_map = {r["period"]: r["value"] for r in revenue}
+        gp_map = {g["period"]: g["value"] for g in gross}
+        oi_map = {o["period"]: o["value"] for o in op_income}
+        ni_map = {n["period"]: n["value"] for n in net_income}
+        fcf_map = {f["period"]: f["value"] for f in fcf}
+
+        def _margin(num, den):
+            return (num / den * 100) if (num is not None and den) else None
+
+        rev_ni = [
+            {"period": p[:4], "revenue": rev_map.get(p), "gross_profit": gp_map.get(p),
+             "operating_income": oi_map.get(p),
+             "net_income": ni_map.get(p), "fcf": fcf_map.get(p),
+             "gross_margin": _margin(gp_map.get(p), rev_map.get(p)),
+             "operating_margin": _margin(oi_map.get(p), rev_map.get(p)),
+             "net_margin": _margin(ni_map.get(p), rev_map.get(p))}
+            for p in periods[-5:]   # 5-year scope
+        ]
+
+        # FCF dividend coverage = free cash flow / dividends paid (latest year)
+        fcf_latest = _stmt_val(cashflow, "Free Cash Flow") or _num(info.get("freeCashflow"))
+        div_paid = _stmt_val(cashflow, "Cash Dividends Paid", "Common Stock Dividend Paid",
+                             "Common Stock Dividends Paid")
+        fcf_coverage = (fcf_latest / abs(div_paid)) if (fcf_latest is not None and div_paid) else None
+        total_equity = _stmt_val(balance, "Stockholders Equity", "Total Stockholder Equity",
+                                 "Common Stock Equity")
+
+        # Profitability ratios that need statement figures ------------------
+        ebit_latest = _stmt_val(income, "EBIT", "Operating Income", "Operating Income Or Loss")
+        pretax = _stmt_val(income, "Pretax Income", "Income Before Tax")
+        tax = _stmt_val(income, "Tax Provision", "Income Tax Expense")
+        total_debt = _num(info.get("totalDebt")) or _stmt_val(balance, "Total Debt")
+        total_assets = _stmt_val(balance, "Total Assets")
+        current_liab = _stmt_val(balance, "Current Liabilities", "Total Current Liabilities")
+
+        roic = None  # NOPAT / (debt + equity)
+        if ebit_latest and total_equity and total_debt is not None:
+            tax_rate = 0.21
+            if pretax and tax and pretax > 0:
+                tax_rate = min(max(tax / pretax, 0.0), 0.5)
+            invested = (total_debt or 0) + total_equity
+            if invested:
+                roic = ebit_latest * (1 - tax_rate) / invested * 100
+
+        roce = None  # EBIT / (total assets - current liabilities)
+        if ebit_latest and total_assets and current_liab is not None:
+            capital_employed = total_assets - current_liab
+            if capital_employed:
+                roce = ebit_latest / capital_employed * 100
+
+        ebitda_margin = _num(info.get("ebitdaMargins") and info["ebitdaMargins"] * 100)
+
+        # Year-over-year growth per period (bars for the last 5 years) --------
+        eps_series = _series_from_stmt(income, "Diluted EPS", "Basic EPS")
+        ebitda_series = _series_from_stmt(income, "EBITDA", "Normalized EBITDA")
+        rev_g = _yoy(revenue)
+        eps_g = _yoy(eps_series)
+        ebitda_g = _yoy(ebitda_series)
+        growth_periods = sorted(set(rev_g) | set(eps_g) | set(ebitda_g))
+        growth_rows = [
+            {"period": p[:4],
+             "revenue_growth": _num(rev_g.get(p)),
+             "eps_growth": _num(eps_g.get(p)),
+             "ebitda_growth": _num(ebitda_g.get(p))}
+            for p in growth_periods[-5:]
+        ]
+
+        dilution_rows = share_dilution(income, balance, cashflow, ticker, info)
+
+        return {
+            "ticker": ticker,
+            "name": info.get("shortName") or info.get("longName") or ticker,
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "currency": info.get("currency"),
+            "exchange": info.get("fullExchangeName") or info.get("exchange"),
+            "summary": info.get("longBusinessSummary"),
+            "website": info.get("website"),
+            "price": price,
+            "change_pct": _num(info.get("regularMarketChangePercent")),
+            "panels": {
+                "valuation": {
+                    "Market Cap": _num(info.get("marketCap")),
+                    "Enterprise Value": _num(info.get("enterpriseValue")),
+                    "Trailing P/E": _num(info.get("trailingPE")),
+                    "Forward P/E": _num(info.get("forwardPE")),
+                    "PEG Ratio": _num(info.get("trailingPegRatio")) or _num(info.get("pegRatio")),
+                    "Price/Book": _num(info.get("priceToBook")),
+                    "Price/Sales": _num(info.get("priceToSalesTrailing12Months")),
+                    "EV/EBITDA": _num(info.get("enterpriseToEbitda")),
+                },
+                "dividend": {
+                    "Dividend Rate": _num(div_rate),
+                    "Dividend Yield %": _num(div_yield),
+                    "Payout Ratio %": _num(info.get("payoutRatio") and info["payoutRatio"] * 100),
+                    "FCF Coverage": _num(fcf_coverage),
+                    "Ex-Dividend Date": _epoch_to_iso(info.get("exDividendDate")),
+                    "5Y Avg Yield %": _num(info.get("fiveYearAvgDividendYield")),
+                    "Div Growth 3Y %": growth["cagr_3y"],
+                    "Div Growth 5Y %": growth["cagr_5y"],
+                },
+                "profitability": {
+                    "Gross Margin %": _num(info.get("grossMargins") and info["grossMargins"] * 100),
+                    "Operating Margin %": _num(info.get("operatingMargins") and info["operatingMargins"] * 100),
+                    "EBITDA Margin %": ebitda_margin,
+                    "Profit Margin %": _num(info.get("profitMargins") and info["profitMargins"] * 100),
+                    "ROE %": _num(info.get("returnOnEquity") and info["returnOnEquity"] * 100),
+                    "ROA %": _num(info.get("returnOnAssets") and info["returnOnAssets"] * 100),
+                    "ROIC %": _num(roic),
+                    "ROCE %": _num(roce),
+                    "Revenue/Share": _num(info.get("revenuePerShare")),
+                },
+                "health": {
+                    "Total Cash": _num(info.get("totalCash")),
+                    "Total Debt": _num(info.get("totalDebt")),
+                    "Total Equity": _num(total_equity),
+                    "Debt/Equity": _num(info.get("debtToEquity")),
+                    "Current Ratio": _num(info.get("currentRatio")),
+                    "Quick Ratio": _num(info.get("quickRatio")),
+                    "Free Cash Flow": _num(fcf_latest),
+                },
+                "risk": {
+                    "Beta": _num(info.get("beta")),
+                    "Short Interest %": _num(info.get("shortPercentOfFloat")
+                                             and info["shortPercentOfFloat"] * 100),
+                    "Days to Cover": _num(info.get("shortRatio")),
+                    "Altman Z-Score": altman_z(income, balance, _num(info.get("marketCap"))),
+                    "Piotroski F-Score": piotroski_f(income, balance, cashflow),
+                },
+            },
+            "dividend_growth": growth,
+            "revenue_net_income": rev_ni,
+            "growth": growth_rows,
+            "share_dilution": dilution_rows,
+        }
+
+    return cached(f"deepdive:{ticker}", 600, produce)
+
+
+def history(ticker, rng="1y"):
+    def produce():
+        try:
+            df = yf.Ticker(ticker).history(period=rng, auto_adjust=True)
+        except Exception:
+            return {"ticker": ticker, "points": []}
+        if df is None or df.empty:
+            return {"ticker": ticker, "points": []}
+        pts = [
+            {"date": idx.strftime("%Y-%m-%d"), "close": _num(row["Close"]),
+             "volume": _num(row.get("Volume"))}
+            for idx, row in df.iterrows()
+        ]
+        return {"ticker": ticker, "range": rng, "points": pts}
+
+    return cached(f"hist:{ticker}:{rng}", 600, produce)
+
+
+_STMT_ATTR = {
+    "income": ("income_stmt", "quarterly_income_stmt"),
+    "balance": ("balance_sheet", "quarterly_balance_sheet"),
+    "cashflow": ("cash_flow", "quarterly_cash_flow"),
+}
+
+
+def financials(ticker, stmt="income", freq="annual"):
+    def produce():
+        attr_annual, attr_quarter = _STMT_ATTR.get(stmt, _STMT_ATTR["income"])
+        attr = attr_annual if freq == "annual" else attr_quarter
+        try:
+            df = getattr(yf.Ticker(ticker), attr)
+        except Exception as e:
+            return {"ticker": ticker, "stmt": stmt, "freq": freq, "periods": [],
+                    "rows": [], "error": str(e)}
+        if df is None or df.empty:
+            return {"ticker": ticker, "stmt": stmt, "freq": freq, "periods": [], "rows": []}
+        cols = sorted(df.columns, reverse=True)  # newest first
+        periods = [str(getattr(c, "date", lambda: c)()) for c in cols]
+        rows = []
+        for label in df.index:
+            rows.append({
+                "label": str(label),
+                "values": [_num(df.loc[label, c]) for c in cols],
+            })
+        return {"ticker": ticker, "stmt": stmt, "freq": freq,
+                "periods": periods, "rows": rows}
+
+    return cached(f"fin:{ticker}:{stmt}:{freq}", 1800, produce)
+
+
+# --------------------------------------------------------------------------- #
+# Calendars — earnings & stock splits                                          #
+# --------------------------------------------------------------------------- #
+def _ts_to_iso(ts):
+    """pandas Timestamp / datetime -> 'YYYY-MM-DD' (None when missing/NaT)."""
+    try:
+        if ts is None or pd.isna(ts):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return pd.Timestamp(ts).strftime("%Y-%m-%d")
+    except Exception:
+        try:
+            return ts.isoformat()
+        except Exception:
+            return None
+
+
+def market_calendar(start=None, end=None, limit=80):
+    """Market-wide upcoming earnings + stock splits over a date window."""
+    def produce():
+        out = {"start": start, "end": end, "earnings": [], "splits": []}
+        try:
+            cals = yf.Calendars(start=start or None, end=end or None)
+        except Exception as e:
+            out["error"] = str(e)
+            return out
+
+        try:
+            edf = cals.get_earnings_calendar(limit=limit)
+            if edf is not None and not edf.empty:
+                for sym, row in edf.iterrows():
+                    out["earnings"].append({
+                        "ticker": str(sym),
+                        "name": row.get("Company"),
+                        "market_cap": _num(row.get("Marketcap")),
+                        "event": row.get("Event Name"),
+                        "date": _ts_to_iso(row.get("Event Start Date")),
+                        "timing": row.get("Timing"),
+                        "eps_estimate": _num(row.get("EPS Estimate")),
+                        "eps_actual": _num(row.get("Reported EPS")),
+                        "surprise_pct": _num(row.get("Surprise(%)")),
+                    })
+        except Exception as e:
+            out["earnings_error"] = str(e)
+
+        try:
+            sdf = cals.get_splits_calendar(limit=limit)
+            if sdf is not None and not sdf.empty:
+                for sym, row in sdf.iterrows():
+                    out["splits"].append({
+                        "ticker": str(sym),
+                        "name": row.get("Company"),
+                        "date": _ts_to_iso(row.get("Payable On")),
+                        "old_share_worth": _num(row.get("Old Share Worth")),
+                        "share_worth": _num(row.get("Share Worth")),
+                        "optionable": bool(row.get("Optionable")),
+                    })
+        except Exception as e:
+            out["splits_error"] = str(e)
+
+        return out
+
+    return cached(f"mktcal:{start}:{end}:{limit}", 900, produce)
+
+
+def stock_calendar(ticker):
+    """Per-ticker calendar: next earnings + estimates, ex-dividend / dividend
+    dates, past earnings (with surprises) and the full stock-split history."""
+    def produce():
+        tk = yf.Ticker(ticker)
+        out = {
+            "ticker": ticker,
+            "upcoming": {},
+            "earnings_history": [],
+            "splits": [],
+        }
+
+        try:
+            cal = tk.calendar or {}
+        except Exception:
+            cal = {}
+        ed = cal.get("Earnings Date") or []
+        out["upcoming"] = {
+            "earnings_dates": [_ts_to_iso(d) for d in ed if d is not None],
+            "eps_low": _num(cal.get("Earnings Low")),
+            "eps_high": _num(cal.get("Earnings High")),
+            "eps_avg": _num(cal.get("Earnings Average")),
+            "revenue_low": _num(cal.get("Revenue Low")),
+            "revenue_high": _num(cal.get("Revenue High")),
+            "revenue_avg": _num(cal.get("Revenue Average")),
+            "ex_dividend_date": _ts_to_iso(cal.get("Ex-Dividend Date")),
+            "dividend_date": _ts_to_iso(cal.get("Dividend Date")),
+        }
+
+        # Past earnings with estimate/actual/surprise (needs lxml; degrade ok).
+        try:
+            df = tk.get_earnings_dates(limit=12)
+            if df is not None and not df.empty:
+                for idx, row in df.iterrows():
+                    out["earnings_history"].append({
+                        "date": _ts_to_iso(idx),
+                        "eps_estimate": _num(row.get("EPS Estimate")),
+                        "eps_actual": _num(row.get("Reported EPS")),
+                        "surprise_pct": _num(row.get("Surprise(%)")),
+                    })
+        except Exception as e:
+            out["earnings_history_error"] = str(e)
+
+        # Stock-split history (newest first).
+        try:
+            sp = tk.splits
+            if sp is not None and len(sp):
+                rows = [{"date": _ts_to_iso(idx), "ratio": _num(r)}
+                        for idx, r in sp.items()]
+                out["splits"] = list(reversed(rows))
+        except Exception as e:
+            out["splits_error"] = str(e)
+
+        return out
+
+    return cached(f"stockcal:{ticker}", 600, produce)
+
+
+# --------------------------------------------------------------------------- #
+# Excel export                                                                 #
+# --------------------------------------------------------------------------- #
+_METRIC_COLS = [
+    ("ticker", "Ticker"), ("name", "Name"), ("sector", "Sector"),
+    ("industry", "Industry"), ("price", "Price"), ("market_cap", "Market Cap"),
+    ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
+    ("pb", "P/B"), ("ps", "P/S"), ("pc", "P/C"), ("p_fcf", "P/FCF"),
+    ("ev_ebitda", "EV/EBITDA"), ("eps", "EPS"),
+    ("income", "Income"), ("profit_margin", "Profit Margin"), ("fcf", "FCF"),
+    ("roa", "ROA"), ("roe", "ROE"), ("roic", "ROIC %"),
+    ("beta", "Beta"), ("debt_to_equity", "Debt/Eq"), ("lt_debt_to_equity", "LT Debt/Eq %"),
+    ("div_yield", "Yield %"), ("five_year_avg_yield", "5Y Avg Yield %"),
+    ("dividend_estimate", "Div Estimate"), ("dividend_ttm", "Div TTM"),
+    ("payout_ratio", "Payout Ratio"), ("fcf_coverage", "FCF Coverage"),
+    ("years_div_increase", "Yrs Div Increase"),
+    ("perf_ytd", "Perf YTD %"), ("perf_1y", "Perf 1Y %"),
+    ("perf_3y", "Perf 3Y %"), ("perf_5y", "Perf 5Y %"), ("perf_10y", "Perf 10Y %"),
+]
+
+
+def build_workbook(tickers):
+    wb = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2933")
+
+    def style_header(ws, ncols):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=1, column=c)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="left")
+
+    # Sheet 1: Metrics
+    ws = wb.active
+    ws.title = "Metrics"
+    ws.append([label for _, label in _METRIC_COLS])
+    for tk in tickers:
+        row = screener_row(tk)
+        ws.append([row.get(key) for key, _ in _METRIC_COLS])
+    style_header(ws, len(_METRIC_COLS))
+    ws.freeze_panes = "A2"
+
+    # Sheet 2: Price History (aligned by date across tickers)
+    ws2 = wb.create_sheet("Price History")
+    series = {tk: {p["date"]: p["close"] for p in history(tk, "1y")["points"]}
+              for tk in tickers}
+    all_dates = sorted({d for s in series.values() for d in s})
+    ws2.append(["Date"] + list(tickers))
+    for d in all_dates:
+        ws2.append([d] + [series[tk].get(d) for tk in tickers])
+    style_header(ws2, len(tickers) + 1)
+    ws2.freeze_panes = "B2"
+
+    # Sheet 3: Financials (income statement, annual, stacked per ticker)
+    ws3 = wb.create_sheet("Financials")
+    bold = Font(bold=True)
+    r = 1
+    for tk in tickers:
+        fin = financials(tk, "income", "annual")
+        cell = ws3.cell(row=r, column=1, value=f"{tk} — Income Statement (Annual)")
+        cell.font = bold
+        r += 1
+        ws3.cell(row=r, column=1, value="Line Item").font = header_font
+        ws3.cell(row=r, column=1).fill = header_fill
+        for j, p in enumerate(fin["periods"]):
+            c = ws3.cell(row=r, column=2 + j, value=p)
+            c.font = header_font
+            c.fill = header_fill
+        r += 1
+        for row in fin["rows"]:
+            ws3.cell(row=r, column=1, value=row["label"])
+            for j, v in enumerate(row["values"]):
+                ws3.cell(row=r, column=2 + j, value=v)
+            r += 1
+        r += 2  # gap between tickers
+
+    for sheet in wb.worksheets:
+        sheet.column_dimensions["A"].width = 34
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# HTTP handler                                                                 #
+# --------------------------------------------------------------------------- #
+def _parse_tickers(qs):
+    raw = (qs.get("tickers", [""])[0] or qs.get("ticker", [""])[0] or "")
+    out, seen = [], set()
+    for t in raw.replace(" ", ",").split(","):
+        t = t.strip().upper()
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "StockTerminal/1.0"
+
+    def log_message(self, fmt, *args):  # quieter logs
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    # -- helpers ----------------------------------------------------------- #
+    def _send_json(self, obj, status=200):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_bytes(self, data, content_type, filename=None, status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        if filename:
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_static(self, path):
+        if path in ("/", ""):
+            path = "/index.html"
+        rel = path.lstrip("/")
+        full = os.path.normpath(os.path.join(STATIC_DIR, rel))
+        if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
+            self.send_error(404, "Not found")
+            return
+        ctype = {
+            ".html": "text/html", ".js": "application/javascript",
+            ".css": "text/css", ".svg": "image/svg+xml",
+            ".json": "application/json", ".ico": "image/x-icon",
+        }.get(os.path.splitext(full)[1], "application/octet-stream")
+        with open(full, "rb") as f:
+            data = f.read()
+        self._send_bytes(data, ctype + ("; charset=utf-8" if ctype.startswith("text") or ctype.endswith("javascript") else ""))
+
+    # -- routing ----------------------------------------------------------- #
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
+        try:
+            if path == "/api/health":
+                return self._send_json({"ok": True})
+            if path == "/api/screener":
+                tickers = _parse_tickers(qs)
+                if not tickers:
+                    return self._send_json({"rows": []})
+                with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as ex:
+                    rows = list(ex.map(screener_row, tickers))
+                return self._send_json({"rows": rows})
+            if path == "/api/deepdive":
+                t = _parse_tickers(qs)
+                if not t:
+                    return self._send_json({"error": "ticker required"}, 400)
+                return self._send_json(deepdive(t[0]))
+            if path == "/api/history":
+                t = _parse_tickers(qs)
+                rng = qs.get("range", ["1y"])[0]
+                if not t:
+                    return self._send_json({"error": "ticker required"}, 400)
+                return self._send_json(history(t[0], rng))
+            if path == "/api/financials":
+                t = _parse_tickers(qs)
+                stmt = qs.get("stmt", ["income"])[0]
+                freq = qs.get("freq", ["annual"])[0]
+                if not t:
+                    return self._send_json({"error": "ticker required"}, 400)
+                return self._send_json(financials(t[0], stmt, freq))
+            if path == "/api/calendar":
+                start = qs.get("start", [None])[0] or None
+                end = qs.get("end", [None])[0] or None
+                try:
+                    limit = max(1, min(int(qs.get("limit", ["80"])[0]), 100))
+                except ValueError:
+                    limit = 80
+                return self._send_json(market_calendar(start, end, limit))
+            if path == "/api/stock_calendar":
+                t = _parse_tickers(qs)
+                if not t:
+                    return self._send_json({"error": "ticker required"}, 400)
+                return self._send_json(stock_calendar(t[0]))
+            return self._serve_static(path)
+        except BrokenPipeError:
+            pass
+        except Exception as e:  # never crash the server on one bad request
+            self._send_json({"error": str(e)}, 500)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            payload = {}
+        try:
+            if path == "/api/export":
+                if not _HAS_OPENPYXL:
+                    return self._send_json(
+                        {"error": "openpyxl not installed. Run: pip install openpyxl"}, 500)
+                tickers = [t.strip().upper() for t in payload.get("tickers", []) if t.strip()]
+                if not tickers:
+                    return self._send_json({"error": "no tickers"}, 400)
+                data = build_workbook(tickers)
+                stamp = _dt.date.today().strftime("%Y%m%d")
+                return self._send_bytes(
+                    data,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    filename=f"stock-terminal-{stamp}.xlsx")
+            if path == "/api/cache/clear":
+                clear_cache()
+                return self._send_json({"ok": True})
+            return self._send_json({"error": "unknown endpoint"}, 404)
+        except BrokenPipeError:
+            pass
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Stock Terminal server")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--host", default="127.0.0.1")
+    args = ap.parse_args()
+    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    url = f"http://{args.host}:{args.port}"
+    print(f"\n  📈  Stock Terminal running at  {url}")
+    print(f"      openpyxl export: {'enabled' if _HAS_OPENPYXL else 'DISABLED (pip install openpyxl)'}")
+    print("      Press Ctrl+C to stop.\n")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n  Bye.")
+        httpd.shutdown()
+
+
+if __name__ == "__main__":
+    main()
