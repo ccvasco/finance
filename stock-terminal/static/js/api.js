@@ -5,6 +5,23 @@ const API = (() => {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     return r.json();
   }
+  // POST a JSON body to `path`, then save the returned spreadsheet as `filename`.
+  async function downloadXlsx(path, body, filename) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Export failed");
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
   return {
     health: () => get("/api/health"),
     screener: (tickers) => get(`/api/screener?tickers=${encodeURIComponent(tickers.join(","))}`),
@@ -22,21 +39,12 @@ const API = (() => {
     },
     stockCalendar: (t) => get(`/api/stock_calendar?ticker=${encodeURIComponent(t)}`),
     async exportXlsx(tickers) {
-      const r = await fetch("/api/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tickers }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Export failed");
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `stock-terminal-${new Date().toISOString().slice(0, 10)}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadXlsx("/api/export", { tickers },
+        `stock-terminal-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    },
+    async exportDeepdive(ticker) {
+      await downloadXlsx("/api/export_deepdive", { ticker },
+        `${ticker}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
     clearCache: () => fetch("/api/cache/clear", { method: "POST" }),
   };

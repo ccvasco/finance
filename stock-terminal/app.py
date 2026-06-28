@@ -212,6 +212,8 @@ def screener_row(ticker):
     equity = _stmt_val(bal, "Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity")
     lt_debt = _stmt_val(bal, "Long Term Debt", "Long Term Debt And Capital Lease Obligation")
     total_debt = _num(info.get("totalDebt")) or _stmt_val(bal, "Total Debt")
+    total_assets = _stmt_val(bal, "Total Assets")
+    current_liab = _stmt_val(bal, "Current Liabilities", "Total Current Liabilities")
     ebit = _stmt_val(inc, "EBIT", "Operating Income", "Operating Income Or Loss")
     pretax = _stmt_val(inc, "Pretax Income", "Income Before Tax")
     tax = _stmt_val(inc, "Tax Provision", "Income Tax Expense")
@@ -222,6 +224,10 @@ def screener_row(ticker):
     # Derived ratios -----------------------------------------------------
     p_c = (market_cap / total_cash) if (market_cap and total_cash) else None
     p_fcf = (market_cap / fcf) if (market_cap and fcf and fcf > 0) else None
+    # Debt/Equity computed from the same Total Debt and Total Equity shown in the
+    # row, so the three figures reconcile. Yahoo's own debtToEquity (most-recent
+    # quarter) is surfaced separately as debt_to_equity_mrq.
+    debt_eq = (total_debt / equity * 100) if (total_debt and equity and equity != 0) else None
     lt_debt_eq = (lt_debt / equity * 100) if (lt_debt and equity and equity != 0) else None
     fcf_coverage = (fcf / abs(div_paid)) if (fcf is not None and div_paid) else None
 
@@ -234,6 +240,13 @@ def screener_row(ticker):
         if invested:
             roic = ebit * (1 - tax_rate) / invested * 100
 
+    roce = None  # EBIT / (total assets - current liabilities)
+    if ebit and total_assets and current_liab is not None:
+        capital_employed = total_assets - current_liab
+        if capital_employed:
+            roce = ebit / capital_employed * 100
+
+    dg = dividend_growth(ticker)
     perf = performance(ticker)
 
     return {
@@ -244,6 +257,7 @@ def screener_row(ticker):
         "currency": info.get("currency"),
         "price": price,
         "market_cap": market_cap,
+        "enterprise_value": _num(info.get("enterpriseValue")),
         # valuation
         "pe": _num(info.get("trailingPE")),
         "forward_pe": _num(info.get("forwardPE")),
@@ -257,22 +271,41 @@ def screener_row(ticker):
         # profitability / income
         "income": _num(net_income),
         "profit_margin": _num(info.get("profitMargins")),
+        "gross_margin": _num(info.get("grossMargins")),
+        "operating_margin": _num(info.get("operatingMargins")),
+        "ebitda_margin": _num(info.get("ebitdaMargins")),
         "fcf": _num(fcf),
         "roa": _num(info.get("returnOnAssets")),
         "roe": _num(info.get("returnOnEquity")),
         "roic": _num(roic),
+        "roce": _num(roce),
+        "revenue_per_share": _num(info.get("revenuePerShare")),
         # financial health
-        "beta": _num(info.get("beta")),
-        "debt_to_equity": _num(info.get("debtToEquity")),
+        "debt_to_equity": _num(debt_eq),
+        "debt_to_equity_mrq": _num(info.get("debtToEquity")),
         "lt_debt_to_equity": _num(lt_debt_eq),
+        "current_ratio": _num(info.get("currentRatio")),
+        "quick_ratio": _num(info.get("quickRatio")),
+        "total_cash": _num(total_cash),
+        "total_debt": _num(total_debt),
+        "total_equity": _num(equity),
         # dividend
         "div_yield": _num(div_yield),
         "five_year_avg_yield": _num(info.get("fiveYearAvgDividendYield")),
+        "payout_ratio": _num(info.get("payoutRatio")),
+        "div_growth_3y": dg.get("cagr_3y"),
+        "div_growth_5y": dg.get("cagr_5y"),
         "dividend_estimate": _num(div_rate),
         "dividend_ttm": _num(info.get("trailingAnnualDividendRate")),
-        "payout_ratio": _num(info.get("payoutRatio")),
         "fcf_coverage": _num(fcf_coverage),
         "years_div_increase": consecutive_div_increases(divs),
+        "ex_dividend_date": _epoch_to_iso(info.get("exDividendDate")),
+        # risk
+        "beta": _num(info.get("beta")),
+        "short_interest": _num(info.get("shortPercentOfFloat")),
+        "days_to_cover": _num(info.get("shortRatio")),
+        "altman_z": altman_z(inc, bal, market_cap),
+        "piotroski_f": piotroski_f(inc, bal, cf),
         # performance (price only, excludes dividends), %
         "perf_ytd": perf["ytd"],
         "perf_1y": perf["1y"],
@@ -558,6 +591,12 @@ def deepdive(ticker):
             if capital_employed:
                 roce = ebit_latest / capital_employed * 100
 
+        # Debt/Equity from the same Total Debt and Total Equity shown in the
+        # panel, so the three figures reconcile. Yahoo's debtToEquity (computed
+        # from the most-recent quarter) is shown alongside as "Debt/Equity (MRQ)".
+        debt_eq = (total_debt / total_equity * 100) \
+            if (total_debt and total_equity) else None
+
         ebitda_margin = _num(info.get("ebitdaMargins") and info["ebitdaMargins"] * 100)
 
         # Year-over-year growth per period (bars for the last 5 years) --------
@@ -624,7 +663,8 @@ def deepdive(ticker):
                     "Total Cash": _num(info.get("totalCash")),
                     "Total Debt": _num(info.get("totalDebt")),
                     "Total Equity": _num(total_equity),
-                    "Debt/Equity": _num(info.get("debtToEquity")),
+                    "Debt/Equity": _num(debt_eq),
+                    "Debt/Equity (MRQ)": _num(info.get("debtToEquity")),
                     "Current Ratio": _num(info.get("currentRatio")),
                     "Quick Ratio": _num(info.get("quickRatio")),
                     "Free Cash Flow": _num(fcf_latest),
@@ -828,19 +868,54 @@ def stock_calendar(ticker):
 _METRIC_COLS = [
     ("ticker", "Ticker"), ("name", "Name"), ("sector", "Sector"),
     ("industry", "Industry"), ("price", "Price"), ("market_cap", "Market Cap"),
+    ("enterprise_value", "Enterprise Value"),
+    # valuation
     ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
-    ("pb", "P/B"), ("ps", "P/S"), ("pc", "P/C"), ("p_fcf", "P/FCF"),
-    ("ev_ebitda", "EV/EBITDA"), ("eps", "EPS"),
-    ("income", "Income"), ("profit_margin", "Profit Margin"), ("fcf", "FCF"),
-    ("roa", "ROA"), ("roe", "ROE"), ("roic", "ROIC %"),
-    ("beta", "Beta"), ("debt_to_equity", "Debt/Eq"), ("lt_debt_to_equity", "LT Debt/Eq %"),
-    ("div_yield", "Yield %"), ("five_year_avg_yield", "5Y Avg Yield %"),
-    ("dividend_estimate", "Div Estimate"), ("dividend_ttm", "Div TTM"),
-    ("payout_ratio", "Payout Ratio"), ("fcf_coverage", "FCF Coverage"),
-    ("years_div_increase", "Yrs Div Increase"),
-    ("perf_ytd", "Perf YTD %"), ("perf_1y", "Perf 1Y %"),
-    ("perf_3y", "Perf 3Y %"), ("perf_5y", "Perf 5Y %"), ("perf_10y", "Perf 10Y %"),
+    ("ps", "P/S"), ("pb", "P/B"), ("ev_ebitda", "EV/EBITDA"),
+    ("p_fcf", "P/FCF"), ("pc", "P/C"), ("eps", "EPS"),
+    # profitability
+    ("profit_margin", "Net Margin"), ("gross_margin", "Gross Margin"),
+    ("operating_margin", "Operating Margin"), ("ebitda_margin", "EBITDA Margin"),
+    ("roe", "ROE"), ("roa", "ROA"), ("roic", "ROIC"), ("roce", "ROCE"),
+    ("revenue_per_share", "Revenue/Share"), ("income", "Net Income"), ("fcf", "FCF"),
+    # financial health
+    ("debt_to_equity", "Debt/Eq"), ("debt_to_equity_mrq", "Debt/Eq (MRQ)"),
+    ("lt_debt_to_equity", "LT Debt/Eq"),
+    ("current_ratio", "Current Ratio"), ("quick_ratio", "Quick Ratio"),
+    ("total_cash", "Total Cash"), ("total_debt", "Total Debt"),
+    ("total_equity", "Total Equity"),
+    # dividend
+    ("div_yield", "Yield"), ("five_year_avg_yield", "5Y Avg Yield"),
+    ("payout_ratio", "Payout Ratio"), ("div_growth_3y", "Div Growth 3Y"),
+    ("div_growth_5y", "Div Growth 5Y"), ("dividend_estimate", "Div Estimate"),
+    ("dividend_ttm", "Div TTM"), ("fcf_coverage", "FCF Coverage"),
+    ("years_div_increase", "Yrs Div Increase"), ("ex_dividend_date", "Ex-Dividend Date"),
+    # risk
+    ("beta", "Beta"), ("short_interest", "Short Interest"),
+    ("days_to_cover", "Days to Cover"), ("altman_z", "Altman Z-Score"),
+    ("piotroski_f", "Piotroski F-Score"),
+    # performance (price only)
+    ("perf_ytd", "Perf YTD"), ("perf_1y", "Perf 1Y"),
+    ("perf_3y", "Perf 3Y"), ("perf_5y", "Perf 5Y"), ("perf_10y", "Perf 10Y"),
 ]
+
+# screener_row keys whose value is in percentage points. Excel exports normalize
+# every rate/margin/return to a decimal fraction (value / 100) so a single
+# convention holds across both workbooks; the already-fraction keys (margins,
+# ROE/ROA, payout ratio, short interest) pass through unchanged.
+_PCT_KEYS = {
+    "roic", "roce", "div_yield", "five_year_avg_yield",
+    "div_growth_3y", "div_growth_5y", "debt_to_equity", "debt_to_equity_mrq",
+    "lt_debt_to_equity", "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
+}
+
+
+def _export_val(key, value):
+    """Normalize a screener_row value for export: percentage-point fields become
+    decimal fractions; everything else passes through."""
+    if value is not None and key in _PCT_KEYS:
+        return value / 100.0
+    return value
 
 
 def build_workbook(tickers):
@@ -861,7 +936,7 @@ def build_workbook(tickers):
     ws.append([label for _, label in _METRIC_COLS])
     for tk in tickers:
         row = screener_row(tk)
-        ws.append([row.get(key) for key, _ in _METRIC_COLS])
+        ws.append([_export_val(key, row.get(key)) for key, _ in _METRIC_COLS])
     style_header(ws, len(_METRIC_COLS))
     ws.freeze_panes = "A2"
 
@@ -901,6 +976,132 @@ def build_workbook(tickers):
 
     for sheet in wb.worksheets:
         sheet.column_dimensions["A"].width = 34
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# Panels rendered on the deep-dive view, in display order, for the export.
+_PANEL_ORDER = [
+    ("valuation", "Valuation"), ("profitability", "Profitability"),
+    ("health", "Financial Health"), ("dividend", "Dividend"), ("risk", "Risk"),
+]
+
+# Deep-dive panel metrics stored in percentage points but without a trailing
+# "%" in their label; the export divides them by 100 like the "… %" metrics so
+# the workbook is uniformly fraction-based (matching the screener export).
+_DD_PCT_LABELS = {"Debt/Equity", "Debt/Equity (MRQ)"}
+
+
+def _dd_metric(label, value):
+    """Map an Overview (label, value) pair for export: percentage-point metrics
+    become decimal fractions and shed any trailing ' %' from the label."""
+    is_pct = label.endswith(" %") or label in _DD_PCT_LABELS
+    out_label = label[:-2] if label.endswith(" %") else label
+    if is_pct and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return out_label, value / 100.0
+    return out_label, value
+
+
+def build_deepdive_workbook(ticker):
+    """Single-company workbook mirroring the deep-dive view: an Overview sheet
+    with every metric panel, a Charts Data sheet with the revenue/growth/share-
+    dilution series, and one sheet per financial statement (annual)."""
+    d = deepdive(ticker)
+    wb = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2933")
+    section_fill = PatternFill("solid", fgColor="3E4C59")
+    bold = Font(bold=True)
+
+    def header_row(ws, row, labels):
+        for j, lab in enumerate(labels, start=1):
+            cell = ws.cell(row=row, column=j, value=lab)
+            cell.font = header_font
+            cell.fill = header_fill
+
+    # ---- Sheet 1: Overview -------------------------------------------------- #
+    ws = wb.active
+    ws.title = "Overview"
+    ws.cell(row=1, column=1, value=f"{d['ticker']} — {d.get('name') or ''}").font = \
+        Font(bold=True, size=13)
+    chg = d.get("change_pct")
+    r = 2
+    for k, v in [("Sector", d.get("sector")), ("Industry", d.get("industry")),
+                 ("Exchange", d.get("exchange")), ("Currency", d.get("currency")),
+                 ("Price", d.get("price")),
+                 ("Change", chg / 100.0 if isinstance(chg, (int, float)) else chg)]:
+        ws.cell(row=r, column=1, value=k).font = bold
+        ws.cell(row=r, column=2, value=v)
+        r += 1
+    r += 1
+    for key, label in _PANEL_ORDER:
+        sc = ws.cell(row=r, column=1, value=label)
+        sc.font = header_font
+        sc.fill = section_fill
+        ws.cell(row=r, column=2).fill = section_fill
+        r += 1
+        for metric, value in (d["panels"].get(key) or {}).items():
+            out_label, out_value = _dd_metric(metric, value)
+            ws.cell(row=r, column=1, value=out_label)
+            ws.cell(row=r, column=2, value=out_value)
+            r += 1
+        r += 1
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 22
+
+    # ---- Sheet 2: Charts Data ----------------------------------------------- #
+    ws2 = wb.create_sheet("Charts Data")
+    r = 1
+
+    def write_table(title, rows, cols, pct=()):
+        nonlocal r
+        ws2.cell(row=r, column=1, value=title).font = bold
+        r += 1
+        header_row(ws2, r, [lab for _, lab in cols])
+        r += 1
+        for row in rows:
+            for j, (k, _) in enumerate(cols, start=1):
+                v = row.get(k)
+                if k in pct and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    v = v / 100.0  # percentage points -> decimal fraction
+                ws2.cell(row=r, column=j, value=v)
+            r += 1
+        r += 2
+
+    write_table("Revenue · Profit · Net Income · FCF", d.get("revenue_net_income", []), [
+        ("period", "Year"), ("revenue", "Revenue"), ("gross_profit", "Gross Profit"),
+        ("operating_income", "Operating Income"), ("net_income", "Net Income"),
+        ("fcf", "FCF"), ("gross_margin", "Gross Margin"),
+        ("operating_margin", "Operating Margin"), ("net_margin", "Net Margin")],
+        pct={"gross_margin", "operating_margin", "net_margin"})
+    write_table("Growth · YoY", d.get("growth", []), [
+        ("period", "Year"), ("revenue_growth", "Revenue Growth"),
+        ("eps_growth", "EPS Growth"), ("ebitda_growth", "EBITDA Growth")],
+        pct={"revenue_growth", "eps_growth", "ebitda_growth"})
+    write_table("Share Dilution", d.get("share_dilution", []), [
+        ("period", "Year"), ("shares_outstanding", "Shares Outstanding"),
+        ("float_shares", "Float Shares"), ("treasury_shares", "Treasury Shares"),
+        ("div_yield", "Dividend Yield"), ("payout_ratio", "Payout Ratio")],
+        pct={"div_yield", "payout_ratio"})
+    ws2.column_dimensions["A"].width = 30
+
+    # ---- Sheets 3-5: Financial statements (annual) -------------------------- #
+    for stmt_key, sheet_name in (("income", "Income Statement"),
+                                 ("balance", "Balance Sheet"),
+                                 ("cashflow", "Cash Flow")):
+        fin = financials(ticker, stmt_key, "annual")
+        wss = wb.create_sheet(sheet_name)
+        header_row(wss, 1, ["Line Item"] + list(fin["periods"]))
+        rr = 2
+        for row in fin["rows"]:
+            wss.cell(row=rr, column=1, value=row["label"])
+            for j, v in enumerate(row["values"]):
+                wss.cell(row=rr, column=2 + j, value=v)
+            rr += 1
+        wss.freeze_panes = "B2"
+        wss.column_dimensions["A"].width = 34
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -1038,6 +1239,20 @@ class Handler(BaseHTTPRequestHandler):
                     data,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     filename=f"stock-terminal-{stamp}.xlsx")
+            if path == "/api/export_deepdive":
+                if not _HAS_OPENPYXL:
+                    return self._send_json(
+                        {"error": "openpyxl not installed. Run: pip install openpyxl"}, 500)
+                raw_t = payload.get("ticker") or (payload.get("tickers") or [None])[0]
+                tk = (raw_t or "").strip().upper()
+                if not tk:
+                    return self._send_json({"error": "ticker required"}, 400)
+                data = build_deepdive_workbook(tk)
+                stamp = _dt.date.today().strftime("%Y%m%d")
+                return self._send_bytes(
+                    data,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    filename=f"{tk}-{stamp}.xlsx")
             if path == "/api/cache/clear":
                 clear_cache()
                 return self._send_json({"ok": True})

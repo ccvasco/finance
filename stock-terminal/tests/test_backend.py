@@ -1763,5 +1763,273 @@ class TestStockCalendar(unittest.TestCase):
         json.dumps(out)
 
 
+# ---------------------------------------------------------------------------
+# 16. Expanded screener_row fields
+# ---------------------------------------------------------------------------
+class TestScreenerRowNewFields(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _row(self):
+        with _patch_all():
+            return app.screener_row("TST")
+
+    def test_new_keys_present(self):
+        row = self._row()
+        for k in ("enterprise_value", "gross_margin", "operating_margin",
+                  "ebitda_margin", "roce", "revenue_per_share", "current_ratio",
+                  "quick_ratio", "total_cash", "total_debt", "total_equity",
+                  "div_growth_3y", "div_growth_5y", "ex_dividend_date",
+                  "debt_to_equity_mrq",
+                  "short_interest", "days_to_cover", "altman_z", "piotroski_f"):
+            self.assertIn(k, row)
+
+    def test_totals_from_info_and_statements(self):
+        row = self._row()
+        self.assertEqual(row["total_cash"], 10e9)     # _BASE_INFO totalCash
+        self.assertEqual(row["total_debt"], 30e9)     # _BASE_INFO totalDebt
+        self.assertEqual(row["total_equity"], 50e9)   # Stockholders Equity (newest)
+
+    def test_profit_margin_is_fraction(self):
+        # screener_row keeps yfinance's native fraction for margins
+        self.assertAlmostEqual(self._row()["profit_margin"], 0.25)
+
+
+# ---------------------------------------------------------------------------
+# 17. Export unit normalization → decimal fractions
+# ---------------------------------------------------------------------------
+class TestExportValHelper(unittest.TestCase):
+
+    def test_pct_keys_divided_by_100(self):
+        self.assertAlmostEqual(app._export_val("roic", 79.5), 0.795)
+        self.assertAlmostEqual(app._export_val("perf_1y", 12.0), 0.12)
+        self.assertAlmostEqual(app._export_val("div_yield", 2.0), 0.02)
+        self.assertAlmostEqual(app._export_val("debt_to_equity", 50.0), 0.50)
+
+    def test_fraction_keys_pass_through(self):
+        self.assertEqual(app._export_val("profit_margin", 0.25), 0.25)
+        self.assertEqual(app._export_val("roe", 0.20), 0.20)
+        self.assertEqual(app._export_val("payout_ratio", 0.40), 0.40)
+        self.assertEqual(app._export_val("short_interest", 0.01), 0.01)
+
+    def test_currency_and_multiples_pass_through(self):
+        self.assertEqual(app._export_val("market_cap", 1e12), 1e12)
+        self.assertEqual(app._export_val("pe", 20.0), 20.0)
+
+    def test_none_stays_none(self):
+        self.assertIsNone(app._export_val("roic", None))
+        self.assertIsNone(app._export_val("market_cap", None))
+
+
+class TestDdMetricHelper(unittest.TestCase):
+
+    def test_percent_suffix_label_to_fraction(self):
+        self.assertEqual(app._dd_metric("ROE %", 20.0), ("ROE", 0.20))
+        self.assertEqual(app._dd_metric("Gross Margin %", 45.0), ("Gross Margin", 0.45))
+
+    def test_debt_equity_special_cased(self):
+        self.assertEqual(app._dd_metric("Debt/Equity", 50.0), ("Debt/Equity", 0.50))
+
+    def test_non_rate_pass_through(self):
+        self.assertEqual(app._dd_metric("Market Cap", 1e12), ("Market Cap", 1e12))
+        self.assertEqual(app._dd_metric("FCF Coverage", 5.0), ("FCF Coverage", 5.0))
+        self.assertEqual(app._dd_metric("Ex-Dividend Date", "2026-05-11"),
+                         ("Ex-Dividend Date", "2026-05-11"))
+
+    def test_none_value_keeps_relabel(self):
+        self.assertEqual(app._dd_metric("ROE %", None), ("ROE", None))
+
+
+class TestMetricColsExpanded(unittest.TestCase):
+
+    def test_new_keys_present(self):
+        keys = {k for k, _ in app._METRIC_COLS}
+        for k in ("enterprise_value", "gross_margin", "operating_margin",
+                  "ebitda_margin", "roce", "revenue_per_share", "current_ratio",
+                  "quick_ratio", "total_cash", "total_debt", "total_equity",
+                  "div_growth_3y", "div_growth_5y", "ex_dividend_date",
+                  "debt_to_equity_mrq",
+                  "short_interest", "days_to_cover", "altman_z", "piotroski_f"):
+            self.assertIn(k, keys)
+
+    def test_ticker_is_first_column(self):
+        self.assertEqual(app._METRIC_COLS[0][0], "ticker")
+
+    def test_no_percent_in_any_label(self):
+        for _, label in app._METRIC_COLS:
+            self.assertFalse(label.endswith("%"), f"{label!r} carries a % suffix")
+
+
+@unittest.skipUnless(app._HAS_OPENPYXL, "openpyxl not installed")
+class TestScreenerExportFractions(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _build_and_row(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        close = pd.Series([100.0, 105.0],
+                          index=pd.DatetimeIndex(["2025-01-02", "2025-01-03"]))
+        mock_tk.history.return_value = pd.DataFrame({"Close": close, "Volume": [1e6, 1e6]})
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": _CF_DF}.get(attr)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}), \
+             patch("app.yf.Ticker", return_value=mock_tk):
+            raw = app.build_workbook(["TST"])
+            row = app.screener_row("TST")
+        from openpyxl import load_workbook
+        return load_workbook(io.BytesIO(raw)), row
+
+    def _cells(self, wb):
+        ws = wb["Metrics"]
+        headers = [c.value for c in ws[1]]
+        values = [c.value for c in ws[2]]
+        label_for = {k: lab for k, lab in app._METRIC_COLS}
+        return dict(zip(headers, values)), label_for
+
+    def test_pct_columns_become_fractions(self):
+        wb, row = self._build_and_row()
+        cell, label_for = self._cells(wb)
+        self.assertAlmostEqual(cell[label_for["perf_1y"]], row["perf_1y"] / 100.0)
+        self.assertAlmostEqual(cell[label_for["perf_1y"]], 0.12)
+        self.assertAlmostEqual(cell[label_for["roic"]], row["roic"] / 100.0)
+        # debt_to_equity is now annual (totalDebt 30e9 / equity 50e9 = 60% -> 0.60)
+        self.assertAlmostEqual(cell[label_for["debt_to_equity"]], 0.60)
+        # debt_to_equity_mrq is Yahoo's value (50.0% -> 0.50)
+        self.assertAlmostEqual(cell[label_for["debt_to_equity_mrq"]], 0.50)
+
+    def test_fraction_columns_unchanged(self):
+        wb, row = self._build_and_row()
+        cell, label_for = self._cells(wb)
+        self.assertEqual(cell[label_for["profit_margin"]], 0.25)
+        self.assertEqual(cell[label_for["payout_ratio"]], 0.40)
+
+    def test_currency_columns_unchanged(self):
+        wb, _ = self._build_and_row()
+        cell, label_for = self._cells(wb)
+        self.assertEqual(cell[label_for["market_cap"]], 1e12)
+
+    def test_no_percent_headers(self):
+        wb, _ = self._build_and_row()
+        headers = [c.value for c in wb["Metrics"][1]]
+        self.assertFalse(any(str(h).endswith("%") for h in headers))
+
+
+@unittest.skipUnless(app._HAS_OPENPYXL, "openpyxl not installed")
+class TestDeepdiveExportFractions(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _build(self):
+        div_info = {**_BASE_INFO, "exDividendDate": int(datetime.datetime(
+            2026, 5, 11, tzinfo=datetime.timezone.utc).timestamp())}
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        with patch("app.get_info", return_value=div_info), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={
+                 "cagr_3y": 5.0, "cagr_5y": 4.0, "annual": []}):
+            raw = app.build_deepdive_workbook("TST")
+        from openpyxl import load_workbook
+        return load_workbook(io.BytesIO(raw))
+
+    def _overview(self, wb):
+        out = {}
+        for row in wb["Overview"].iter_rows(values_only=True):
+            if row[0] and row[1] is not None:
+                out[row[0]] = row[1]
+        return out
+
+    def test_sheet_names(self):
+        wb = self._build()
+        self.assertEqual(wb.sheetnames, ["Overview", "Charts Data",
+            "Income Statement", "Balance Sheet", "Cash Flow"])
+
+    def test_overview_rates_are_fractions(self):
+        ov = self._overview(self._build())
+        self.assertAlmostEqual(ov["Profit Margin"], 0.25)
+        self.assertAlmostEqual(ov["ROE"], 0.20)
+        self.assertAlmostEqual(ov["ROA"], 0.10)
+        # annual Debt/Equity (totalDebt 30e9 / equity 50e9 = 60% -> 0.60)
+        self.assertAlmostEqual(ov["Debt/Equity"], 0.60)
+        # Yahoo's MRQ measure, surfaced separately (50.0% -> 0.50)
+        self.assertAlmostEqual(ov["Debt/Equity (MRQ)"], 0.50)
+
+    def test_overview_currency_unchanged(self):
+        ov = self._overview(self._build())
+        self.assertEqual(ov["Market Cap"], 1e12)
+
+    def test_overview_no_percent_labels(self):
+        for row in self._build()["Overview"].iter_rows(values_only=True):
+            if isinstance(row[0], str):
+                self.assertFalse(row[0].endswith("%"), f"{row[0]!r}")
+
+    def test_charts_margins_are_fractions(self):
+        rows = list(self._build()["Charts Data"].iter_rows(values_only=True))
+        hi = next(i for i, r in enumerate(rows) if r and r[0] == "Year")
+        headers = [c for c in rows[hi] if c]
+        self.assertIn("Gross Margin", headers)
+        self.assertNotIn("Gross Margin %", headers)
+        gm = rows[hi].index("Gross Margin")
+        vals = [r[gm] for r in rows[hi + 1:hi + 3]
+                if isinstance(r[gm], (int, float))]
+        self.assertTrue(vals)
+        # 2024 gross margin = 180e9 / 400e9 = 0.45 (fraction, not 45%)
+        self.assertTrue(any(abs(v - 0.45) < 1e-6 for v in vals))
+        self.assertTrue(all(abs(v) < 1.5 for v in vals))
+
+    def test_consistent_with_screener_export(self):
+        # Net/Profit margin reads identically (0.25) in both workbooks.
+        ov = self._overview(self._build())
+        self.assertAlmostEqual(ov["Profit Margin"], 0.25)
+
+
+class TestDebtEquityReconciliation(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def test_screener_debt_equity_reconciles(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        # annual basis: totalDebt 30e9 / equity 50e9 * 100 = 60.0
+        self.assertAlmostEqual(row["debt_to_equity"], 60.0)
+        self.assertAlmostEqual(row["debt_to_equity"],
+                               row["total_debt"] / row["total_equity"] * 100)
+
+    def test_screener_debt_equity_mrq_is_yahoo_value(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertAlmostEqual(row["debt_to_equity_mrq"], 50.0)  # _BASE_INFO debtToEquity
+
+    def test_deepdive_debt_equity_reconciles(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={
+                 "cagr_3y": None, "cagr_5y": None, "annual": []}):
+            d = app.deepdive("TST")
+        h = d["panels"]["health"]
+        self.assertAlmostEqual(h["Debt/Equity"],
+                               h["Total Debt"] / h["Total Equity"] * 100)
+        self.assertAlmostEqual(h["Debt/Equity"], 60.0)
+        self.assertAlmostEqual(h["Debt/Equity (MRQ)"], 50.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -6,6 +6,7 @@ const Views = (() => {
     ticker: "Stock symbol. Click a row to open the deep-dive view.",
     price: "Latest trading price.",
     market_cap: "Market capitalization = share price × shares outstanding. The total value of the company's equity.",
+    enterprise_value: "Enterprise Value = market cap + total debt − cash. The cost to acquire the whole business, debt included.",
     industry: "The company's industry classification.",
     pe: "Price / Earnings (trailing). Price ÷ last 12 months' earnings per share. Lower can mean cheaper relative to profits.",
     forward_pe: "Forward P/E. Price ÷ analysts' estimated earnings per share for the year ahead.",
@@ -18,20 +19,38 @@ const Views = (() => {
     eps: "Earnings per share over the trailing 12 months.",
     income: "Net income — profit attributable to shareholders (trailing 12 months).",
     profit_margin: "Net Profit Margin = net income ÷ revenue. Share of each sales dollar kept as profit.",
+    gross_margin: "Gross Margin = (revenue − cost of goods sold) ÷ revenue. Pricing power and production efficiency.",
+    operating_margin: "Operating Margin = operating income ÷ revenue. Profit after running the business, before interest & tax.",
+    ebitda_margin: "EBITDA Margin = EBITDA ÷ revenue. Operating profitability before non-cash (D&A) and financing items.",
     fcf: "Free Cash Flow = operating cash flow − capital expenditure. Cash left for dividends, buybacks and debt.",
     roa: "Return on Assets = net income ÷ total assets. How efficiently assets generate profit.",
     roe: "Return on Equity = net income ÷ shareholders' equity.",
     roic: "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). Returns on all capital employed.",
+    roce: "Return on Capital Employed = EBIT ÷ (total assets − current liabilities). Pre-tax return on long-term capital.",
+    revenue_per_share: "Trailing 12-month revenue ÷ shares outstanding.",
     beta: "Beta measures how much the stock moves relative to the market (S&P 500). β = 1: moves in line with the market. β > 1: more volatile (e.g. β 1.5 means ~50% bigger swings). β < 1: less volatile. β < 0: tends to move against the market. Use it as a risk gauge — higher beta means higher volatility in both directions.",
-    debt_to_equity: "Total debt ÷ shareholders' equity (shown as %). Higher means more leverage.",
+    short_interest: "Shares sold short as a percentage of the public float. Higher means more investors betting the price will fall; very elevated levels can set up a short squeeze.",
+    days_to_cover: "Short interest ÷ average daily volume — days of normal trading for shorts to buy back. Higher means a more crowded short.",
+    altman_z: "Altman Z-Score: bankruptcy-risk gauge. >2.99 'safe', 1.81–2.99 'grey', <1.81 'distress'. Higher is safer. Less reliable for banks/financials.",
+    piotroski_f: "Piotroski F-Score (0–9): fundamental strength across 9 profitability, leverage and efficiency tests. 7–9 strong, 0–3 weak.",
+    debt_to_equity: "Total debt ÷ shareholders' equity (shown as %), computed from the Total Debt and Total Equity in this row so the three reconcile. Higher means more leverage.",
+    debt_to_equity_mrq: "Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. Differs from the Debt/Eq column when the quarterly and annual periods don't coincide.",
     lt_debt_to_equity: "Long-term debt ÷ shareholders' equity (shown as %).",
+    current_ratio: "Current assets ÷ current liabilities. >1 covers bills due within a year.",
+    quick_ratio: "(Current assets − inventory) ÷ current liabilities. Stricter liquidity test.",
+    total_cash: "Cash and short-term investments on the balance sheet.",
+    total_debt: "Short- plus long-term borrowings.",
+    total_equity: "Shareholders' equity — total assets minus total liabilities (book value).",
     div_yield: "Dividend Yield = forward annual dividend ÷ price.",
     five_year_avg_yield: "Average dividend yield over the past 5 years.",
+    div_growth_3y: "Annualized growth (CAGR) of dividends over the last 3 years.",
+    div_growth_5y: "Annualized growth (CAGR) of dividends over the last 5 years.",
     dividend_estimate: "Forward annual dividend per share (the current run-rate estimate).",
     dividend_ttm: "Dividends actually paid per share over the trailing 12 months.",
     payout_ratio: "Payout Ratio = dividends ÷ earnings. The share of profit paid out as dividends.",
     fcf_coverage: "FCF Coverage = free cash flow ÷ dividends paid. How many times cash flow covers the dividend. Green ≥ 1.2×, yellow 0.8–1.2×, red < 0.8×.",
     years_div_increase: "Consecutive completed calendar years of rising annual dividends.",
+    ex_dividend_date: "Buy before this date to receive the next dividend.",
     perf_ytd: "Price return since Jan 1 of this year. Excludes dividends.",
     perf_1y: "Price return over the last 1 year. Excludes dividends.",
     perf_3y: "Price return over the last 3 years. Excludes dividends.",
@@ -74,7 +93,8 @@ const Views = (() => {
     "Total Cash": "Cash and short-term investments on the balance sheet.",
     "Total Debt": "Short- plus long-term borrowings.",
     "Total Equity": "Shareholders' equity — total assets minus total liabilities (book value).",
-    "Debt/Equity": "Total debt ÷ shareholders' equity (as %).",
+    "Debt/Equity": "Total debt ÷ shareholders' equity (as %), computed from the Total Debt and Total Equity shown in this panel so the three figures reconcile.",
+    "Debt/Equity (MRQ)": "Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. Differs from Debt/Equity above when the quarterly and annual periods don't coincide.",
     "Current Ratio": "Current assets ÷ current liabilities. >1 covers near-term bills.",
     "Quick Ratio": "Liquid assets (excl. inventory) ÷ current liabilities.",
     "Free Cash Flow": "Operating cash flow − capital expenditure.",
@@ -93,36 +113,56 @@ const Views = (() => {
     { key: "ticker", label: "Ticker", kind: "ticker" },
     { key: "price", label: "Price", fmt: (v, r) => Fmt.price(v, r.currency) },
     { key: "market_cap", label: "Mkt Cap", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "enterprise_value", label: "EV", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "industry", label: "Industry", kind: "text" },
-    // valuation
+    // valuation (most-scanned first)
     { key: "pe", label: "P/E", fmt: (v) => Fmt.num(v) },
     { key: "forward_pe", label: "Fwd P/E", fmt: (v) => Fmt.num(v) },
     { key: "peg", label: "PEG", fmt: (v) => Fmt.num(v) },
-    { key: "pb", label: "P/B", fmt: (v) => Fmt.num(v) },
     { key: "ps", label: "P/S", fmt: (v) => Fmt.num(v) },
-    { key: "pc", label: "P/C", fmt: (v) => Fmt.num(v) },
-    { key: "p_fcf", label: "P/FCF", fmt: (v) => Fmt.num(v) },
+    { key: "pb", label: "P/B", fmt: (v) => Fmt.num(v) },
     { key: "ev_ebitda", label: "EV/EBITDA", fmt: (v) => Fmt.num(v) },
+    { key: "p_fcf", label: "P/FCF", fmt: (v) => Fmt.num(v) },
+    { key: "pc", label: "P/C", fmt: (v) => Fmt.num(v) },
     { key: "eps", label: "EPS", fmt: (v, r) => Fmt.price(v, r.currency) },
-    // profitability / income
-    { key: "income", label: "Income", fmt: (v, r) => Fmt.big(v, r.currency) },
-    { key: "profit_margin", label: "Margin", fmt: (v) => Fmt.ratioPct(v) },
-    { key: "fcf", label: "FCF", fmt: (v, r) => Fmt.big(v, r.currency) },
-    { key: "roa", label: "ROA", fmt: (v) => Fmt.ratioPct(v) },
+    // profitability
+    { key: "profit_margin", label: "Net Margin", fmt: (v) => Fmt.ratioPct(v) },
+    { key: "gross_margin", label: "Gross Margin", fmt: (v) => Fmt.ratioPct(v) },
+    { key: "operating_margin", label: "Op Margin", fmt: (v) => Fmt.ratioPct(v) },
+    { key: "ebitda_margin", label: "EBITDA Margin", fmt: (v) => Fmt.ratioPct(v) },
     { key: "roe", label: "ROE", fmt: (v) => Fmt.ratioPct(v) },
+    { key: "roa", label: "ROA", fmt: (v) => Fmt.ratioPct(v) },
     { key: "roic", label: "ROIC", fmt: (v) => Fmt.pct(v) },
+    { key: "roce", label: "ROCE", fmt: (v) => Fmt.pct(v) },
+    { key: "revenue_per_share", label: "Rev/Share", fmt: (v, r) => Fmt.price(v, r.currency) },
+    { key: "income", label: "Income", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "fcf", label: "FCF", fmt: (v, r) => Fmt.big(v, r.currency) },
     // financial health
-    { key: "beta", label: "Beta", fmt: (v) => Fmt.num(v, 2) },
     { key: "debt_to_equity", label: "Debt/Eq", fmt: (v) => Fmt.num(v, 1) },
+    { key: "debt_to_equity_mrq", label: "Debt/Eq (MRQ)", fmt: (v) => Fmt.num(v, 1) },
     { key: "lt_debt_to_equity", label: "LT Debt/Eq", fmt: (v) => Fmt.num(v, 1) },
+    { key: "current_ratio", label: "Current", fmt: (v) => Fmt.num(v, 2) },
+    { key: "quick_ratio", label: "Quick", fmt: (v) => Fmt.num(v, 2) },
+    { key: "total_cash", label: "Cash", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "total_debt", label: "Debt", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "total_equity", label: "Equity", fmt: (v, r) => Fmt.big(v, r.currency) },
     // dividend
     { key: "div_yield", label: "Yield", fmt: (v) => Fmt.pct(v) },
     { key: "five_year_avg_yield", label: "5Y Avg Yld", fmt: (v) => Fmt.pct(v) },
+    { key: "payout_ratio", label: "Payout", fmt: (v) => Fmt.ratioPct(v) },
+    { key: "div_growth_3y", label: "Div Gr 3Y", fmt: (v) => Fmt.pct(v), signed: true },
+    { key: "div_growth_5y", label: "Div Gr 5Y", fmt: (v) => Fmt.pct(v), signed: true },
     { key: "dividend_estimate", label: "Div Est", fmt: (v, r) => Fmt.price(v, r.currency) },
     { key: "dividend_ttm", label: "Div TTM", fmt: (v, r) => Fmt.price(v, r.currency) },
-    { key: "payout_ratio", label: "Payout", fmt: (v) => Fmt.ratioPct(v) },
     { key: "fcf_coverage", label: "FCF Cov", fmt: (v) => v == null ? null : Fmt.num(v) + "×", cls: covClass },
     { key: "years_div_increase", label: "Yrs ▲Div", fmt: (v) => v == null ? null : String(v) },
+    { key: "ex_dividend_date", label: "Ex-Div Date", fmt: (v) => Fmt.date(v) },
+    // risk
+    { key: "beta", label: "Beta", fmt: (v) => Fmt.num(v, 2) },
+    { key: "short_interest", label: "Short %", fmt: (v) => Fmt.ratioPct(v, 1) },
+    { key: "days_to_cover", label: "Days Cover", fmt: (v) => Fmt.num(v, 2) },
+    { key: "altman_z", label: "Altman Z", fmt: (v) => Fmt.num(v, 2) },
+    { key: "piotroski_f", label: "Piotroski", fmt: (v) => v == null ? null : Math.round(v) + "/9" },
     // performance (price only, excludes dividends)
     { key: "perf_ytd", label: "Perf YTD", fmt: (v) => Fmt.pct(v), signed: true },
     { key: "perf_1y", label: "Perf 1Y", fmt: (v) => Fmt.pct(v), signed: true },
@@ -560,33 +600,60 @@ const DeepDive = (() => {
   // Gross/Operating "Margin" bars show the absolute amount (gross profit /
   // operating income); their `tip` adds the margin % to the hover tooltip.
   const FIN_SERIES = [
-    { key: "revenue", label: "Revenue", color: "accent", swatch: "var(--accent)" },
+    { key: "revenue", label: "Revenue", color: "accent", swatch: "var(--accent)",
+      desc: "Total sales for the fiscal year." },
     { key: "gross_profit", label: "Gross Margin", color: "#2f81f7", swatch: "#2f81f7",
-      tip: (d) => pctTip(d.gross_margin) },
+      tip: (d) => pctTip(d.gross_margin),
+      desc: "Gross profit (revenue − cost of goods sold). Hover a bar for the gross margin %." },
     { key: "operating_income", label: "Operating Margin", color: "#e3b341", swatch: "#e3b341",
-      tip: (d) => pctTip(d.operating_margin) },
+      tip: (d) => pctTip(d.operating_margin),
+      desc: "Operating income — profit after running the business, before interest & tax. Hover a bar for the operating margin %." },
     { key: "net_income", label: "Net Income", color: "#5b6f86", swatch: "#5b6f86",
-      tip: (d) => pctTip(d.net_margin) },
-    { key: "fcf", label: "FCF", color: "#168512", swatch: "#168512" },
+      tip: (d) => pctTip(d.net_margin),
+      desc: "Bottom-line profit attributable to shareholders. Hover a bar for the net margin %." },
+    { key: "fcf", label: "FCF", color: "#168512", swatch: "#168512",
+      desc: "Free cash flow = operating cash flow − capital expenditure." },
   ];
   // Year-over-year growth bars (%) per year, shown in their own panel.
   const GROWTH_SERIES = [
-    { key: "revenue_growth", label: "Revenue", color: "accent", swatch: "var(--accent)" },
-    { key: "eps_growth", label: "EPS", color: "#2f81f7", swatch: "#2f81f7" },
-    { key: "ebitda_growth", label: "EBITDA", color: "#168512", swatch: "#168512" },
+    { key: "revenue_growth", label: "Revenue", color: "accent", swatch: "var(--accent)",
+      desc: "Year-over-year growth in total revenue." },
+    { key: "eps_growth", label: "EPS", color: "#2f81f7", swatch: "#2f81f7",
+      desc: "Year-over-year growth in earnings per share." },
+    { key: "ebitda_growth", label: "EBITDA", color: "#168512", swatch: "#168512",
+      desc: "Year-over-year growth in EBITDA (earnings before interest, tax, depreciation & amortization)." },
   ];
   // Share Dilution panel: share counts ($-axis bars) + yield/payout (% lines).
   const SHARE_BARS = [
-    { key: "shares_outstanding", label: "Shares Outstanding", color: "accent", swatch: "var(--accent)" },
-    { key: "float_shares", label: "Float Shares", color: "#2f81f7", swatch: "#2f81f7" },
-    { key: "treasury_shares", label: "Treasury Shares", color: "#5b6f86", swatch: "#5b6f86" },
+    { key: "shares_outstanding", label: "Shares Outstanding", color: "accent", swatch: "var(--accent)",
+      desc: "Total shares issued. Falling = buybacks (each share owns more); rising = dilution." },
+    { key: "float_shares", label: "Float Shares", color: "#2f81f7", swatch: "#2f81f7",
+      desc: "Shares freely tradable by the public. Only the latest year is available, so it appears on the most recent bar only." },
+    { key: "treasury_shares", label: "Treasury Shares", color: "#5b6f86", swatch: "#5b6f86",
+      desc: "Repurchased shares held by the company (often ~0 when bought-back shares are retired)." },
   ];
   const SHARE_LINES = [
-    { key: "div_yield", label: "Dividend Yield %", color: "#e3b341", swatch: "#e3b341" },
-    { key: "payout_ratio", label: "Payout Ratio %", color: "#db61a2", swatch: "#db61a2" },
+    { key: "div_yield", label: "Dividend Yield %", color: "#e3b341", swatch: "#e3b341",
+      desc: "Historical dividend yield — annual dividends ÷ year-end price." },
+    { key: "payout_ratio", label: "Payout Ratio %", color: "#db61a2", swatch: "#db61a2",
+      desc: "Dividends as a share of earnings, per year." },
   ];
   const pctAxis = (v) => Math.round(v) + "%";
   const pct1Axis = (v) => Number(v).toFixed(1) + "%";
+
+  // Build chart-legend items; each series with a `desc` gets a hover tooltip,
+  // matching the per-metric tooltips on the other deep-dive panels. `line`
+  // renders the swatch as a thin bar (for line series).
+  function legendItems(series, line = false) {
+    return series.map((s) => {
+      const keyStyle = line
+        ? `background:${s.swatch};height:3px;border-radius:2px`
+        : `background:${s.swatch}`;
+      const tipAttr = s.desc ? ` data-tip="${s.desc.replace(/"/g, "&quot;")}"` : "";
+      const cls = s.desc ? ' class="has-tip"' : "";
+      return `<span${cls}${tipAttr}><span class="legend-key" style="${keyStyle}"></span>${s.label}</span>`;
+    }).join("");
+  }
 
   function panel(title, obj, fmtMap) {
     const rows = Object.entries(obj).map(([k, v]) => {
@@ -647,12 +714,22 @@ const DeepDive = (() => {
       <span class="dd-title">${ticker}</span>
       <span class="dd-name">${d.name || ""} · ${d.exchange || ""} ${d.sector ? "· " + d.sector : ""}</span>
       <span class="dd-price">${Fmt.cell(d.price, (v) => Fmt.price(v, cur))} ${chgTxt}</span>
+      <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>
       <button class="btn btn-sm" id="dd-star">${star ? "★ Watching" : "☆ Watch"}</button>`;
     document.getElementById("dd-back").addEventListener("click", close);
     document.getElementById("dd-star").addEventListener("click", () => {
       const now = Store.toggleWatch(ticker);
       document.getElementById("dd-star").textContent = now ? "★ Watching" : "☆ Watch";
       App.toast(now ? `★ ${ticker} added` : `${ticker} removed`, "ok");
+    });
+    document.getElementById("dd-export").addEventListener("click", async () => {
+      const btn = document.getElementById("dd-export");
+      const old = btn.textContent;
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner" style="width:12px;height:12px"></span> Exporting…`;
+      try { await API.exportDeepdive(ticker); App.toast(`Exported ${ticker} to .xlsx`, "ok"); }
+      catch (e) { App.toast(e.message, "err"); }
+      finally { btn.disabled = false; btn.textContent = old; }
     });
 
     ov.querySelector(".dd-body").innerHTML = `
@@ -670,24 +747,19 @@ const DeepDive = (() => {
 
         <div class="col-6"><div class="panel">
           <div class="panel-head"><span class="dot"></span>Revenue · Profit · Net Income · FCF<span class="hint" style="margin-left:auto;font-weight:400">hover margins for %</span></div>
-          <div class="chart-legend">${FIN_SERIES.map((s) =>
-            `<span><span class="legend-key" style="background:${s.swatch}"></span>${s.label}</span>`).join("")}</div>
+          <div class="chart-legend">${legendItems(FIN_SERIES)}</div>
           <div class="chart-box" id="dd-revni"></div>
         </div></div>
 
         <div class="col-6"><div class="panel">
           <div class="panel-head"><span class="dot"></span>Growth · YoY % (last 5Y)</div>
-          <div class="chart-legend">${GROWTH_SERIES.map((s) =>
-            `<span><span class="legend-key" style="background:${s.swatch}"></span>${s.label}</span>`).join("")}</div>
+          <div class="chart-legend">${legendItems(GROWTH_SERIES)}</div>
           <div class="chart-box" id="dd-growth"></div>
         </div></div>
 
         <div class="col-6"><div class="panel">
           <div class="panel-head"><span class="dot"></span>Share Dilution · last 5Y<span class="hint" style="margin-left:auto;font-weight:400">bars: shares · lines: % (right) · float = latest only</span></div>
-          <div class="chart-legend">${SHARE_BARS.map((s) =>
-            `<span><span class="legend-key" style="background:${s.swatch}"></span>${s.label}</span>`).join("")
-            + SHARE_LINES.map((s) =>
-            `<span><span class="legend-key" style="background:${s.swatch};height:3px;border-radius:2px"></span>${s.label}</span>`).join("")}</div>
+          <div class="chart-legend">${legendItems(SHARE_BARS) + legendItems(SHARE_LINES, true)}</div>
           <div class="chart-box" id="dd-dilution"></div>
         </div></div>
 
@@ -774,8 +846,21 @@ const DeepDive = (() => {
     loadCalendar(ticker, cur);
   }
 
+  // Hover descriptions for the Earnings & Splits Calendar rows.
+  const CAL_TIPS = {
+    "Next Earnings": "Scheduled date(s) of the next earnings release.",
+    "EPS Estimate (avg)": "Analysts' average earnings-per-share estimate for the upcoming report.",
+    "EPS Estimate range": "Low–high spread of analyst EPS estimates for the upcoming report.",
+    "Revenue Estimate (avg)": "Analysts' average revenue estimate for the upcoming report.",
+    "Ex-Dividend Date": "Buy before this date to receive the next dividend.",
+    "Dividend Date": "Date the next dividend is scheduled to be paid.",
+  };
+
   function kvRow(k, v) {
-    return `<div class="kv-row"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+    const tip = CAL_TIPS[k];
+    const tipAttr = tip ? ` data-tip="${tip.replace(/"/g, "&quot;")}"` : "";
+    const kCls = tip ? "k has-tip" : "k";
+    return `<div class="kv-row"><span class="${kCls}"${tipAttr}>${k}</span><span class="v">${v}</span></div>`;
   }
 
   function calendarHTML(c, cur) {

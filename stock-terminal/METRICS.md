@@ -69,8 +69,9 @@ Can the company pay its bills and survive a downturn?
 | --- | --- | --- | --- |
 | **Total Cash** | Cash + short-term investments | Dry powder and safety buffer. | More is safer; compare to total debt. |
 | **Total Debt** | Short- + long-term borrowings | Leverage load. | Judge against cash, equity, and EBITDA. |
-| **Total Equity** | Assets − liabilities (book value) | Owners' stake / net worth. | Negative equity is a red flag (often from heavy buybacks or losses). |
-| **Debt/Equity** | Total debt ÷ equity (as %) | Leverage relative to owners' capital. | <100% conservative, 100–200% moderate, >200% aggressive (except banks/utilities). |
+| **Total Equity** | Assets − liabilities, book value (latest **annual** balance sheet) | Owners' stake / net worth. | Negative equity is a red flag (often from heavy buybacks or losses). |
+| **Debt/Equity** | Total Debt ÷ Total Equity (as %), computed from the two figures shown above so they **reconcile** | Leverage relative to owners' capital. | <100% conservative, 100–200% moderate, >200% aggressive (except banks/utilities). |
+| **Debt/Equity (MRQ)** | Yahoo's pre-computed Debt/Equity, taken from its **most-recent-quarter** balance sheet | Same leverage gauge, but on the freshest quarterly figures rather than the annual ones. | Read with the same ranges. It can differ from **Debt/Equity** above when the latest quarter's debt or equity has moved since fiscal year-end — a larger or smaller recent equity base shifts the ratio. |
 | **Current Ratio** | Current assets ÷ current liabilities | Ability to cover bills due within a year. | **>1 covers near-term obligations**; 1.5–3 comfortable; <1 potential squeeze; very high may mean idle assets. |
 | **Quick Ratio** | (Current assets − inventory) ÷ current liabilities | Stricter liquidity test (excludes inventory). | >1 strong; <1 relies on selling inventory to pay bills. |
 | **Free Cash Flow (FCF)** | Operating cash flow − capital expenditure | Cash left for dividends, buybacks, and debt paydown. | Positive and growing is the goal; persistent negative FCF needs external funding. |
