@@ -49,13 +49,17 @@ Below that, metrics are grouped into the same panels shown in the app.
 | PEG Ratio | P/E ÷ expected earnings growth. | ratio | ~1.0 fair; <1 potentially cheap; >2 expensive. |
 | Price/Book | Price ÷ book value per share. | multiple (×) | <1 below book; 1–3 typical. |
 | Price/Sales | Price ÷ trailing 12-month revenue per share. | multiple (×) | <1 low, >10 rich. |
+| Price/Cash | Market cap ÷ total cash. | multiple (×) | Lower = more cash backing the valuation. |
+| Price/FCF | Market cap ÷ free cash flow. | multiple (×) | <15 attractive, >25 expensive. Blank if FCF ≤ 0. |
 | EV/EBITDA | Enterprise value ÷ EBITDA. | multiple (×) | <10 cheap, 10–15 average, >15 expensive. |
+| EPS | Trailing 12-month earnings per share. | currency / share | Higher and rising is better. |
 
 ### Dividend
 
 | Metric | Meaning | Units | Rough read (as fraction) |
 | --- | --- | --- | --- |
 | Dividend Rate | Forward annual dividend per share. | currency / share | — |
+| Dividend TTM | Dividends actually paid per share, trailing 12 months. | currency / share | — |
 | Dividend Yield | Annual dividend ÷ price. | fraction | <0.02 low, 0.02–0.04 typical, 0.04–0.06 high, >0.07–0.08 cut-risk. |
 | Payout Ratio | Dividends ÷ earnings. | fraction | <0.60 comfortable, 0.60–0.80 watch, >1.0 unsustainable. |
 | FCF Coverage | Free cash flow ÷ dividends paid. | multiple (×) | ≥1.2 safe, 0.8–1.2 tight, <0.8 under-covered. |
@@ -63,6 +67,7 @@ Below that, metrics are grouped into the same panels shown in the app.
 | 5Y Avg Yield | Average dividend yield over the past 5 years. | fraction | Context for today's yield. |
 | Div Growth 3Y | Annualized dividend CAGR over 3 years. | fraction | Positive growth = healthy payer. |
 | Div Growth 5Y | Annualized dividend CAGR over 5 years. | fraction | Longer track record. |
+| Years ▲ Dividend | Consecutive completed years of rising dividends. | integer (years) | 10+ strong culture, 25+ "dividend aristocrat". |
 
 ### Profitability
 
@@ -77,6 +82,7 @@ Below that, metrics are grouped into the same panels shown in the app.
 | ROIC | After-tax operating profit ÷ (debt + equity). | fraction | Creates value only when > cost of capital (~0.08–0.10). >0.15 excellent. |
 | ROCE | EBIT ÷ (total assets − current liabilities). | fraction | >0.15 strong; pre-tax sibling of ROIC. |
 | Revenue/Share | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising is the signal to want. |
+| Net Income | Net income — profit to shareholders (trailing 12 months). | currency | Positive and growing is the goal. |
 
 ### Financial Health
 
@@ -87,9 +93,12 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Total Equity | Assets − liabilities (book value). | currency | Negative is a red flag. |
 | Debt/Equity | Total Debt ÷ Total Equity, computed from the two figures in this panel so they reconcile. | fraction | <1.0 conservative, 1.0–2.0 moderate, >2.0 aggressive. |
 | Debt/Equity (MRQ) | Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. | fraction | Same ranges; differs from Debt/Equity when the latest quarter has moved since fiscal year-end. |
+| Debt/EBITDA | Total Debt ÷ EBITDA — years of EBITDA needed to repay all debt. | multiple (×) | <3× comfortable, 3–4× watch, >4–5× heavily leveraged. |
+| LT Debt/Equity | Long-term debt ÷ shareholders' equity. | fraction | Long-term portion of leverage. |
 | Current Ratio | Current assets ÷ current liabilities. | ratio | >1 covers near-term bills; 1.5–3 comfortable. |
 | Quick Ratio | (Current assets − inventory) ÷ current liabilities. | ratio | >1 strong; stricter than current ratio. |
 | Free Cash Flow | Operating cash flow − capital expenditure. | currency | Positive and growing is the goal. |
+| EBITDA/FCF | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion. |
 
 ### Risk
 
@@ -131,6 +140,7 @@ table needs a prior year per bar, so it shows one fewer.
 | Revenue Growth | Year-over-year growth in total revenue. | fraction |
 | EPS Growth | Year-over-year growth in earnings per share. | fraction |
 | EBITDA Growth | Year-over-year growth in EBITDA. | fraction |
+| EBITDA Margin | EBITDA ÷ revenue for that fiscal year (shown as a line on the chart). | fraction |
 
 ### Share Dilution
 
@@ -147,11 +157,31 @@ table needs a prior year per bar, so it shows one fewer.
 
 ## Sheets 3–5 — Income Statement / Balance Sheet / Cash Flow
 
-Each statement sheet (annual) has **Line Item** in column A and one column per
-fiscal-year-end date. Values are in the company's reporting currency. The set of
-line items is whatever Yahoo provides for that company (e.g. Total Revenue, EBIT,
-Net Income; Total Assets, Total Debt, Stockholders Equity; Operating Cash Flow,
-Free Cash Flow). The oldest fiscal-year column is frequently blank.
+Each statement sheet (annual) has **Line Item** in column A, then a leading
+**TTM** column, then one column per fiscal-year-end date. Values are in the
+company's reporting currency. The set of line items is whatever Yahoo provides
+for that company (e.g. Total Revenue, EBIT, Net Income; Total Assets, Total Debt,
+Stockholders Equity; Operating Cash Flow, Free Cash Flow). The oldest fiscal-year
+column is frequently blank.
+
+**The leading column:**
+- **Income Statement & Cash Flow → `TTM`** (trailing twelve months) = the sum of
+  the four most-recent quarters. Present only when a full year of quarterly data
+  exists; a row is left blank if it isn't reported in all four quarters.
+- **Balance Sheet → `MRQ`** (most-recent quarter). A balance sheet is a
+  point-in-time snapshot, so summing quarters would be meaningless — this column
+  is simply the latest quarter-end balance.
+
+This TTM revenue is the denominator behind the TTM-based ratios on the Overview
+sheet (e.g. margins), which is why those ratios use the TTM column's revenue, not
+the latest *annual* revenue.
+
+**`EBITDA (Yahoo TTM)` row** (income statement only): an extra line carrying
+Yahoo's own trailing-12-month EBITDA — the figure behind the **EBITDA Margin**
+metric. It populates the TTM column only. It usually differs from the statement's
+own **EBITDA / Normalized EBITDA** line (a different, often higher, definition),
+and is shown beside it so EBITDA Margin (Yahoo EBITDA ÷ TTM revenue) can be
+reconciled.
 
 ---
 

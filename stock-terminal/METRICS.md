@@ -38,7 +38,8 @@ multiple can be justified by fast growth.
 | **P/C (Price/Cash)** | Market cap ÷ total cash | How much cash backs the valuation. | Lower = more cash cushion. |
 | **P/FCF** | Market cap ÷ free cash flow | Price vs. actual cash generated. | <15 attractive, 15–25 fair, >25 expensive. Negative FCF → N/A. |
 | **EV/EBITDA** | Enterprise value ÷ EBITDA | Capital-structure-neutral valuation (ignores debt & tax differences). | <10 cheap, 10–15 average, >15 expensive (sector-dependent). |
-| **EPS** | Net income ÷ shares outstanding (TTM) | Profit attributable to each share. | Higher and rising is better; compare growth, not the absolute level. |
+| **Diluted EPS** | (Net Income − Preferred Dividends) ÷ Weighted Average **Diluted** Shares Outstanding (TTM) | Profit per share after accounting for all potentially dilutive securities (options, warrants, convertibles). This is the standard EPS figure reported by most financial sites and used in P/E ratios. | Higher and rising is better; compare growth, not the absolute level. |
+| **Basic EPS** | (Net Income − Preferred Dividends) ÷ Weighted Average **Basic** Shares Outstanding (TTM) | Profit per share using only shares actually outstanding — no dilution assumed. Always ≥ Diluted EPS. A large gap between Basic and Diluted EPS signals heavy dilutive securities outstanding. | — |
 
 ---
 
@@ -55,9 +56,20 @@ better**, and consistency over time matters as much as the level.
 | **Net Profit Margin %** | Net income ÷ revenue | Bottom-line cents kept per sales dollar. | >10% solid, >20% excellent, negative = unprofitable. |
 | **ROE %** (Return on Equity) | Net income ÷ shareholders' equity | Return generated on owners' capital. | >15% good. **Caution:** can be inflated by high debt or a small/negative equity base. |
 | **ROA %** (Return on Assets) | Net income ÷ total assets | How well assets are used to make profit. | >5% decent; banks/utilities run lower, asset-light firms higher. |
-| **ROIC %** (Return on Invested Capital) | After-tax operating profit ÷ (debt + equity) | Return on **all** capital employed — the cleanest quality gauge. | Value is created only when **ROIC > cost of capital (~8–10%)**. >15% is excellent. |
+| **ROIC %** (Return on Invested Capital) | After-tax operating profit ÷ (debt + equity) | Return on **all** capital employed — the cleanest quality gauge. Compare directly against **WACC**: ROIC > WACC = value creation; ROIC < WACC = value destruction. | >15% is excellent. Meaningful only relative to WACC. |
+| **WACC %** (Weighted Average Cost of Capital) | (Equity weight × Cost of Equity) + (Debt weight × After-tax Cost of Debt) | The minimum return the business must earn to satisfy all capital providers. Cost of equity via CAPM (10Y Treasury + Beta × 5.5% ERP); cost of debt from interest expense ÷ total debt. | Benchmark for ROIC. Typical range 6–12% depending on beta, leverage, and the rate environment. Falls back to 10Y Treasury for cost of debt when interest expense is unavailable. |
 | **ROCE %** (Return on Capital Employed) | EBIT ÷ (total assets − current liabilities) | Pre-tax sibling of ROIC. | >15% strong; compare to ROIC and to peers. |
 | **Revenue/Share** | TTM revenue ÷ shares outstanding | Sales backing each share. | Rising over time is the signal to want. |
+
+> **Why a margin can differ from the statement figures.** The margins above
+> (especially **EBITDA Margin** and **Net Profit Margin**) are Yahoo's
+> **trailing-twelve-month (TTM)** figures — TTM profit ÷ TTM revenue. The numbers
+> in the statement table below default to the latest **annual / fiscal-year**
+> column, so dividing them won't reproduce the margin. Use the **TTM** column in
+> the statement table to reconcile. Note also that Yahoo's `EBITDA` is its own
+> derived figure and may not equal the EBITDA line summed across the last four
+> quarters, so EBITDA Margin in particular is best read as Yahoo's published
+> number rather than re-derived.
 
 ---
 
@@ -72,9 +84,11 @@ Can the company pay its bills and survive a downturn?
 | **Total Equity** | Assets − liabilities, book value (latest **annual** balance sheet) | Owners' stake / net worth. | Negative equity is a red flag (often from heavy buybacks or losses). |
 | **Debt/Equity** | Total Debt ÷ Total Equity (as %), computed from the two figures shown above so they **reconcile** | Leverage relative to owners' capital. | <100% conservative, 100–200% moderate, >200% aggressive (except banks/utilities). |
 | **Debt/Equity (MRQ)** | Yahoo's pre-computed Debt/Equity, taken from its **most-recent-quarter** balance sheet | Same leverage gauge, but on the freshest quarterly figures rather than the annual ones. | Read with the same ranges. It can differ from **Debt/Equity** above when the latest quarter's debt or equity has moved since fiscal year-end — a larger or smaller recent equity base shifts the ratio. |
+| **Debt/EBITDA** | Total Debt ÷ EBITDA | How many years of EBITDA it would take to repay all debt — the leverage gauge lenders watch most. | **<3× comfortable**, 3–4× watch, **>4–5× heavily leveraged**. Varies by sector; utilities/REITs sustain more. |
 | **Current Ratio** | Current assets ÷ current liabilities | Ability to cover bills due within a year. | **>1 covers near-term obligations**; 1.5–3 comfortable; <1 potential squeeze; very high may mean idle assets. |
 | **Quick Ratio** | (Current assets − inventory) ÷ current liabilities | Stricter liquidity test (excludes inventory). | >1 strong; <1 relies on selling inventory to pay bills. |
 | **Free Cash Flow (FCF)** | Operating cash flow − capital expenditure | Cash left for dividends, buybacks, and debt paydown. | Positive and growing is the goal; persistent negative FCF needs external funding. |
+| **EBITDA/FCF** | EBITDA ÷ Free Cash Flow | Cash-conversion check: how much reported EBITDA it takes to produce a dollar of free cash. | **Closer to 1× = cleaner conversion.** High values flag heavy capex, taxes or working-capital drag eating into the cash EBITDA implies. |
 
 ---
 
@@ -132,10 +146,12 @@ survives down to operating income, net income, and cash. Widening gaps between
 Revenue and the profit bars mean rising costs.
 
 ### Growth · YoY % (last 5 years)
-Year-over-year growth rate of **Revenue, EPS, and EBITDA**. *Read it for:*
-acceleration vs. deceleration and consistency. EPS growing faster than revenue
-usually means improving margins and/or buybacks. (Bars need a prior year, so
-the oldest statement year has no growth bar.)
+Year-over-year growth rate of **Revenue, EPS, and EBITDA** (bars, left axis),
+plus an **EBITDA Margin %** line on the right axis. *Read it for:* acceleration
+vs. deceleration and consistency. EPS growing faster than revenue usually means
+improving margins and/or buybacks; the EBITDA-margin line shows whether that
+profitability is actually trending up or down over the same years. (Bars need a
+prior year, so the oldest statement year has no growth bar.)
 
 ### Share Dilution (last 5 years)
 Share counts as bars (left axis) with payout/yield as lines (right %-axis):

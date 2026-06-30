@@ -79,12 +79,14 @@ what it means, and the **units of the raw exported value**.
 | --- | --- | --- | --- | --- |
 | Debt/Eq | `debt_to_equity` | Total Debt ÷ Total Equity, computed from the two columns in this row so they reconcile. | fraction | <1.0 conservative, 1.0–2.0 moderate, >2.0 aggressive (ex banks/utilities). |
 | Debt/Eq (MRQ) | `debt_to_equity_mrq` | Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. | fraction | Same ranges; differs from Debt/Eq when the latest quarter has moved since fiscal year-end. |
+| Debt/EBITDA | `debt_ebitda` | Total Debt ÷ EBITDA — years of EBITDA needed to repay all debt. | multiple (×) | <3× comfortable, 3–4× watch, >4–5× heavily leveraged. |
 | LT Debt/Eq | `lt_debt_to_equity` | Long-term debt ÷ shareholders' equity. | fraction | As above, long-term portion only. |
 | Current Ratio | `current_ratio` | Current assets ÷ current liabilities. | ratio | >1 covers near-term bills; 1.5–3 comfortable; <1 possible squeeze. |
 | Quick Ratio | `quick_ratio` | (Current assets − inventory) ÷ current liabilities. | ratio | >1 strong; stricter than current ratio. |
 | Total Cash | `total_cash` | Cash + short-term investments. | currency | Dry powder; compare to total debt. |
 | Total Debt | `total_debt` | Short- + long-term borrowings. | currency | Judge against cash, equity, EBITDA. |
 | Total Equity | `total_equity` | Assets − liabilities (book value). | currency | Negative is a red flag. |
+| EBITDA/FCF | `ebitda_fcf` | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion; high values flag capex/tax/working-capital drag. |
 
 ## Dividends (sustainability matters more than headline yield)
 

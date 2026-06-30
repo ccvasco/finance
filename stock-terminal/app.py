@@ -80,13 +80,45 @@ def _epoch_to_iso(v):
     try:
         if not v:
             return None
-        return _dt.datetime.utcfromtimestamp(int(v)).strftime("%Y-%m-%d")
+        return _dt.datetime.fromtimestamp(int(v), _dt.timezone.utc).strftime("%Y-%m-%d")
     except (TypeError, ValueError, OSError):
         return None
 
 
 def get_info(ticker):
     return cached(f"info:{ticker}", 300, lambda: yf.Ticker(ticker).info or {})
+
+
+_ERP = 5.5  # Equity risk premium %, Damodaran US estimate
+
+def get_risk_free_rate():
+    """10-year US Treasury yield (%) from ^TNX, cached 1 hour."""
+    def produce():
+        try:
+            info = yf.Ticker("^TNX").info
+            return _num(info.get("regularMarketPrice") or info.get("previousClose"))
+        except Exception:
+            return None
+    return cached("rfr:^TNX", 3600, produce)
+
+
+def _compute_wacc(beta, market_cap, total_debt, interest_exp, tax_rate, rfr):
+    """WACC in %. Cost of equity via CAPM; cost of debt from interest expense / total debt
+    (falls back to rfr when interest expense is unavailable)."""
+    if beta is None or market_cap is None or rfr is None:
+        return None
+    total_debt = total_debt or 0
+    total_capital = market_cap + total_debt
+    if total_capital <= 0:
+        return None
+    w_e = market_cap / total_capital
+    w_d = total_debt / total_capital
+    cost_of_equity = rfr + beta * _ERP
+    if interest_exp and total_debt > 0:
+        cost_of_debt = abs(interest_exp) / total_debt * 100
+    else:
+        cost_of_debt = rfr  # fallback: riskless floor when no interest data
+    return w_e * cost_of_equity + w_d * cost_of_debt * (1 - tax_rate)
 
 
 def _get_stmt(ticker, attr):
@@ -205,6 +237,7 @@ def screener_row(ticker):
 
     # Heavier pulls (cached): statements, dividends, raw price history.
     inc = _get_stmt(ticker, "income_stmt")
+    q_inc = _get_stmt(ticker, "quarterly_income_stmt")
     bal = _get_stmt(ticker, "balance_sheet")
     cf = _get_stmt(ticker, "cash_flow")
     divs = get_dividends(ticker)
@@ -230,12 +263,20 @@ def screener_row(ticker):
     debt_eq = (total_debt / equity * 100) if (total_debt and equity and equity != 0) else None
     lt_debt_eq = (lt_debt / equity * 100) if (lt_debt and equity and equity != 0) else None
     fcf_coverage = (fcf / abs(div_paid)) if (fcf is not None and div_paid) else None
+    ebitda = _num(info.get("ebitda"))
+    debt_ebitda = (total_debt / ebitda) if (total_debt and ebitda and ebitda > 0) else None
+    ebitda_fcf = (ebitda / fcf) if (ebitda and fcf) else None
+
+    _q_basic = _series_from_stmt(q_inc, "Basic EPS")
+    _q_basic_vals = [x["value"] for x in _q_basic[-4:] if x.get("value") is not None]
+    basic_eps = sum(_q_basic_vals) if len(_q_basic_vals) == 4 else None
+
+    tax_rate = 0.21
+    if pretax and tax and pretax > 0:
+        tax_rate = min(max(tax / pretax, 0.0), 0.5)
 
     roic = None
     if ebit and equity and total_debt is not None:
-        tax_rate = 0.21
-        if pretax and tax and pretax > 0:
-            tax_rate = min(max(tax / pretax, 0.0), 0.5)
         invested = (total_debt or 0) + equity
         if invested:
             roic = ebit * (1 - tax_rate) / invested * 100
@@ -245,6 +286,11 @@ def screener_row(ticker):
         capital_employed = total_assets - current_liab
         if capital_employed:
             roce = ebit / capital_employed * 100
+
+    interest_exp = (_stmt_val(inc, "Interest Expense", "Interest Expense Non Operating") or
+                    _stmt_val(inc, "Interest Expense", "Interest Expense Non Operating", col=1))
+    wacc = _compute_wacc(_num(info.get("beta")), market_cap, total_debt,
+                         interest_exp, tax_rate, get_risk_free_rate())
 
     dg = dividend_growth(ticker)
     perf = performance(ticker)
@@ -267,7 +313,8 @@ def screener_row(ticker):
         "pc": _num(p_c),
         "p_fcf": _num(p_fcf),
         "ev_ebitda": _num(info.get("enterpriseToEbitda")),
-        "eps": _num(info.get("trailingEps")),
+        "eps": _num(info.get("trailingEps")),       # diluted EPS TTM
+        "eps_basic": _num(basic_eps),               # basic EPS TTM
         # profitability / income
         "income": _num(net_income),
         "profit_margin": _num(info.get("profitMargins")),
@@ -279,16 +326,19 @@ def screener_row(ticker):
         "roe": _num(info.get("returnOnEquity")),
         "roic": _num(roic),
         "roce": _num(roce),
+        "wacc": _num(wacc),
         "revenue_per_share": _num(info.get("revenuePerShare")),
         # financial health
         "debt_to_equity": _num(debt_eq),
         "debt_to_equity_mrq": _num(info.get("debtToEquity")),
+        "debt_ebitda": _num(debt_ebitda),
         "lt_debt_to_equity": _num(lt_debt_eq),
         "current_ratio": _num(info.get("currentRatio")),
         "quick_ratio": _num(info.get("quickRatio")),
         "total_cash": _num(total_cash),
         "total_debt": _num(total_debt),
         "total_equity": _num(equity),
+        "ebitda_fcf": _num(ebitda_fcf),
         # dividend
         "div_yield": _num(div_yield),
         "five_year_avg_yield": _num(info.get("fiveYearAvgDividendYield")),
@@ -517,6 +567,10 @@ def deepdive(ticker):
         except Exception:
             income = None
         try:
+            q_income = tk.quarterly_income_stmt
+        except Exception:
+            q_income = None
+        try:
             cashflow = tk.cash_flow
         except Exception:
             cashflow = None
@@ -576,11 +630,12 @@ def deepdive(ticker):
         total_assets = _stmt_val(balance, "Total Assets")
         current_liab = _stmt_val(balance, "Current Liabilities", "Total Current Liabilities")
 
+        tax_rate = 0.21
+        if pretax and tax and pretax > 0:
+            tax_rate = min(max(tax / pretax, 0.0), 0.5)
+
         roic = None  # NOPAT / (debt + equity)
         if ebit_latest and total_equity and total_debt is not None:
-            tax_rate = 0.21
-            if pretax and tax and pretax > 0:
-                tax_rate = min(max(tax / pretax, 0.0), 0.5)
             invested = (total_debt or 0) + total_equity
             if invested:
                 roic = ebit_latest * (1 - tax_rate) / invested * 100
@@ -591,6 +646,14 @@ def deepdive(ticker):
             if capital_employed:
                 roce = ebit_latest / capital_employed * 100
 
+        interest_exp = (
+            _stmt_val(income, "Interest Expense", "Interest Expense Non Operating") or
+            _stmt_val(income, "Interest Expense", "Interest Expense Non Operating", col=1)
+        )
+        market_cap = _num(info.get("marketCap"))
+        wacc = _compute_wacc(_num(info.get("beta")), market_cap, total_debt,
+                             interest_exp, tax_rate, get_risk_free_rate())
+
         # Debt/Equity from the same Total Debt and Total Equity shown in the
         # panel, so the three figures reconcile. Yahoo's debtToEquity (computed
         # from the most-recent quarter) is shown alongside as "Debt/Equity (MRQ)".
@@ -599,9 +662,24 @@ def deepdive(ticker):
 
         ebitda_margin = _num(info.get("ebitdaMargins") and info["ebitdaMargins"] * 100)
 
+        # Leverage / cash-conversion ratios built on EBITDA.
+        ebitda = _num(info.get("ebitda"))
+        debt_ebitda = (total_debt / ebitda) if (total_debt and ebitda and ebitda > 0) else None
+        ebitda_fcf = (ebitda / fcf_latest) if (ebitda and fcf_latest) else None
+
+        # Valuation / leverage / dividend metrics also shown in the screener (market_cap already set above).
+        total_cash = _num(info.get("totalCash"))
+        p_c = (market_cap / total_cash) if (market_cap and total_cash) else None
+        p_fcf = (market_cap / fcf_latest) if (market_cap and fcf_latest and fcf_latest > 0) else None
+        lt_debt = _stmt_val(balance, "Long Term Debt",
+                            "Long Term Debt And Capital Lease Obligation")
+        lt_debt_eq = (lt_debt / total_equity * 100) if (lt_debt and total_equity) else None
+        years_div_inc = consecutive_div_increases(get_dividends(ticker))
+
         # Year-over-year growth per period (bars for the last 5 years) --------
         eps_series = _series_from_stmt(income, "Diluted EPS", "Basic EPS")
         ebitda_series = _series_from_stmt(income, "EBITDA", "Normalized EBITDA")
+        ebitda_map = {e["period"]: e["value"] for e in ebitda_series}
         rev_g = _yoy(revenue)
         eps_g = _yoy(eps_series)
         ebitda_g = _yoy(ebitda_series)
@@ -610,11 +688,18 @@ def deepdive(ticker):
             {"period": p[:4],
              "revenue_growth": _num(rev_g.get(p)),
              "eps_growth": _num(eps_g.get(p)),
-             "ebitda_growth": _num(ebitda_g.get(p))}
+             "ebitda_growth": _num(ebitda_g.get(p)),
+             # EBITDA margin per fiscal year, drawn as a line on the growth panel
+             "ebitda_margin": _margin(ebitda_map.get(p), rev_map.get(p))}
             for p in growth_periods[-5:]
         ]
 
         dilution_rows = share_dilution(income, balance, cashflow, ticker, info)
+
+        # Basic EPS TTM = sum of last 4 quarters; Diluted EPS TTM from yfinance info
+        _q_basic = _series_from_stmt(q_income, "Basic EPS")
+        _q_basic_vals = [x["value"] for x in _q_basic[-4:] if x.get("value") is not None]
+        basic_eps = sum(_q_basic_vals) if len(_q_basic_vals) == 4 else None
 
         return {
             "ticker": ticker,
@@ -636,10 +721,15 @@ def deepdive(ticker):
                     "PEG Ratio": _num(info.get("trailingPegRatio")) or _num(info.get("pegRatio")),
                     "Price/Book": _num(info.get("priceToBook")),
                     "Price/Sales": _num(info.get("priceToSalesTrailing12Months")),
+                    "Price/Cash": _num(p_c),
+                    "Price/FCF": _num(p_fcf),
                     "EV/EBITDA": _num(info.get("enterpriseToEbitda")),
+                    "Diluted EPS": _num(info.get("trailingEps")),
+                    "Basic EPS": _num(basic_eps),
                 },
                 "dividend": {
                     "Dividend Rate": _num(div_rate),
+                    "Dividend TTM": _num(info.get("trailingAnnualDividendRate")),
                     "Dividend Yield %": _num(div_yield),
                     "Payout Ratio %": _num(info.get("payoutRatio") and info["payoutRatio"] * 100),
                     "FCF Coverage": _num(fcf_coverage),
@@ -647,6 +737,7 @@ def deepdive(ticker):
                     "5Y Avg Yield %": _num(info.get("fiveYearAvgDividendYield")),
                     "Div Growth 3Y %": growth["cagr_3y"],
                     "Div Growth 5Y %": growth["cagr_5y"],
+                    "Years ▲ Dividend": years_div_inc,
                 },
                 "profitability": {
                     "Gross Margin %": _num(info.get("grossMargins") and info["grossMargins"] * 100),
@@ -657,7 +748,9 @@ def deepdive(ticker):
                     "ROA %": _num(info.get("returnOnAssets") and info["returnOnAssets"] * 100),
                     "ROIC %": _num(roic),
                     "ROCE %": _num(roce),
+                    "WACC %": _num(wacc),
                     "Revenue/Share": _num(info.get("revenuePerShare")),
+                    "Net Income": _num(info.get("netIncomeToCommon")),
                 },
                 "health": {
                     "Total Cash": _num(info.get("totalCash")),
@@ -665,9 +758,12 @@ def deepdive(ticker):
                     "Total Equity": _num(total_equity),
                     "Debt/Equity": _num(debt_eq),
                     "Debt/Equity (MRQ)": _num(info.get("debtToEquity")),
+                    "Debt/EBITDA": _num(debt_ebitda),
+                    "LT Debt/Equity": _num(lt_debt_eq),
                     "Current Ratio": _num(info.get("currentRatio")),
                     "Quick Ratio": _num(info.get("quickRatio")),
                     "Free Cash Flow": _num(fcf_latest),
+                    "EBITDA/FCF": _num(ebitda_fcf),
                 },
                 "risk": {
                     "Beta": _num(info.get("beta")),
@@ -712,6 +808,48 @@ _STMT_ATTR = {
 }
 
 
+_QSTMT_ATTR = {
+    "income": "quarterly_income_stmt",
+    "balance": "quarterly_balance_sheet",
+    "cashflow": "quarterly_cash_flow",
+}
+
+
+def _ttm_column(ticker, stmt, labels):
+    """Trailing-twelve-month column for a statement table.
+
+    Income statement and cash flow are flows, so TTM = sum of the 4 most-recent
+    quarters (only when a full year of quarters exists and the row is present in
+    all four). The balance sheet is a point-in-time snapshot, so a sum is
+    meaningless — its "trailing" column is the most-recent quarter, labelled MRQ.
+    Returns (column_label, {row_label: value}); ("", {}) when unavailable.
+    """
+    attr = _QSTMT_ATTR.get(stmt, "quarterly_income_stmt")
+    try:
+        q = getattr(yf.Ticker(ticker), attr)
+    except Exception:
+        return "", {}
+    if q is None or getattr(q, "empty", True):
+        return "", {}
+    cols = sorted(q.columns, reverse=True)  # newest first
+    if stmt == "balance":
+        sel, col_label = cols[:1], "MRQ"
+    else:
+        if len(cols) < 4:
+            return "", {}
+        sel, col_label = cols[:4], "TTM"
+    out = {}
+    for label in labels:
+        if label not in q.index:
+            continue
+        vals = [_num(q.loc[label, c]) for c in sel]
+        if stmt == "balance":
+            out[label] = vals[0]
+        elif all(v is not None for v in vals):
+            out[label] = sum(vals)
+    return col_label, out
+
+
 def financials(ticker, stmt="income", freq="annual"):
     def produce():
         attr_annual, attr_quarter = _STMT_ATTR.get(stmt, _STMT_ATTR["income"])
@@ -731,6 +869,26 @@ def financials(ticker, stmt="income", freq="annual"):
                 "label": str(label),
                 "values": [_num(df.loc[label, c]) for c in cols],
             })
+        # Prepend a trailing-twelve-month (or MRQ for the balance sheet) column.
+        ttm_label, ttm = _ttm_column(ticker, stmt, list(df.index))
+        if ttm_label and ttm:
+            periods = [ttm_label] + periods
+            for row in rows:
+                row["values"] = [ttm.get(row["label"])] + row["values"]
+        # Surface Yahoo's own TTM EBITDA (the figure behind EBITDA Margin) next to
+        # the statement's EBITDA line, so the two are visible side by side. It's a
+        # single TTM scalar, so it populates the TTM column only.
+        if stmt == "income" and ttm_label == "TTM":
+            try:
+                y_ebitda = _num(get_info(ticker).get("ebitda"))
+            except Exception:
+                y_ebitda = None
+            if y_ebitda is not None:
+                yahoo_row = {"label": "EBITDA (Yahoo TTM)",
+                             "values": [y_ebitda] + [None] * (len(periods) - 1)}
+                idx = next((i for i, r in enumerate(rows)
+                            if "EBITDA" in r["label"]), None)
+                rows.insert(idx + 1, yahoo_row) if idx is not None else rows.append(yahoo_row)
         return {"ticker": ticker, "stmt": stmt, "freq": freq,
                 "periods": periods, "rows": rows}
 
@@ -872,18 +1030,18 @@ _METRIC_COLS = [
     # valuation
     ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
     ("ps", "P/S"), ("pb", "P/B"), ("ev_ebitda", "EV/EBITDA"),
-    ("p_fcf", "P/FCF"), ("pc", "P/C"), ("eps", "EPS"),
+    ("p_fcf", "P/FCF"), ("pc", "P/C"), ("eps", "Diluted EPS"), ("eps_basic", "Basic EPS"),
     # profitability
     ("profit_margin", "Net Margin"), ("gross_margin", "Gross Margin"),
     ("operating_margin", "Operating Margin"), ("ebitda_margin", "EBITDA Margin"),
-    ("roe", "ROE"), ("roa", "ROA"), ("roic", "ROIC"), ("roce", "ROCE"),
+    ("roe", "ROE"), ("roa", "ROA"), ("roic", "ROIC"), ("roce", "ROCE"), ("wacc", "WACC"),
     ("revenue_per_share", "Revenue/Share"), ("income", "Net Income"), ("fcf", "FCF"),
     # financial health
     ("debt_to_equity", "Debt/Eq"), ("debt_to_equity_mrq", "Debt/Eq (MRQ)"),
-    ("lt_debt_to_equity", "LT Debt/Eq"),
+    ("debt_ebitda", "Debt/EBITDA"), ("lt_debt_to_equity", "LT Debt/Eq"),
     ("current_ratio", "Current Ratio"), ("quick_ratio", "Quick Ratio"),
     ("total_cash", "Total Cash"), ("total_debt", "Total Debt"),
-    ("total_equity", "Total Equity"),
+    ("total_equity", "Total Equity"), ("ebitda_fcf", "EBITDA/FCF"),
     # dividend
     ("div_yield", "Yield"), ("five_year_avg_yield", "5Y Avg Yield"),
     ("payout_ratio", "Payout Ratio"), ("div_growth_3y", "Div Growth 3Y"),
@@ -990,7 +1148,7 @@ _PANEL_ORDER = [
 # Deep-dive panel metrics stored in percentage points but without a trailing
 # "%" in their label; the export divides them by 100 like the "… %" metrics so
 # the workbook is uniformly fraction-based (matching the screener export).
-_DD_PCT_LABELS = {"Debt/Equity", "Debt/Equity (MRQ)"}
+_DD_PCT_LABELS = {"Debt/Equity", "Debt/Equity (MRQ)", "LT Debt/Equity"}
 
 
 def _dd_metric(label, value):
@@ -1077,8 +1235,9 @@ def build_deepdive_workbook(ticker):
         pct={"gross_margin", "operating_margin", "net_margin"})
     write_table("Growth · YoY", d.get("growth", []), [
         ("period", "Year"), ("revenue_growth", "Revenue Growth"),
-        ("eps_growth", "EPS Growth"), ("ebitda_growth", "EBITDA Growth")],
-        pct={"revenue_growth", "eps_growth", "ebitda_growth"})
+        ("eps_growth", "EPS Growth"), ("ebitda_growth", "EBITDA Growth"),
+        ("ebitda_margin", "EBITDA Margin")],
+        pct={"revenue_growth", "eps_growth", "ebitda_growth", "ebitda_margin"})
     write_table("Share Dilution", d.get("share_dilution", []), [
         ("period", "Year"), ("shares_outstanding", "Shares Outstanding"),
         ("float_shares", "Float Shares"), ("treasury_shares", "Treasury Shares"),

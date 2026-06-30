@@ -574,6 +574,7 @@ _BASE_INFO = {
     "trailingEps": 5.0,
     "netIncomeToCommon": 50e9,
     "profitMargins": 0.25,
+    "ebitda": 120e9,
     "freeCashflow": 40e9,
     "returnOnAssets": 0.10,
     "returnOnEquity": 0.20,
@@ -1233,7 +1234,114 @@ class TestFinancials(unittest.TestCase):
         mock_tk.income_stmt = nan_df
         with patch("app.yf.Ticker", return_value=mock_tk):
             result = app.financials("TST", "income", "annual")
+        # no quarterly data on the mock -> no TTM column, single annual value
         self.assertIsNone(result["rows"][0]["values"][0])
+        self.assertEqual(result["periods"], ["2024-12-31"])
+
+
+# A 4-quarter income statement so a full TTM can be summed.
+_QINC_DF = _make_df(
+    ["Total Revenue", "Net Income"],
+    ["2024-12-31", "2024-09-30", "2024-06-30", "2024-03-31", "2023-12-31"],
+    {
+        "Total Revenue": [110e9, 100e9, 95e9, 90e9, 85e9],
+        "Net Income":    [ 30e9,  28e9, 26e9, 24e9, 22e9],
+    },
+)
+
+_QBAL_DF = _make_df(
+    ["Stockholders Equity", "Total Debt"],
+    ["2025-03-31", "2024-12-31"],
+    {
+        "Stockholders Equity": [55e9, 50e9],
+        "Total Debt":          [33e9, 30e9],
+    },
+)
+
+
+class TestTTMColumn(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _tk(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.quarterly_income_stmt = _QINC_DF
+        mock_tk.balance_sheet = _BAL_DF
+        mock_tk.quarterly_balance_sheet = _QBAL_DF
+        return mock_tk
+
+    def test_income_has_ttm_first_column(self):
+        with patch("app.yf.Ticker", return_value=self._tk()):
+            f = app.financials("TST", "income", "annual")
+        self.assertEqual(f["periods"][0], "TTM")
+        rev = next(r for r in f["rows"] if r["label"] == "Total Revenue")
+        # TTM = sum of the 4 newest quarters: 110+100+95+90 = 395e9
+        self.assertAlmostEqual(rev["values"][0], 395e9)
+        # remaining columns keep their annual values, newest-first
+        self.assertAlmostEqual(rev["values"][1], 400e9)
+        self.assertEqual(len(rev["values"]), len(f["periods"]))
+
+    def test_ttm_excludes_oldest_quarter(self):
+        # the 5th (oldest) quarter must not be included in the 4-quarter sum
+        with patch("app.yf.Ticker", return_value=self._tk()):
+            f = app.financials("TST", "income", "annual")
+        ni = next(r for r in f["rows"] if r["label"] == "Net Income")
+        self.assertAlmostEqual(ni["values"][0], 30e9 + 28e9 + 26e9 + 24e9)
+
+    def test_balance_uses_mrq_snapshot(self):
+        with patch("app.yf.Ticker", return_value=self._tk()):
+            f = app.financials("TST", "balance", "annual")
+        self.assertEqual(f["periods"][0], "MRQ")
+        eq = next(r for r in f["rows"] if r["label"] == "Stockholders Equity")
+        # MRQ = most-recent quarter only (not a sum): 55e9
+        self.assertAlmostEqual(eq["values"][0], 55e9)
+
+    def test_no_ttm_when_under_four_quarters(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        # only 2 quarters available -> no TTM column
+        mock_tk.quarterly_income_stmt = _make_df(
+            ["Total Revenue"], ["2024-12-31", "2024-09-30"],
+            {"Total Revenue": [110e9, 100e9]})
+        with patch("app.yf.Ticker", return_value=mock_tk):
+            f = app.financials("TST", "income", "annual")
+        self.assertNotIn("TTM", f["periods"])
+
+    def test_no_ttm_when_no_quarterly_data(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.quarterly_income_stmt = pd.DataFrame()
+        with patch("app.yf.Ticker", return_value=mock_tk):
+            f = app.financials("TST", "income", "annual")
+        self.assertNotIn("TTM", f["periods"])
+        self.assertEqual(f["periods"][0], "2024-12-31")
+
+    def test_income_adds_yahoo_ebitda_row(self):
+        with patch("app.yf.Ticker", return_value=self._tk()), \
+             patch("app.get_info", return_value={"ebitda": 165e9}):
+            f = app.financials("TST", "income", "annual")
+        yrow = next((r for r in f["rows"] if r["label"] == "EBITDA (Yahoo TTM)"), None)
+        self.assertIsNotNone(yrow)
+        # Yahoo's TTM scalar populates the TTM (first) column only
+        self.assertEqual(yrow["values"][0], 165e9)
+        self.assertTrue(all(v is None for v in yrow["values"][1:]))
+
+    def test_yahoo_ebitda_row_only_income(self):
+        with patch("app.yf.Ticker", return_value=self._tk()), \
+             patch("app.get_info", return_value={"ebitda": 165e9}):
+            b = app.financials("TST", "balance", "annual")
+        self.assertNotIn("EBITDA (Yahoo TTM)", [r["label"] for r in b["rows"]])
+
+    def test_no_yahoo_ebitda_row_without_ttm(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.quarterly_income_stmt = pd.DataFrame()   # no TTM column
+        with patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.get_info", return_value={"ebitda": 165e9}):
+            f = app.financials("TST", "income", "annual")
+        self.assertNotIn("EBITDA (Yahoo TTM)", [r["label"] for r in f["rows"]])
 
 
 # ---------------------------------------------------------------------------
@@ -1781,7 +1889,7 @@ class TestScreenerRowNewFields(unittest.TestCase):
                   "ebitda_margin", "roce", "revenue_per_share", "current_ratio",
                   "quick_ratio", "total_cash", "total_debt", "total_equity",
                   "div_growth_3y", "div_growth_5y", "ex_dividend_date",
-                  "debt_to_equity_mrq",
+                  "debt_to_equity_mrq", "debt_ebitda", "ebitda_fcf",
                   "short_interest", "days_to_cover", "altman_z", "piotroski_f"):
             self.assertIn(k, row)
 
@@ -1849,7 +1957,7 @@ class TestMetricColsExpanded(unittest.TestCase):
                   "ebitda_margin", "roce", "revenue_per_share", "current_ratio",
                   "quick_ratio", "total_cash", "total_debt", "total_equity",
                   "div_growth_3y", "div_growth_5y", "ex_dividend_date",
-                  "debt_to_equity_mrq",
+                  "debt_to_equity_mrq", "debt_ebitda", "ebitda_fcf",
                   "short_interest", "days_to_cover", "altman_z", "piotroski_f"):
             self.assertIn(k, keys)
 
@@ -2029,6 +2137,121 @@ class TestDebtEquityReconciliation(unittest.TestCase):
                                h["Total Debt"] / h["Total Equity"] * 100)
         self.assertAlmostEqual(h["Debt/Equity"], 60.0)
         self.assertAlmostEqual(h["Debt/Equity (MRQ)"], 50.0)
+
+
+class TestEbitdaRatios(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def test_screener_debt_ebitda(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        # totalDebt 30e9 / ebitda 120e9 = 0.25
+        self.assertAlmostEqual(row["debt_ebitda"], 0.25)
+
+    def test_screener_ebitda_fcf(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        # ebitda 120e9 / fcf 40e9 = 3.0
+        self.assertAlmostEqual(row["ebitda_fcf"], 3.0)
+
+    def test_screener_ratios_none_without_ebitda(self):
+        info = {k: v for k, v in _BASE_INFO.items() if k != "ebitda"}
+        with patch("app.get_info", return_value=info), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": _CF_DF}.get(attr)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 1.0, "1y": 1.0, "3y": 1.0, "5y": 1.0, "10y": 1.0}):
+            row = app.screener_row("TST")
+        self.assertIsNone(row["debt_ebitda"])
+        self.assertIsNone(row["ebitda_fcf"])
+
+    def test_deepdive_health_has_ebitda_ratios(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={
+                 "cagr_3y": None, "cagr_5y": None, "annual": []}):
+            d = app.deepdive("TST")
+        h = d["panels"]["health"]
+        self.assertAlmostEqual(h["Debt/EBITDA"], 0.25)
+        self.assertAlmostEqual(h["EBITDA/FCF"], 3.0)   # ebitda 120e9 / fcf 40e9
+
+    def test_growth_rows_carry_ebitda_margin(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={
+                 "cagr_3y": None, "cagr_5y": None, "annual": []}):
+            d = app.deepdive("TST")
+        self.assertTrue(d["growth"])
+        for g in d["growth"]:
+            self.assertIn("ebitda_margin", g)
+
+    def test_export_ratios_pass_through_not_fraction(self):
+        # Debt/EBITDA and EBITDA/FCF are multiples, not percentages
+        self.assertEqual(app._export_val("debt_ebitda", 0.25), 0.25)
+        self.assertEqual(app._export_val("ebitda_fcf", 3.0), 3.0)
+        keys = {k for k, _ in app._METRIC_COLS}
+        self.assertIn("debt_ebitda", keys)
+        self.assertIn("ebitda_fcf", keys)
+
+
+class TestDeepdivePanelCoverage(unittest.TestCase):
+    """Screener metrics that were previously absent from the deep-dive panels."""
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _panels(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.dividend_growth", return_value={
+                 "cagr_3y": None, "cagr_5y": None, "annual": []}):
+            return app.deepdive("TST")["panels"]
+
+    def test_valuation_has_pc_pfcf_eps(self):
+        v = self._panels()["valuation"]
+        for k in ("Price/Cash", "Price/FCF", "EPS"):
+            self.assertIn(k, v)
+        # P/C = marketCap 1e12 / totalCash 10e9 = 100
+        self.assertAlmostEqual(v["Price/Cash"], 100.0)
+
+    def test_profitability_has_net_income(self):
+        self.assertIn("Net Income", self._panels()["profitability"])
+
+    def test_health_has_lt_debt_equity(self):
+        # LT debt 25e9 / equity 50e9 * 100 = 50
+        self.assertAlmostEqual(self._panels()["health"]["LT Debt/Equity"], 50.0)
+
+    def test_dividend_has_ttm_and_years(self):
+        d = self._panels()["dividend"]
+        self.assertIn("Dividend TTM", d)
+        self.assertIn("Years ▲ Dividend", d)
+
+
+class TestEpochToIsoNoDeprecation(unittest.TestCase):
+
+    def test_no_deprecation_warning(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            self.assertEqual(app._epoch_to_iso(1747000000), "2025-05-11")
 
 
 if __name__ == "__main__":

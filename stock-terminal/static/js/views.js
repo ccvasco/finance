@@ -8,33 +8,37 @@ const Views = (() => {
     market_cap: "Market capitalization = share price × shares outstanding. The total value of the company's equity.",
     enterprise_value: "Enterprise Value = market cap + total debt − cash. The cost to acquire the whole business, debt included.",
     industry: "The company's industry classification.",
-    pe: "Price / Earnings (trailing). Price ÷ last 12 months' earnings per share. Lower can mean cheaper relative to profits.",
-    forward_pe: "Forward P/E. Price ÷ analysts' estimated earnings per share for the year ahead.",
+    pe: "Price / Earnings (trailing). Price ÷ last 12 months' earnings per share. Lower can mean cheaper relative to profits. (Years of current earning to pay back the price)",
+    forward_pe: "Forward P/E. Price ÷ analysts' estimated earnings per share for the year ahead. Lower than trailing P/E signals implies expected earnings growth.",
     peg: "P/E ÷ expected earnings growth. Around 1.0 is often considered fairly valued for the growth.",
     pb: "Price / Book. Share price ÷ book value (net assets) per share.",
     ps: "Price / Sales. Price ÷ last 12 months' revenue per share.",
     pc: "Price / Cash. Market cap ÷ total cash. Lower means more cash backing the valuation.",
     p_fcf: "Price / Free Cash Flow. Market cap ÷ free cash flow.",
     ev_ebitda: "Enterprise Value ÷ EBITDA. A valuation neutral to capital structure (includes debt).",
-    eps: "Earnings per share over the trailing 12 months.",
+    eps: "Diluted EPS (TTM). (Net Income − Preferred Dividends) ÷ Weighted Average Diluted Shares Outstanding. Accounts for all potentially dilutive securities (options, warrants, convertibles).",
+    eps_basic: "Basic EPS (TTM). (Net Income − Preferred Dividends) ÷ Weighted Average Basic Shares Outstanding. Does not account for potentially dilutive securities.",
     income: "Net income — profit attributable to shareholders (trailing 12 months).",
     profit_margin: "Net Profit Margin = net income ÷ revenue. Share of each sales dollar kept as profit.",
     gross_margin: "Gross Margin = (revenue − cost of goods sold) ÷ revenue. Pricing power and production efficiency.",
     operating_margin: "Operating Margin = operating income ÷ revenue. Profit after running the business, before interest & tax.",
-    ebitda_margin: "EBITDA Margin = EBITDA ÷ revenue. Operating profitability before non-cash (D&A) and financing items.",
+    ebitda_margin: "EBITDA Margin = EBITDA ÷ revenue (Yahoo's trailing-12-month figures). Note: Yahoo's EBITDA is its own derived number and differs from the 'Normalized EBITDA' line in the statement, so dividing the statement figures won't reproduce this exactly.",
     fcf: "Free Cash Flow = operating cash flow − capital expenditure. Cash left for dividends, buybacks and debt.",
     roa: "Return on Assets = net income ÷ total assets. How efficiently assets generate profit.",
     roe: "Return on Equity = net income ÷ shareholders' equity.",
-    roic: "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). Returns on all capital employed.",
+    roic: "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). Compare against WACC: ROIC > WACC means the business is creating value; ROIC < WACC means it is destroying it.",
     roce: "Return on Capital Employed = EBIT ÷ (total assets − current liabilities). Pre-tax return on long-term capital.",
+    wacc: "Weighted Average Cost of Capital. The minimum return the business must earn to satisfy all capital providers. Cost of equity via CAPM (10Y Treasury + Beta × 5.5% ERP); cost of debt from interest expense ÷ total debt. Compare against ROIC.",
     revenue_per_share: "Trailing 12-month revenue ÷ shares outstanding.",
     beta: "Beta measures how much the stock moves relative to the market (S&P 500). β = 1: moves in line with the market. β > 1: more volatile (e.g. β 1.5 means ~50% bigger swings). β < 1: less volatile. β < 0: tends to move against the market. Use it as a risk gauge — higher beta means higher volatility in both directions.",
     short_interest: "Shares sold short as a percentage of the public float. Higher means more investors betting the price will fall; very elevated levels can set up a short squeeze.",
     days_to_cover: "Short interest ÷ average daily volume — days of normal trading for shorts to buy back. Higher means a more crowded short.",
     altman_z: "Altman Z-Score: bankruptcy-risk gauge. >2.99 'safe', 1.81–2.99 'grey', <1.81 'distress'. Higher is safer. Less reliable for banks/financials.",
-    piotroski_f: "Piotroski F-Score (0–9): fundamental strength across 9 profitability, leverage and efficiency tests. 7–9 strong, 0–3 weak.",
+    piotroski_f: "Piotroski F-Score (0–9): fundamental strength across 9 tests (profitability, leverage and efficiency). 7–9 strong, 0–3 weak.",
     debt_to_equity: "Total debt ÷ shareholders' equity (shown as %), computed from the Total Debt and Total Equity in this row so the three reconcile. Higher means more leverage.",
     debt_to_equity_mrq: "Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. Differs from the Debt/Eq column when the quarterly and annual periods don't coincide.",
+    debt_ebitda: "Total Debt ÷ EBITDA. How many years of EBITDA it would take to repay all debt. Lower is safer — <3× is generally comfortable, >4–5× is heavily leveraged.",
+    ebitda_fcf: "EBITDA ÷ Free Cash Flow. How much reported EBITDA it takes to produce a dollar of free cash. Closer to 1× means EBITDA converts cleanly to cash; high values flag heavy capex, taxes or working-capital drag.",
     lt_debt_to_equity: "Long-term debt ÷ shareholders' equity (shown as %).",
     current_ratio: "Current assets ÷ current liabilities. >1 covers bills due within a year.",
     quick_ratio: "(Current assets − inventory) ÷ current liabilities. Stricter liquidity test.",
@@ -64,11 +68,17 @@ const Views = (() => {
     "Enterprise Value": "Market cap + debt − cash. The cost to acquire the whole business.",
     "Trailing P/E": "Price ÷ last 12 months' earnings per share.",
     "Forward P/E": "Price ÷ estimated earnings per share for the year ahead.",
-    "PEG Ratio": "P/E ÷ expected earnings growth. ~1.0 is roughly fair for the growth.",
+    "PEG Ratio": "P/E ÷ expected earnings growth. <1.0 is potentially undervalued. 1.0 is roughly fair for the growth. >1.0 is potentially overvalued.",
     "Price/Book": "Share price ÷ net assets (book value) per share.",
-    "Price/Sales": "Price ÷ trailing 12-month revenue per share.",
-    "EV/EBITDA": "Enterprise value ÷ EBITDA — capital-structure-neutral valuation.",
+    "Price/Sales": "Price ÷ trailing 12-month revenue per share. <1 low; 1-3 moderate; >10 rich (common in high-growth tech)",
+    "Price/Cash": "Market cap ÷ total cash. Lower means more cash backing the valuation.",
+    "Price/FCF": "Market cap ÷ free cash flow. Price vs. the actual cash the business generates.",
+    "EV/EBITDA": "Enterprise value ÷ EBITDA — capital-structure-neutral valuation. (Ignores debt & tax differences)",
+    "Diluted EPS": "(Net Income − Preferred Dividends) ÷ Weighted Average Diluted Shares Outstanding (TTM). Accounts for all potentially dilutive securities (options, warrants, convertibles). This is the standard EPS figure reported by most financial sites. (Higher and rising is better).",
+    "Basic EPS": "(Net Income − Preferred Dividends) ÷ Weighted Average Basic Shares Outstanding (TTM). Does not account for potentially dilutive securities — always ≥ Diluted EPS. A large gap between Basic and Diluted EPS signals heavy dilutive securities outstanding.",
     "Dividend Rate": "Forward annual dividend per share.",
+    "Dividend TTM": "Dividends actually paid per share over the trailing 12 months.",
+    "Years ▲ Dividend": "Consecutive completed calendar years of rising annual dividends.",
     "Dividend Yield %": "Annual dividend ÷ price.",
     "Payout Ratio %": "Share of earnings paid out as dividends.",
     "FCF Coverage": "Free cash flow ÷ dividends paid. Times the dividend is covered by cash flow. Green ≥ 1.2×, amber 0.8–1.2×, red < 0.8×.",
@@ -77,17 +87,19 @@ const Views = (() => {
     "Div Growth 3Y %": "Annualized growth (CAGR) of dividends over 3 years.",
     "Div Growth 5Y %": "Annualized growth (CAGR) of dividends over 5 years.",
     "Gross Margin %": "(Revenue − cost of goods) ÷ revenue.",
-    "Operating Margin %": "Operating income ÷ revenue.",
-    "EBITDA Margin %": "EBITDA (earnings before interest, tax, depreciation & amortization) ÷ revenue. Operating profitability before non-cash and financing items.",
+    "Operating Margin %": "Operating income ÷ revenue. Profit after running the business, before interest & tax.",
+    "EBITDA Margin %": "EBITDA ÷ revenue: Operating profitability before non-cash (D&A) and financing items. (Uses Yahoo's trailing-12-month figures).",
     "Profit Margin %": "Net income ÷ revenue.",
-    "ROE %": "Net income ÷ shareholders' equity.",
-    "ROA %": "Net income ÷ total assets.",
-    "ROIC %": "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). How efficiently all invested capital generates profit; compare against the cost of capital.",
+    "ROE %": "Return on Equity: Net income ÷ shareholders' equity. (Can be inflated by high debt or small/negative equity base, as Shareholder's Equity = total assets minus total liabilities).",
+    "ROA %": "Net income ÷ total assets. Shows how well assets are used to make profit. >5% is decent; banks/utilities run lower; asset-light firms higher.",
+    "ROIC %": "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). Compare against WACC: ROIC > WACC = value creation; ROIC < WACC = value destruction.",
     "ROCE %": "Return on Capital Employed = EBIT ÷ (total assets − current liabilities). Pre-tax return on the long-term capital running the business.",
-    "Revenue/Share": "Trailing 12-month revenue ÷ shares outstanding.",
+    "WACC %": "Weighted Average Cost of Capital — the minimum return needed to satisfy all capital providers. Cost of equity via CAPM (10Y Treasury + Beta × 5.5% ERP); cost of debt from interest expense ÷ total debt (falls back to 10Y Treasury when unavailable). Compare against ROIC.",
+    "Revenue/Share": "Trailing 12-month revenue ÷ shares outstanding. Shows sales backing each share. Rising over time is a good signal.",
+    "Net Income": "Net income — profit attributable to shareholders (trailing 12 months).",
     "Beta": "Measures how much the stock moves relative to the S&P 500. β = 1: moves with the market. β > 1: amplified swings (e.g. 1.5 = ~50% more volatile). β < 1: more stable. β < 0: tends to move against the market.",
     "Short Interest %": "Shares sold short as a percentage of the public float. Higher means more investors are betting the price will fall; very elevated levels signal bearish sentiment and can set up a short squeeze.",
-    "Days to Cover": "Short interest ÷ average daily volume — the number of days of normal trading it would take short sellers to buy back all shorted shares. Higher means a more crowded short and greater squeeze potential.",
+    "Days to Cover": "Short interest ÷ average daily volume — the number of days of normal trading it would take short sellers to buy back all shorted shares. Higher means a more crowded short and greater squeeze potential. <1 easy to cover; >5–7 crowded short, higher squeeze potential.",
     "Altman Z-Score": "Bankruptcy-risk gauge blending 5 weighted balance-sheet/earnings ratios. >2.99 = 'safe' zone, 1.81–2.99 = 'grey' zone, <1.81 = 'distress' zone. Higher is safer. Designed for manufacturers, so less reliable for banks and financials.",
     "Piotroski F-Score": "A 0–9 score of fundamental strength from 9 profitability, leverage and efficiency tests (1 point each). 7–9 = strong fundamentals, 0–3 = weak. Higher is better.",
     "Total Cash": "Cash and short-term investments on the balance sheet.",
@@ -95,9 +107,12 @@ const Views = (() => {
     "Total Equity": "Shareholders' equity — total assets minus total liabilities (book value).",
     "Debt/Equity": "Total debt ÷ shareholders' equity (as %), computed from the Total Debt and Total Equity shown in this panel so the three figures reconcile.",
     "Debt/Equity (MRQ)": "Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. Differs from Debt/Equity above when the quarterly and annual periods don't coincide.",
-    "Current Ratio": "Current assets ÷ current liabilities. >1 covers near-term bills.",
-    "Quick Ratio": "Liquid assets (excl. inventory) ÷ current liabilities.",
-    "Free Cash Flow": "Operating cash flow − capital expenditure.",
+    "Debt/EBITDA": "Total Debt ÷ EBITDA — years of EBITDA needed to repay all debt. Lower is safer: <3× comfortable, >4–5× heavily leveraged.",
+    "LT Debt/Equity": "Long-term debt ÷ shareholders' equity (as %). The long-term portion of leverage.",
+    "EBITDA/FCF": "EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. Closer to 1× means EBITDA converts cleanly to cash.",
+    "Current Ratio": "Current assets ÷ current liabilities. Ability to cover bills due within a year. >1 covers near-term obligations; 1.5–3 comfortable; <1 potential squeeze;",
+    "Quick Ratio": "Liquid assets (excl. inventory) ÷ current liabilities. Stricter liquidity test. >1 strong; <1 relies on selling inventory to pay bills.",
+    "Free Cash Flow": "Operating cash flow − capital expenditure. Cash left for dividends, buybacks, and debt paydown.",
   };
 
   // FCF dividend-coverage color band (Free Cash Flow / Dividends Paid).
@@ -124,7 +139,8 @@ const Views = (() => {
     { key: "ev_ebitda", label: "EV/EBITDA", fmt: (v) => Fmt.num(v) },
     { key: "p_fcf", label: "P/FCF", fmt: (v) => Fmt.num(v) },
     { key: "pc", label: "P/C", fmt: (v) => Fmt.num(v) },
-    { key: "eps", label: "EPS", fmt: (v, r) => Fmt.price(v, r.currency) },
+    { key: "eps", label: "Diluted EPS", fmt: (v, r) => Fmt.price(v, r.currency) },
+    { key: "eps_basic", label: "Basic EPS", fmt: (v, r) => Fmt.price(v, r.currency) },
     // profitability
     { key: "profit_margin", label: "Net Margin", fmt: (v) => Fmt.ratioPct(v) },
     { key: "gross_margin", label: "Gross Margin", fmt: (v) => Fmt.ratioPct(v) },
@@ -134,18 +150,21 @@ const Views = (() => {
     { key: "roa", label: "ROA", fmt: (v) => Fmt.ratioPct(v) },
     { key: "roic", label: "ROIC", fmt: (v) => Fmt.pct(v) },
     { key: "roce", label: "ROCE", fmt: (v) => Fmt.pct(v) },
+    { key: "wacc", label: "WACC", fmt: (v) => Fmt.pct(v) },
     { key: "revenue_per_share", label: "Rev/Share", fmt: (v, r) => Fmt.price(v, r.currency) },
     { key: "income", label: "Income", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "fcf", label: "FCF", fmt: (v, r) => Fmt.big(v, r.currency) },
     // financial health
     { key: "debt_to_equity", label: "Debt/Eq", fmt: (v) => Fmt.num(v, 1) },
     { key: "debt_to_equity_mrq", label: "Debt/Eq (MRQ)", fmt: (v) => Fmt.num(v, 1) },
+    { key: "debt_ebitda", label: "Debt/EBITDA", fmt: (v) => v == null ? null : Fmt.num(v, 2) + "×" },
     { key: "lt_debt_to_equity", label: "LT Debt/Eq", fmt: (v) => Fmt.num(v, 1) },
     { key: "current_ratio", label: "Current", fmt: (v) => Fmt.num(v, 2) },
     { key: "quick_ratio", label: "Quick", fmt: (v) => Fmt.num(v, 2) },
     { key: "total_cash", label: "Cash", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "total_debt", label: "Debt", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "total_equity", label: "Equity", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "ebitda_fcf", label: "EBITDA/FCF", fmt: (v) => v == null ? null : Fmt.num(v, 2) + "×" },
     // dividend
     { key: "div_yield", label: "Yield", fmt: (v) => Fmt.pct(v) },
     { key: "five_year_avg_yield", label: "5Y Avg Yld", fmt: (v) => Fmt.pct(v) },
@@ -618,10 +637,15 @@ const DeepDive = (() => {
   const GROWTH_SERIES = [
     { key: "revenue_growth", label: "Revenue", color: "accent", swatch: "var(--accent)",
       desc: "Year-over-year growth in total revenue." },
-    { key: "eps_growth", label: "EPS", color: "#2f81f7", swatch: "#2f81f7",
-      desc: "Year-over-year growth in earnings per share." },
+    { key: "eps_growth", label: "Diluted EPS", color: "#2f81f7", swatch: "#2f81f7",
+      desc: "Year-over-year growth in diluted earnings per share (falls back to basic EPS if diluted is unavailable)." },
     { key: "ebitda_growth", label: "EBITDA", color: "#168512", swatch: "#168512",
       desc: "Year-over-year growth in EBITDA (earnings before interest, tax, depreciation & amortization)." },
+  ];
+  // EBITDA margin drawn as a line (right %-axis) over the growth bars.
+  const GROWTH_LINES = [
+    { key: "ebitda_margin", label: "EBITDA Margin %", color: "#db61a2", swatch: "#db61a2",
+      desc: "EBITDA ÷ revenue for each fiscal year (right axis)." },
   ];
   // Share Dilution panel: share counts ($-axis bars) + yield/payout (% lines).
   const SHARE_BARS = [
@@ -694,10 +718,10 @@ const DeepDive = (() => {
     const cur = d.currency || "USD";
     const big = (v) => Fmt.cell(v, (x) => Fmt.big(x, cur));
     const fmtMaps = {
-      valuation: { "Market Cap": (v) => Fmt.big(v, cur), "Enterprise Value": (v) => Fmt.big(v, cur) },
-      dividend: { "Dividend Rate": (v) => Fmt.price(v, cur), "FCF Coverage": (v) => Fmt.num(v) + "×" },
-      profitability: {},
-      health: { "Total Cash": (v) => Fmt.big(v, cur), "Total Debt": (v) => Fmt.big(v, cur), "Total Equity": (v) => Fmt.big(v, cur), "Free Cash Flow": (v) => Fmt.big(v, cur) },
+      valuation: { "Market Cap": (v) => Fmt.big(v, cur), "Enterprise Value": (v) => Fmt.big(v, cur), "Diluted EPS": (v) => Fmt.price(v, cur), "Basic EPS": (v) => Fmt.price(v, cur) },
+      dividend: { "Dividend Rate": (v) => Fmt.price(v, cur), "Dividend TTM": (v) => Fmt.price(v, cur), "FCF Coverage": (v) => Fmt.num(v) + "×", "Years ▲ Dividend": (v) => String(Math.round(v)) },
+      profitability: { "Net Income": (v) => Fmt.big(v, cur), "Revenue/Share": (v) => Fmt.price(v, cur), "ROIC %": (v) => Fmt.num(v, 1) + "%", "ROCE %": (v) => Fmt.num(v, 1) + "%", "WACC %": (v) => Fmt.num(v, 1) + "%" },
+      health: { "Total Cash": (v) => Fmt.big(v, cur), "Total Debt": (v) => Fmt.big(v, cur), "Total Equity": (v) => Fmt.big(v, cur), "Free Cash Flow": (v) => Fmt.big(v, cur), "Debt/EBITDA": (v) => Fmt.num(v, 2) + "×", "EBITDA/FCF": (v) => Fmt.num(v, 2) + "×" },
       risk: {
         "Beta": (v) => Fmt.num(v, 2),
         "Days to Cover": (v) => Fmt.num(v, 2),
@@ -752,8 +776,8 @@ const DeepDive = (() => {
         </div></div>
 
         <div class="col-6"><div class="panel">
-          <div class="panel-head"><span class="dot"></span>Growth · YoY % (last 5Y)</div>
-          <div class="chart-legend">${legendItems(GROWTH_SERIES)}</div>
+          <div class="panel-head"><span class="dot"></span>Growth · YoY % (last 5Y)<span class="hint" style="margin-left:auto;font-weight:400">bars: YoY % (left) · line: EBITDA margin % (right)</span></div>
+          <div class="chart-legend">${legendItems(GROWTH_SERIES) + legendItems(GROWTH_LINES, true)}</div>
           <div class="chart-box" id="dd-growth"></div>
         </div></div>
 
@@ -790,9 +814,9 @@ const DeepDive = (() => {
     Charts.bars(document.getElementById("dd-revni"), d.revenue_net_income, FIN_SERIES,
       { height: 230 });
 
-    // year-over-year growth bars, grouped by year (last 5Y)
+    // year-over-year growth bars, grouped by year (last 5Y) + EBITDA margin line
     Charts.bars(document.getElementById("dd-growth"), d.growth || [],
-      GROWTH_SERIES, { height: 230, yFmt: pctAxis });
+      GROWTH_SERIES, { height: 230, yFmt: pctAxis, lines: GROWTH_LINES, y2Fmt: pct1Axis });
 
     // share dilution — share counts ($-axis bars) + yield/payout (% lines)
     Charts.bars(document.getElementById("dd-dilution"), d.share_dilution || [],
