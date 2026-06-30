@@ -308,7 +308,8 @@ const Views = (() => {
         <input class="filter-input" id="scr-filter" placeholder="Filter by ticker, name, sector…" value="${filter}">
         <span class="view-sub" id="scr-count"></span>
         <div class="spacer"></div>
-        <button class="btn btn-sm" id="scr-addall">★ Add all to watchlist</button>
+        <button class="btn btn-sm" id="scr-save">💾 Save as watchlist</button>
+        <button class="btn btn-sm" id="scr-addall">★ Add all to stars</button>
       </div>
       <div class="table-wrap" id="scr-table"><div class="loading-box"><span class="spinner"></span> Fetching market data…</div></div>`;
 
@@ -318,8 +319,25 @@ const Views = (() => {
     fi.addEventListener("input", () => { filter = fi.value; paint(); });
     root.querySelector("#scr-addall").addEventListener("click", () => {
       (lastRows || []).forEach((r) => { if (!r.error && !Store.inWatchlist(r.ticker)) Store.toggleWatch(r.ticker); });
-      App.toast("Added to watchlist", "ok"); paint();
+      App.toast("Added to stars", "ok"); paint();
     });
+    root.querySelector("#scr-save").addEventListener("click", saveAsList);
+
+    // Save the current screener set as a named watchlist (popup for the name).
+    async function saveAsList() {
+      if (!tickers.length) { App.toast("Analyze some tickers first", "err"); return; }
+      const name = await App.modalPrompt({
+        title: "Save watchlist",
+        label: `Save these ${tickers.length} tickers as a named watchlist`,
+        placeholder: "e.g. Tech megacaps",
+        confirmText: "Save",
+      });
+      if (name === null) return;
+      if (Store.findListByName(name) &&
+          !confirm(`A watchlist named "${name}" already exists. Overwrite it?`)) return;
+      Store.saveList(name, tickers);
+      App.toast(`Saved "${name}" · ${tickers.length} tickers`, "ok");
+    }
 
     let lastRows = null;
     function paint() {
@@ -346,30 +364,63 @@ const Views = (() => {
     }
   }
 
-  /* =================== WATCHLIST ===================== */
-  async function watchlist(root) {
-    render(root);
-    const wl = Store.getWatchlist();
-    root.innerHTML = `
-      <div class="view-head">
-        <div class="view-title">Watchlist</div>
-        <div class="view-sub">${wl.length} saved · persists locally</div>
-        <div class="spacer"></div>
-        ${wl.length ? `<button class="btn btn-sm btn-ghost" id="wl-clear">Clear all</button>` : ""}
-      </div>
-      <div class="table-wrap" id="wl-table"></div>`;
-    const tableEl = root.querySelector("#wl-table");
-    if (root.querySelector("#wl-clear"))
-      root.querySelector("#wl-clear").addEventListener("click", () => {
-        if (confirm("Clear the entire watchlist?")) { Store.clearWatchlist(); watchlist(root); }
-      });
+  /* =================== WATCHLISTS ===================== */
+  const STARRED_ID = "__starred__";
+  // Which saved list is open in the detail table. Persisted across re-renders so
+  // navigating away and back keeps your selection; null = nothing loaded (and so
+  // no API call is made until a list is explicitly selected).
+  let wlSelected = null;
 
-    if (!wl.length) {
-      tableEl.innerHTML = `<div class="empty"><div class="big">★</div>Your watchlist is empty.<div class="hint">Click the ☆ on any stock to save it here.</div></div>`;
+  const escHTML = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function listCardHTML(l, isStarred) {
+    const preview = l.tickers.slice(0, 8).join(" · ") + (l.tickers.length > 8 ? " …" : "");
+    const foot = isStarred
+      ? `<span class="wl-card-tag">from ☆ stars</span>`
+      : `<span class="wl-card-actions">
+           <button class="wl-act" data-rename="${l.id}" title="Rename">✎</button>
+           <button class="wl-act" data-delete="${l.id}" title="Delete">🗑</button>
+         </span>`;
+    return `
+      <div class="wl-card" data-list="${escHTML(l.id)}">
+        <div class="wl-card-top">
+          <span class="wl-card-name">${escHTML(l.name)}</span>
+          <span class="wl-card-count">${l.tickers.length}</span>
+        </div>
+        <div class="wl-card-tickers">${escHTML(preview) || "—"}</div>
+        <div class="wl-card-foot">${foot}</div>
+      </div>`;
+  }
+
+  // Resolve the selected id to { name, tickers } (or null if it no longer exists).
+  function selectedSet() {
+    if (wlSelected === STARRED_ID) {
+      const t = Store.getWatchlist();
+      return t.length ? { name: "★ Starred", tickers: t } : null;
+    }
+    const l = wlSelected ? Store.getList(wlSelected) : null;
+    return l ? { name: l.name, tickers: l.tickers } : null;
+  }
+
+  async function loadSelected(root) {
+    const detail = root.querySelector("#wl-detail");
+    if (!detail) return;
+    const sel = selectedSet();
+    if (!sel) { detail.innerHTML = ""; return; }
+    const id = wlSelected;
+    if (!sel.tickers.length) {
+      detail.innerHTML = `<div class="empty"><div class="hint">This watchlist is empty.</div></div>`;
       return;
     }
-    App.setExportTickers(wl);
-    tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading watchlist…</div>`;
+    App.setExportTickers(sel.tickers);
+    detail.innerHTML = `
+      <div class="wl-detail-head">
+        <span class="wl-detail-name">${escHTML(sel.name)}</span>
+        <span class="view-sub">${sel.tickers.length} tickers</span>
+      </div>
+      <div class="table-wrap" id="wl-table"><div class="loading-box"><span class="spinner"></span> Loading ${escHTML(sel.name)}…</div></div>`;
+    const tableEl = detail.querySelector("#wl-table");
     let lastRows = null;
     function paint() {
       const view = applyView(lastRows);
@@ -377,11 +428,72 @@ const Views = (() => {
       wireTable(tableEl, view, paint);
     }
     try {
-      const { rows } = await API.screener(wl);
+      const { rows } = await API.screener(sel.tickers);
+      if (wlSelected !== id) return;   // selection changed while awaiting
       lastRows = rows;
       paint();
     } catch (e) {
       tableEl.innerHTML = `<div class="empty"><div class="big">⚠</div>${e.message}</div>`;
+    }
+  }
+
+  async function watchlist(root) {
+    render(root);
+    const lists = Store.getLists();
+    const starred = Store.getWatchlist();
+    const cards = [];
+    if (starred.length) cards.push(listCardHTML({ id: STARRED_ID, name: "★ Starred", tickers: starred }, true));
+    lists.forEach((l) => cards.push(listCardHTML(l, false)));
+
+    root.innerHTML = `
+      <div class="view-head">
+        <div class="view-title">Watchlists</div>
+        <div class="view-sub">${lists.length} saved · select one to load</div>
+        <div class="spacer"></div>
+      </div>
+      ${cards.length
+        ? `<div class="wl-cards">${cards.join("")}</div>`
+        : `<div class="empty"><div class="big">★</div>No watchlists yet.<div class="hint">Analyze tickers in the <b>Screener</b>, then click <b>💾 Save as watchlist</b> — or star ☆ individual stocks.</div></div>`}
+      <div id="wl-detail"></div>`;
+
+    // Select + load on card click (ignoring clicks on the action buttons).
+    root.querySelectorAll(".wl-card").forEach((card) => {
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("[data-rename],[data-delete]")) return;
+        wlSelected = card.dataset.list;
+        root.querySelectorAll(".wl-card").forEach((c) => c.classList.toggle("active", c === card));
+        loadSelected(root);
+      });
+    });
+    root.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = b.dataset.rename;
+      const l = Store.getList(id);
+      if (!l) return;
+      const name = await App.modalPrompt({ title: "Rename watchlist", label: "New name", value: l.name, confirmText: "Rename" });
+      if (name === null) return;
+      const dup = Store.findListByName(name);
+      if (dup && dup.id !== id) { App.toast(`A watchlist named "${name}" already exists`, "err"); return; }
+      Store.renameList(id, name);
+      watchlist(root);
+    }));
+    root.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = b.dataset.delete;
+      const l = Store.getList(id);
+      if (!l || !confirm(`Delete watchlist "${l.name}"?`)) return;
+      if (wlSelected === id) wlSelected = null;
+      Store.deleteList(id);
+      watchlist(root);
+    }));
+
+    // Restore a still-valid selection after a re-render (rename/delete/nav return).
+    if (wlSelected && selectedSet()) {
+      const card = [...root.querySelectorAll(".wl-card")].find((c) => c.dataset.list === wlSelected);
+      if (card) card.classList.add("active");
+      loadSelected(root);
+    } else {
+      wlSelected = null;
     }
   }
 

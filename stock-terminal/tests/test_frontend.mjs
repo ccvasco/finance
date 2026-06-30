@@ -362,6 +362,66 @@ test("setLastTickers returns a copy", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Store — named watchlists
+// ---------------------------------------------------------------------------
+section("Store — named watchlists");
+
+test("getLists empty by default", () => {
+  localStorage.clear();
+  loadJS("store.js");
+  assert.equal(Store.getLists().length, 0);
+});
+
+test("saveList creates a named list", () => {
+  const l = Store.saveList("Tech", ["AAPL", "MSFT"]);
+  assert.equal(l.name, "Tech");
+  assert.deepEqual(l.tickers, ["AAPL", "MSFT"]);
+  assert.equal(Store.getLists().length, 1);
+});
+
+test("saveList persists to localStorage", () => {
+  const stored = JSON.parse(localStorage.getItem("st.lists"));
+  assert.equal(stored[0].name, "Tech");
+});
+
+test("saveList overwrites same name (case-insensitive)", () => {
+  Store.saveList("tech", ["NVDA"]);
+  assert.equal(Store.getLists().length, 1);
+  assert.deepEqual(Store.findListByName("TECH").tickers, ["NVDA"]);
+});
+
+test("findListByName returns null when absent", () =>
+  assert.equal(Store.findListByName("nope"), null));
+
+test("getList returns a copy (mutation-safe)", () => {
+  const id = Store.getLists()[0].id;
+  const l = Store.getList(id);
+  l.tickers.push("INJECTED");
+  assert.equal(Store.getList(id).tickers.includes("INJECTED"), false);
+});
+
+test("renameList updates the name", () => {
+  const id = Store.getLists()[0].id;
+  Store.renameList(id, "Semis");
+  assert.equal(Store.getList(id).name, "Semis");
+});
+
+test("deleteList removes it", () => {
+  const id = Store.getLists()[0].id;
+  Store.deleteList(id);
+  assert.equal(Store.getLists().length, 0);
+});
+
+test("named lists are independent of the star watchlist", () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.toggleWatch("AAPL");
+  Store.saveList("L1", ["MSFT", "NVDA"]);
+  assert.deepEqual(Store.getWatchlist(), ["AAPL"]);
+  assert.deepEqual(Store.getLists()[0].tickers, ["MSFT", "NVDA"]);
+});
+
+// ---------------------------------------------------------------------------
 // Fmt.date / Fmt.weekday  (Calendar tab)
 // ---------------------------------------------------------------------------
 section("Fmt.date / weekday");

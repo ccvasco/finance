@@ -1,7 +1,10 @@
 /* store.js — localStorage-backed watchlist + settings + last screener set.
    Auto-saves on every mutation; hydrated synchronously on load. */
 const Store = (() => {
-  const KEYS = { wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers" };
+  const KEYS = {
+    wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
+    lists: "st.lists",
+  };
 
   function read(key, fallback) {
     try {
@@ -22,6 +25,11 @@ const Store = (() => {
     read(KEYS.settings, {})
   );
   let lastTickers = read(KEYS.last, []);
+  // Named watchlists: [{ id, name, tickers:[...], createdAt, updatedAt }]
+  let lists = read(KEYS.lists, []);
+
+  const genId = () => "wl_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const cloneList = (l) => ({ ...l, tickers: l.tickers.slice() });
 
   const listeners = [];
   const notify = () => listeners.forEach((fn) => fn());
@@ -52,6 +60,35 @@ const Store = (() => {
     // -- last analyzed tickers --------------------------------------------
     getLastTickers: () => lastTickers.slice(),
     setLastTickers(arr) { lastTickers = arr.slice(); write(KEYS.last, lastTickers); },
+
+    // -- named watchlists --------------------------------------------------
+    getLists: () => lists.map(cloneList),
+    getList: (id) => { const l = lists.find((x) => x.id === id); return l ? cloneList(l) : null; },
+    findListByName: (name) => {
+      const n = (name || "").trim().toLowerCase();
+      const l = lists.find((x) => x.name.toLowerCase() === n);
+      return l ? cloneList(l) : null;
+    },
+    // Create, or overwrite the same-named list. Returns the saved list.
+    saveList(name, tickers) {
+      name = (name || "").trim();
+      const existing = lists.find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        existing.tickers = tickers.slice();
+        existing.updatedAt = Date.now();
+        write(KEYS.lists, lists); notify();
+        return cloneList(existing);
+      }
+      const l = { id: genId(), name, tickers: tickers.slice(), createdAt: Date.now() };
+      lists.push(l);
+      write(KEYS.lists, lists); notify();
+      return cloneList(l);
+    },
+    renameList(id, name) {
+      const l = lists.find((x) => x.id === id);
+      if (l) { l.name = (name || "").trim(); l.updatedAt = Date.now(); write(KEYS.lists, lists); notify(); }
+    },
+    deleteList(id) { lists = lists.filter((x) => x.id !== id); write(KEYS.lists, lists); notify(); },
 
     // -- settings ----------------------------------------------------------
     getSettings: () => Object.assign({}, settings),

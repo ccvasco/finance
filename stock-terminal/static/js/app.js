@@ -63,6 +63,58 @@ const App = (() => {
     finally { btn.disabled = false; btn.textContent = old; }
   }
 
+  /* Styled modal prompt for a single line of text. Resolves with the trimmed
+     value, or null if cancelled/escaped. */
+  function modalPrompt({ title = "", label = "", value = "", placeholder = "", confirmText = "Save" } = {}) {
+    return new Promise((resolve) => {
+      const rootEl = document.getElementById("modal-root");
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      rootEl.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-head">${esc(title)}</div>
+            <div class="modal-body">
+              ${label ? `<label class="modal-label" for="modal-input">${esc(label)}</label>` : ""}
+              <input class="modal-input" id="modal-input" type="text" autocomplete="off"
+                     spellcheck="false" placeholder="${esc(placeholder)}" value="${esc(value)}">
+              <div class="modal-err" id="modal-err"></div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-sm btn-ghost" id="modal-cancel">Cancel</button>
+              <button class="btn btn-sm btn-primary" id="modal-ok">${esc(confirmText)}</button>
+            </div>
+          </div>
+        </div>`;
+      rootEl.classList.remove("hidden");
+      const input = document.getElementById("modal-input");
+      const errEl = document.getElementById("modal-err");
+      input.focus(); input.select();
+
+      function done(val) {
+        rootEl.classList.add("hidden");
+        rootEl.innerHTML = "";
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      }
+      function submit() {
+        const v = input.value.trim();
+        if (!v) { errEl.textContent = "Please enter a name."; input.focus(); return; }
+        done(v);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); done(null); }
+        else if (e.key === "Enter") { e.preventDefault(); submit(); }
+      }
+      document.getElementById("modal-ok").addEventListener("click", submit);
+      document.getElementById("modal-cancel").addEventListener("click", () => done(null));
+      rootEl.querySelector(".modal-overlay").addEventListener("click", (e) => {
+        if (e.target.classList.contains("modal-overlay")) done(null);
+      });
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
   let toastTimer;
   function toast(msg, kind = "") {
     const el = document.getElementById("toast");
@@ -158,7 +210,7 @@ const App = (() => {
     checkConn();
   }
 
-  return { go, refreshCurrent, toast, applyAccent, setExportTickers, init };
+  return { go, refreshCurrent, toast, applyAccent, setExportTickers, modalPrompt, init };
 })();
 
 document.addEventListener("DOMContentLoaded", App.init);
