@@ -713,6 +713,23 @@ class TestScreenerRow(unittest.TestCase):
             row = app.screener_row("TST")
         self.assertAlmostEqual(row["price"], 100.0)
 
+    def test_unexpected_exception_becomes_error_row(self):
+        # A failure anywhere past get_info (rate limit, parse error) must come
+        # back as an error row, never raise — one bad ticker would otherwise
+        # 500 its entire screener batch.
+        with _patch_all(), \
+             patch("app.performance", side_effect=RuntimeError("Too Many Requests")):
+            row = app.screener_row("TST")
+        self.assertEqual(row["ticker"], "TST")
+        self.assertEqual(row["error"], "Too Many Requests")
+
+    def test_exception_without_message_uses_type_name(self):
+        with _patch_all(), \
+             patch("app.get_dividends", side_effect=KeyError()):
+            row = app.screener_row("TST")
+        self.assertEqual(row["ticker"], "TST")
+        self.assertTrue(row["error"])   # never an empty message
+
     def test_div_yield_computed(self):
         with _patch_all():
             row = app.screener_row("TST")

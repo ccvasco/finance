@@ -267,7 +267,16 @@ def consecutive_div_increases(divs):
 
 
 def screener_row(ticker):
-    """One row of comparison metrics. Missing values come back as None -> N/A."""
+    """One row of comparison metrics. Missing values come back as None -> N/A.
+    Any per-ticker failure (Yahoo rate limit, delisted symbol, parse error)
+    becomes an error row, so one bad ticker can never 500 its whole batch."""
+    try:
+        return _screener_row(ticker)
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e) or type(e).__name__}
+
+
+def _screener_row(ticker):
     try:
         info = get_info(ticker)
     except Exception as e:

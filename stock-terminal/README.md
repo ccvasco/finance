@@ -41,6 +41,13 @@ ticker-set** in the browser, so switching tabs or closing a deep-dive reuses
 them — only pressing **Analyze** re-fetches. Batch size, batch interval, and
 how many sets to cache are all configurable in **Settings**.
 
+**Failure isolation.** A ticker that errors (delisted, no Yahoo data, rate
+limited) renders as an inline error row — it never blocks the rest. If a whole
+batch fails (e.g. Yahoo throttling a very large set), its tickers show as
+error rows and the remaining batches keep loading; the status line reports the
+failed batches and **⟳ Refresh** retries them. Partial results are never
+cached, so a retry always re-fetches.
+
 **⟳ Refresh.** Every data view — Dashboard, Screener, a loaded watchlist,
 Calendar, and the deep-dive — has a **⟳ Refresh** button that bypasses both the
 browser cache and the server's Yahoo cache, re-pulling fresh data in place (no

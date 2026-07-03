@@ -264,18 +264,30 @@ const Views = (() => {
     for (let i = 0; i < tickers.length; i += size) batches.push(tickers.slice(i, i + size));
     const runId = ++fetchRun;
     let rows = [];
+    let failedBatches = 0;
     for (let b = 0; b < batches.length; b++) {
       if (runId !== fetchRun) return null;               // superseded by a newer fetch
-      const res = await API.screener(batches[b], force);
+      let res;
+      try {
+        res = await API.screener(batches[b], force);
+      } catch (e) {
+        // A failed batch (rate limit, network hiccup, server error) becomes
+        // error rows for its own tickers — the remaining batches still load.
+        failedBatches++;
+        res = { rows: batches[b].map((t) => ({ ticker: t, error: e.message })) };
+      }
       if (runId !== fetchRun) return null;
       rows = rows.concat(res.rows || []);
       onProgress && onProgress({ rows, loaded: rows.length, total: tickers.length,
                                  batch: b + 1, batches: batches.length,
-                                 done: b === batches.length - 1, cached: false });
+                                 done: b === batches.length - 1, cached: false,
+                                 failedBatches });
       if (b < batches.length - 1 && delay) await sleep(delay);
     }
     if (runId !== fetchRun) return null;
-    cacheSet(key, rows);
+    // Don't cache a set containing transport failures — a retry (tab switch,
+    // re-Analyze, ⟳ Refresh) should re-fetch rather than replay the errors.
+    if (!failedBatches) cacheSet(key, rows);
     return rows;
   }
 
@@ -495,7 +507,12 @@ const Views = (() => {
 
     function setStatus(p) {
       if (p.cached) { statusEl.innerHTML = `<span class="ok">✓</span> cached`; return; }
-      if (p.done) { statusEl.innerHTML = `<span class="ok">✓</span> all ${p.total} loaded`; return; }
+      if (p.done) {
+        statusEl.innerHTML = p.failedBatches
+          ? `<span class="err">⚠ ${p.failedBatches} of ${p.batches} batches failed — use ⟳ Refresh to retry</span>`
+          : `<span class="ok">✓</span> all ${p.total} loaded`;
+        return;
+      }
       const bi = p.batches > 1 ? ` · batch ${p.batch}/${p.batches}` : "";
       statusEl.innerHTML = `<span class="spinner" style="width:11px;height:11px"></span> loading ${p.loaded}/${p.total}${bi}`;
     }
@@ -513,8 +530,12 @@ const Views = (() => {
       lastRows = rows;
       paint();
       // Announce completion for multi-batch (freshly fetched) loads.
-      if (lastP && !lastP.cached && lastP.batches > 1)
-        App.toast(`Loaded all ${tickers.length} tickers`, "ok");
+      if (lastP && !lastP.cached && lastP.batches > 1) {
+        if (lastP.failedBatches)
+          App.toast(`${lastP.failedBatches} of ${lastP.batches} batches failed — ⟳ Refresh to retry`, "err");
+        else
+          App.toast(`Loaded all ${tickers.length} tickers`, "ok");
+      }
     } catch (e) {
       statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
       if (!lastRows || !lastRows.length)
