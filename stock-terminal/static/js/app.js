@@ -46,7 +46,7 @@ const App = (() => {
     setExportTickers(tickers);
     view = "screener";
     setActiveNav();
-    Views.screener(root(), tickers);
+    Views.screener(root(), tickers, { refresh: true });   // Analyze = explicit refresh
   }
 
   function setExportTickers(t) { exportTickers = t.slice(); }

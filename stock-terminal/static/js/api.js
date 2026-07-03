@@ -24,16 +24,21 @@ const API = (() => {
   }
   return {
     health: () => get("/api/health"),
-    screener: (tickers) => get(`/api/screener?tickers=${encodeURIComponent(tickers.join(","))}`),
-    deepdive: (t) => get(`/api/deepdive?ticker=${encodeURIComponent(t)}`),
+    // `refresh` asks the server to evict its cache for the request first,
+    // forcing a fresh pull from Yahoo.
+    screener: (tickers, refresh = false) =>
+      get(`/api/screener?tickers=${encodeURIComponent(tickers.join(","))}${refresh ? "&refresh=1" : ""}`),
+    deepdive: (t, refresh = false) =>
+      get(`/api/deepdive?ticker=${encodeURIComponent(t)}${refresh ? "&refresh=1" : ""}`),
     history: (t, range) => get(`/api/history?ticker=${encodeURIComponent(t)}&range=${range}`),
     financials: (t, stmt, freq) =>
       get(`/api/financials?ticker=${encodeURIComponent(t)}&stmt=${stmt}&freq=${freq}`),
-    calendar: ({ start, end, limit } = {}) => {
+    calendar: ({ start, end, limit, refresh } = {}) => {
       const p = new URLSearchParams();
       if (start) p.set("start", start);
       if (end) p.set("end", end);
       if (limit) p.set("limit", limit);
+      if (refresh) p.set("refresh", "1");
       const q = p.toString();
       return get(`/api/calendar${q ? "?" + q : ""}`);
     },

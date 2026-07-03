@@ -336,6 +336,23 @@ test("default defaultTickers is not empty", () => {
   assert(Store.getSettings().defaultTickers.length > 0);
 });
 
+test("default fetch-tuning settings", () => {
+  localStorage.clear();
+  loadJS("store.js");
+  const s = Store.getSettings();
+  assert.equal(s.batchSize, 20);
+  assert.equal(s.batchDelay, 400);
+  assert.equal(s.cacheSets, 25);
+});
+
+test("fetch-tuning settings persist", () => {
+  Store.setSetting("batchSize", 50);
+  Store.setSetting("cacheSets", 100);
+  const stored = JSON.parse(localStorage.getItem("st.settings"));
+  assert.equal(stored.batchSize, 50);
+  assert.equal(stored.cacheSets, 100);
+});
+
 // ---------------------------------------------------------------------------
 // Store — lastTickers
 // ---------------------------------------------------------------------------
@@ -445,6 +462,37 @@ test("factor 4 → 4:1",          () => assert.equal(Fmt.splitFromRatio(4), "4:1
 test("factor 0.2 → 1:5",        () => assert.equal(Fmt.splitFromRatio(0.2), "1:5"));
 test("factor null → null",      () => assert.equal(Fmt.splitFromRatio(null), null));
 test("factor 0 → null",         () => assert.equal(Fmt.splitFromRatio(0), null));
+
+// ---------------------------------------------------------------------------
+// API refresh param (URL construction, fetch stubbed)
+// ---------------------------------------------------------------------------
+section("API — refresh param");
+
+{
+  let lastUrl = null;
+  globalThis.fetch = (url) => {
+    lastUrl = url;
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+  };
+  const call = (fn) => { fn().catch(() => {}); return lastUrl; };
+
+  test("screener without refresh omits param", () =>
+    assert.ok(!call(() => API.screener(["AAPL", "MSFT"])).includes("refresh")));
+  test("screener with refresh appends refresh=1", () =>
+    assert.match(call(() => API.screener(["AAPL"], true)), /refresh=1/));
+  test("deepdive without refresh omits param", () =>
+    assert.ok(!call(() => API.deepdive("AAPL")).includes("refresh")));
+  test("deepdive with refresh appends refresh=1", () =>
+    assert.match(call(() => API.deepdive("AAPL", true)), /refresh=1/));
+  test("deepdive refresh keeps ticker param", () =>
+    assert.match(call(() => API.deepdive("AAPL", true)), /ticker=AAPL/));
+  test("calendar with refresh appends refresh=1", () =>
+    assert.match(call(() => API.calendar({ start: "2026-07-03", refresh: true })), /refresh=1/));
+  test("calendar without refresh omits param", () =>
+    assert.ok(!call(() => API.calendar({ start: "2026-07-03" })).includes("refresh")));
+
+  delete globalThis.fetch;
+}
 
 // ---------------------------------------------------------------------------
 // Summary

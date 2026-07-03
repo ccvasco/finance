@@ -60,6 +60,22 @@ def clear_cache():
         _CACHE.clear()
 
 
+def clear_ticker_cache(tickers):
+    """Evict every cached entry for the given tickers (all cache keys embed the
+    ticker as a ':'-separated segment, e.g. info:AAPL, fin:AAPL:income:annual)."""
+    tset = {t.upper() for t in tickers}
+    with _CACHE_LOCK:
+        for k in [k for k in _CACHE if tset & set(k.split(":"))]:
+            del _CACHE[k]
+
+
+def clear_prefix_cache(prefix):
+    """Evict cached entries whose key starts with `prefix` (e.g. 'mktcal:')."""
+    with _CACHE_LOCK:
+        for k in [k for k in _CACHE if k.startswith(prefix)]:
+            del _CACHE[k]
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #
@@ -201,6 +217,37 @@ def performance(ticker):
     return out
 
 
+def _downsample(vals, target=50):
+    """Evenly pick ~`target` points (always including the first and last) so a
+    5-year daily series compresses to a compact sparkline payload."""
+    n = len(vals)
+    if n <= target:
+        return list(vals)
+    idx = [int(k * (n - 1) / (target - 1)) for k in range(target)]
+    return [vals[j] for j in idx]
+
+
+def sparklines(ticker):
+    """Downsampled close-price series for the 6mo / 1y / 5y screener mini-charts.
+    Reuses the dividend-unadjusted close history already cached by get_raw_close
+    (also used for the performance columns), so it adds no extra network calls."""
+    s = get_raw_close(ticker)
+    out = {"6mo": [], "1y": [], "5y": []}
+    if s is None or len(s) == 0:
+        return out
+    last_date = s.index[-1]
+    for key, off in (("6mo", pd.DateOffset(months=6)),
+                     ("1y", pd.DateOffset(years=1)),
+                     ("5y", pd.DateOffset(years=5))):
+        try:
+            sub = s[s.index >= (last_date - off)]
+            vals = [round(float(v), 4) for v in sub.values if v == v]
+            out[key] = _downsample(vals)
+        except Exception:
+            pass
+    return out
+
+
 def consecutive_div_increases(divs):
     """Number of consecutive completed years of rising annual dividends."""
     if divs is None or len(divs) == 0:
@@ -294,10 +341,15 @@ def screener_row(ticker):
 
     dg = dividend_growth(ticker)
     perf = performance(ticker)
+    spark = sparklines(ticker)
 
     return {
         "ticker": ticker,
         "name": info.get("shortName") or info.get("longName") or ticker,
+        # mini price-chart series (dividend-unadjusted close), for the screener
+        "spark_6mo": spark["6mo"],
+        "spark_1y": spark["1y"],
+        "spark_5y": spark["5y"],
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "currency": info.get("currency"),
@@ -763,6 +815,7 @@ def deepdive(ticker):
                     "Current Ratio": _num(info.get("currentRatio")),
                     "Quick Ratio": _num(info.get("quickRatio")),
                     "Free Cash Flow": _num(fcf_latest),
+                    "EBITDA": _num(ebitda),
                     "EBITDA/FCF": _num(ebitda_fcf),
                 },
                 "risk": {
@@ -1025,7 +1078,12 @@ def stock_calendar(ticker):
 # --------------------------------------------------------------------------- #
 _METRIC_COLS = [
     ("ticker", "Ticker"), ("name", "Name"), ("sector", "Sector"),
-    ("industry", "Industry"), ("price", "Price"), ("market_cap", "Market Cap"),
+    ("industry", "Industry"),
+    # performance (price only) — right after Industry so returns read first,
+    # longest window (10Y) leftmost down to YTD
+    ("perf_10y", "Perf 10Y"), ("perf_5y", "Perf 5Y"),
+    ("perf_3y", "Perf 3Y"), ("perf_1y", "Perf 1Y"), ("perf_ytd", "Perf YTD"),
+    ("price", "Price"), ("market_cap", "Market Cap"),
     ("enterprise_value", "Enterprise Value"),
     # valuation
     ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
@@ -1052,9 +1110,6 @@ _METRIC_COLS = [
     ("beta", "Beta"), ("short_interest", "Short Interest"),
     ("days_to_cover", "Days to Cover"), ("altman_z", "Altman Z-Score"),
     ("piotroski_f", "Piotroski F-Score"),
-    # performance (price only)
-    ("perf_ytd", "Perf YTD"), ("perf_1y", "Perf 1Y"),
-    ("perf_3y", "Perf 3Y"), ("perf_5y", "Perf 5Y"), ("perf_10y", "Perf 10Y"),
 ]
 
 # screener_row keys whose value is in percentage points. Excel exports normalize
@@ -1066,6 +1121,10 @@ _PCT_KEYS = {
     "div_growth_3y", "div_growth_5y", "debt_to_equity", "debt_to_equity_mrq",
     "lt_debt_to_equity", "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
 }
+
+# Export columns rendered with an Excel percent number format, so they display as
+# a percentage (e.g. 41.72% / -25.00%) rather than the stored decimal fraction.
+_PCT_FORMAT_KEYS = {"perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y"}
 
 
 def _export_val(key, value):
@@ -1097,6 +1156,11 @@ def build_workbook(tickers):
         ws.append([_export_val(key, row.get(key)) for key, _ in _METRIC_COLS])
     style_header(ws, len(_METRIC_COLS))
     ws.freeze_panes = "A2"
+    # Show the performance columns as percentages (values are stored as fractions).
+    pct_cols = [i + 1 for i, (key, _) in enumerate(_METRIC_COLS) if key in _PCT_FORMAT_KEYS]
+    for col in pct_cols:
+        for r in range(2, len(tickers) + 2):
+            ws.cell(row=r, column=col).number_format = "0.00%"
 
     # Sheet 2: Price History (aligned by date across tickers)
     ws2 = wb.create_sheet("Price History")
@@ -1328,6 +1392,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        # refresh=1 evicts the server cache for the request's scope first, so
+        # the response is rebuilt from fresh Yahoo data.
+        refresh = qs.get("refresh", ["0"])[0] == "1"
         try:
             if path == "/api/health":
                 return self._send_json({"ok": True})
@@ -1335,6 +1402,8 @@ class Handler(BaseHTTPRequestHandler):
                 tickers = _parse_tickers(qs)
                 if not tickers:
                     return self._send_json({"rows": []})
+                if refresh:
+                    clear_ticker_cache(tickers)
                 with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as ex:
                     rows = list(ex.map(screener_row, tickers))
                 return self._send_json({"rows": rows})
@@ -1342,6 +1411,8 @@ class Handler(BaseHTTPRequestHandler):
                 t = _parse_tickers(qs)
                 if not t:
                     return self._send_json({"error": "ticker required"}, 400)
+                if refresh:
+                    clear_ticker_cache(t[:1])
                 return self._send_json(deepdive(t[0]))
             if path == "/api/history":
                 t = _parse_tickers(qs)
@@ -1363,6 +1434,8 @@ class Handler(BaseHTTPRequestHandler):
                     limit = max(1, min(int(qs.get("limit", ["80"])[0]), 100))
                 except ValueError:
                     limit = 80
+                if refresh:
+                    clear_prefix_cache("mktcal:")
                 return self._send_json(market_calendar(start, end, limit))
             if path == "/api/stock_calendar":
                 t = _parse_tickers(qs)

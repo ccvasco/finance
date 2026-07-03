@@ -51,7 +51,7 @@ better**, and consistency over time matters as much as the level.
 | Metric | Formula | How to read it | Rough range |
 | --- | --- | --- | --- |
 | **Gross Margin %** | (Revenue − COGS) ÷ revenue | Pricing power and production efficiency. | >40% strong, varies hugely (software 70%+, retail <30%). |
-| **Operating Margin %** | Operating income ÷ revenue | Profit after running the business, before interest & tax. | >15% healthy; negative means core operations lose money. |
+| **Operating Margin %** | Operating income ÷ revenue (Yahoo's trailing-12-month figures) | Profit after running the business, before interest & tax. **Note:** Yahoo derives its own operating income and revenue base, so this can differ — even in sign — from the fiscal-year statement margin shown in the revenue chart. | >15% healthy; negative means core operations lose money. |
 | **EBITDA Margin %** | EBITDA ÷ revenue | Operating profitability before non-cash (D&A) and financing items. | >20% generally strong; useful for capital-intensive firms. |
 | **Net Profit Margin %** | Net income ÷ revenue | Bottom-line cents kept per sales dollar. | >10% solid, >20% excellent, negative = unprofitable. |
 | **ROE %** (Return on Equity) | Net income ÷ shareholders' equity | Return generated on owners' capital. | >15% good. **Caution:** can be inflated by high debt or a small/negative equity base. |
@@ -61,15 +61,19 @@ better**, and consistency over time matters as much as the level.
 | **ROCE %** (Return on Capital Employed) | EBIT ÷ (total assets − current liabilities) | Pre-tax sibling of ROIC. | >15% strong; compare to ROIC and to peers. |
 | **Revenue/Share** | TTM revenue ÷ shares outstanding | Sales backing each share. | Rising over time is the signal to want. |
 
-> **Why a margin can differ from the statement figures.** The margins above
-> (especially **EBITDA Margin** and **Net Profit Margin**) are Yahoo's
-> **trailing-twelve-month (TTM)** figures — TTM profit ÷ TTM revenue. The numbers
-> in the statement table below default to the latest **annual / fiscal-year**
-> column, so dividing them won't reproduce the margin. Use the **TTM** column in
-> the statement table to reconcile. Note also that Yahoo's `EBITDA` is its own
-> derived figure and may not equal the EBITDA line summed across the last four
-> quarters, so EBITDA Margin in particular is best read as Yahoo's published
-> number rather than re-derived.
+> **Why a margin can differ from the statement figures.** The margins and
+> **Net Income** above are Yahoo's **trailing-twelve-month (TTM)** figures —
+> TTM profit ÷ TTM revenue. The statement tables and the
+> **Revenue · Profit · Net Income · FCF** chart use the **annual / fiscal-year**
+> columns instead, so dividing (or reading) those won't reproduce the panel. On
+> top of the window difference, Yahoo **derives its own** gross profit,
+> operating income, net income (to common), EBITDA, and revenue base, which can
+> classify expenses differently from the statement lines — so a panel margin can
+> differ from the chart's margin **even in sign** (e.g. a negative TTM Operating
+> Margin % next to a positive fiscal-year operating margin). Read the panel as
+> Yahoo's published TTM view and the charts as the audited fiscal-year view.
+> See **§9 Interpreting panel-vs-chart discrepancies** for what to conclude
+> from these gaps.
 
 ---
 
@@ -88,6 +92,7 @@ Can the company pay its bills and survive a downturn?
 | **Current Ratio** | Current assets ÷ current liabilities | Ability to cover bills due within a year. | **>1 covers near-term obligations**; 1.5–3 comfortable; <1 potential squeeze; very high may mean idle assets. |
 | **Quick Ratio** | (Current assets − inventory) ÷ current liabilities | Stricter liquidity test (excludes inventory). | >1 strong; <1 relies on selling inventory to pay bills. |
 | **Free Cash Flow (FCF)** | Operating cash flow − capital expenditure | Cash left for dividends, buybacks, and debt paydown. | Positive and growing is the goal; persistent negative FCF needs external funding. |
+| **EBITDA** | Earnings before interest, tax, depreciation & amortization (Yahoo's trailing-12-month figure) | Proxy for operating cash earnings — the raw figure behind the Debt/EBITDA and EBITDA/FCF ratios shown alongside it. | Compare against total debt and FCF; negative EBITDA means the ratios built on it are suppressed. |
 | **EBITDA/FCF** | EBITDA ÷ Free Cash Flow | Cash-conversion check: how much reported EBITDA it takes to produce a dollar of free cash. | **Closer to 1× = cleaner conversion.** High values flag heavy capex, taxes or working-capital drag eating into the cash EBITDA implies. |
 
 ---
@@ -136,9 +141,9 @@ ratio, (6) higher current ratio, (7) no new share issuance. *Efficiency:*
 ### Revenue · Profit · Net Income · FCF (last 5 years)
 Dollar bars per fiscal year:
 - **Revenue** — total sales.
-- **Gross Margin** (bar = gross profit $) — hover shows the gross **margin %**.
-- **Operating Margin** (bar = operating income $) — hover shows operating **margin %**.
-- **Net Income** (bar) — hover shows net **margin %**.
+- **Gross Margin** (bar = gross profit $) — hover shows the gross **margin %**. Fiscal-year statement figure — can differ from the TTM Gross Margin % in the Profitability panel.
+- **Operating Margin** (bar = operating income $) — hover shows operating **margin %**. Taken from the fiscal-year income statement, so it can differ from the TTM Operating Margin % in the Profitability panel (Yahoo derives that one itself).
+- **Net Income** (bar) — hover shows net **margin %**. Fiscal-year statement figure — can differ from the TTM Net Income and Profit Margin % in the Profitability panel.
 - **FCF** — free cash flow.
 
 *Read it for:* the trend (rising bars), and how much of each revenue dollar
@@ -178,6 +183,76 @@ Price-only returns over **YTD, 1Y, 3Y, 5Y, 10Y**. These **exclude dividends**
 (they are price appreciation only), so a high-yield stock's true total return is
 higher than shown here. *Read it for:* momentum and long-run track record —
 but past performance does not predict future returns.
+
+---
+
+## 9. Interpreting panel-vs-chart discrepancies
+
+The metric panels and the charts can show different figures for the same
+metric — sometimes very different (a panel Operating Margin of −7% next to a
+chart bar at +20%). This section explains what those gaps mean and what to
+conclude from them.
+
+### The two numbers answer different questions
+
+- **Charts / statements (fiscal year)** — the audited record: *"how did the
+  last full year go?"* Reliable, but can be up to ~15 months stale.
+- **Panels (Yahoo TTM)** — the freshest four quarters: *"how is the business
+  doing right now?"* Updates every earnings report, but uses Yahoo's own
+  (unaudited, black-box) expense classification.
+
+Neither is wrong. **The gap between them is itself a signal**, and it
+decomposes into two parts.
+
+### 1. The window gap → momentum
+
+When the TTM and fiscal-year figures cover different quarters, the divergence
+tells you which way the business is turning:
+
+- **TTM worse than FY** → the quarters *since* fiscal year-end are dragging
+  the average down: the business deteriorated recently. The chart's rising
+  bars are the past; the panel is closer to the present.
+- **TTM better than FY** → recent quarters are improving; the annual chart
+  understates the current run-rate.
+
+So a stock showing a strong fiscal year but a weak TTM panel isn't simply
+"profitable" or "unprofitable" — the honest reading is *"last year was strong,
+but profitability has deteriorated in the most recent quarters."* Verify in
+the quarterly statement tables: the last 4–6 quarterly columns almost always
+explain the gap.
+
+### 2. The definition gap → earnings quality
+
+Even over the same window, Yahoo's derived profit lines can sit far from the
+statement lines (its operating income can be a billion dollars away from the
+income statement's). A gap that large means there are **big items whose
+classification is debatable** — mark-to-market losses on held assets,
+impairments, restructuring charges, heavy stock-based compensation, legal
+settlements.
+
+- A wide definition gap flags **low earnings quality / a heavy "unusual
+  items" load**. Clean businesses (e.g. consumer staples) show near-identical
+  numbers from both sources.
+- It also means earnings are **sensitive to something other than operations**
+  (e.g. a crypto exchange whose profits swing with the coins on its balance
+  sheet, regardless of how the exchange itself performs).
+
+### Practical rules of thumb
+
+1. **Never average the two or pick the prettier one.** Use fiscal-year
+   statements for *"what is this business structurally"*; use TTM for
+   *"what's happening now."*
+2. **When they disagree, open the quarterly statements** and scan the last
+   4–6 quarters — that shows whether the gap is a trend or one bad quarter.
+3. **Sign flips are a red flag to investigate, not a verdict.** A negative
+   TTM margin against a positive fiscal-year margin means at least one recent
+   quarter was ugly — find out whether the cause is recurring (e.g. fee
+   compression) or episodic (a one-off loss).
+4. **Persistent large gaps = treat headline ratios skeptically** for that
+   company. P/E, PEG, and margin screens are unstable when the "E" itself is
+   volatile and definition-dependent.
+5. **Trust direction over level.** Both sources usually agree on the *trend*
+   (margins expanding or compressing) even when the levels differ.
 
 ---
 

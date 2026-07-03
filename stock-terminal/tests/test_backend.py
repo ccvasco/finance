@@ -555,6 +555,48 @@ class TestCache(unittest.TestCase):
         self.assertEqual(len(results), 10)
         self.assertTrue(all(r == 99 for r in results))
 
+    def test_clear_ticker_cache_evicts_all_ticker_keys(self):
+        for key in ("info:AAPL", "deepdive:AAPL", "hist:AAPL:1y",
+                    "fin:AAPL:income:annual", "divs:AAPL", "stockcal:AAPL"):
+            app.cached(key, 60, lambda: "v")
+        app.cached("info:MSFT", 60, lambda: "v")
+        app.clear_ticker_cache(["AAPL"])
+        with app._CACHE_LOCK:
+            keys = set(app._CACHE)
+        self.assertEqual(keys, {"info:MSFT"})
+
+    def test_clear_ticker_cache_multiple_tickers(self):
+        app.cached("info:AAPL", 60, lambda: "v")
+        app.cached("info:MSFT", 60, lambda: "v")
+        app.cached("info:NVDA", 60, lambda: "v")
+        app.clear_ticker_cache(["aapl", "msft"])   # case-insensitive
+        with app._CACHE_LOCK:
+            keys = set(app._CACHE)
+        self.assertEqual(keys, {"info:NVDA"})
+
+    def test_clear_ticker_cache_spares_unrelated_keys(self):
+        app.cached("rfr:^TNX", 60, lambda: 4.2)
+        app.cached("mktcal:2026-07-03:2026-07-10:80", 60, lambda: {})
+        app.clear_ticker_cache(["AAPL"])
+        with app._CACHE_LOCK:
+            self.assertEqual(len(app._CACHE), 2)
+
+    def test_clear_prefix_cache(self):
+        app.cached("mktcal:a:b:80", 60, lambda: 1)
+        app.cached("mktcal:c:d:80", 60, lambda: 2)
+        app.cached("info:AAPL", 60, lambda: 3)
+        app.clear_prefix_cache("mktcal:")
+        with app._CACHE_LOCK:
+            keys = set(app._CACHE)
+        self.assertEqual(keys, {"info:AAPL"})
+
+    def test_clear_ticker_cache_then_refetch(self):
+        calls = []
+        app.cached("deepdive:AAPL", 60, lambda: calls.append(1) or "v")
+        app.clear_ticker_cache(["AAPL"])
+        app.cached("deepdive:AAPL", 60, lambda: calls.append(1) or "v")
+        self.assertEqual(len(calls), 2)
+
 
 # ---------------------------------------------------------------------------
 # 7. screener_row (with mocked yfinance)
@@ -1530,6 +1572,42 @@ class TestHTTPServer(unittest.TestCase):
         except HTTPError as e:
             self.assertEqual(e.code, 400)
 
+    # -- refresh=1 cache eviction ---------------------------------------
+    def test_deepdive_refresh_evicts_cached_entry(self):
+        app.cached("deepdive:AAPL", 600, lambda: {"ticker": "SENTINEL"})
+        status, body, _ = _get(f"{self.base}/api/deepdive?ticker=AAPL")
+        self.assertEqual(json.loads(body)["ticker"], "SENTINEL")   # cached hit
+        status, body, _ = _get(f"{self.base}/api/deepdive?ticker=AAPL&refresh=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["ticker"], "AAPL")       # rebuilt fresh
+
+    def test_screener_refresh_evicts_ticker_keys(self):
+        app.cached("deepdive:AAPL", 600, lambda: {"x": 1})
+        app.cached("hist:AAPL:1y", 600, lambda: {"x": 2})
+        app.cached("info:MSFT", 600, lambda: {"x": 3})
+        _get(f"{self.base}/api/screener?tickers=AAPL&refresh=1")
+        with app._CACHE_LOCK:
+            keys = set(app._CACHE)
+        self.assertNotIn("deepdive:AAPL", keys)
+        self.assertNotIn("hist:AAPL:1y", keys)
+        self.assertIn("info:MSFT", keys)   # other tickers untouched
+
+    def test_screener_without_refresh_keeps_cache(self):
+        app.cached("deepdive:AAPL", 600, lambda: {"x": 1})
+        _get(f"{self.base}/api/screener?tickers=AAPL")
+        with app._CACHE_LOCK:
+            self.assertIn("deepdive:AAPL", app._CACHE)
+
+    def test_calendar_refresh_evicts_mktcal_keys(self):
+        app.cached("mktcal:a:b:80", 600, lambda: {})
+        app.cached("info:AAPL", 600, lambda: {})
+        with patch("app.market_calendar", return_value={}):
+            _get(f"{self.base}/api/calendar?refresh=1")
+        with app._CACHE_LOCK:
+            keys = set(app._CACHE)
+        self.assertNotIn("mktcal:a:b:80", keys)
+        self.assertIn("info:AAPL", keys)
+
     # -- static serving -----------------------------------------------
     def test_index_html_served(self):
         status, body, ct = _get(f"{self.base}/")
@@ -2227,7 +2305,7 @@ class TestDeepdivePanelCoverage(unittest.TestCase):
 
     def test_valuation_has_pc_pfcf_eps(self):
         v = self._panels()["valuation"]
-        for k in ("Price/Cash", "Price/FCF", "EPS"):
+        for k in ("Price/Cash", "Price/FCF", "Diluted EPS", "Basic EPS"):
             self.assertIn(k, v)
         # P/C = marketCap 1e12 / totalCash 10e9 = 100
         self.assertAlmostEqual(v["Price/Cash"], 100.0)
@@ -2252,6 +2330,143 @@ class TestEpochToIsoNoDeprecation(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             self.assertEqual(app._epoch_to_iso(1747000000), "2025-05-11")
+
+
+# ---------------------------------------------------------------------------
+# 18. Sparklines — downsampling + per-window price series
+# ---------------------------------------------------------------------------
+class TestDownsample(unittest.TestCase):
+
+    def test_passthrough_when_at_or_under_target(self):
+        self.assertEqual(app._downsample([1, 2, 3]), [1, 2, 3])
+        self.assertEqual(app._downsample(list(range(50)), target=50), list(range(50)))
+
+    def test_caps_at_target(self):
+        self.assertEqual(len(app._downsample(list(range(1000)), target=50)), 50)
+
+    def test_includes_first_and_last(self):
+        out = app._downsample(list(range(1000)), target=50)
+        self.assertEqual(out[0], 0)
+        self.assertEqual(out[-1], 999)
+
+    def test_custom_target(self):
+        self.assertEqual(len(app._downsample(list(range(100)), target=10)), 10)
+
+    def test_indices_monotonic(self):
+        out = app._downsample(list(range(500)), target=50)
+        self.assertEqual(out, sorted(out))
+
+
+class TestSparklines(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def test_windows_present_and_capped(self):
+        with patch("app.get_raw_close", return_value=_CLOSE_SERIES):
+            s = app.sparklines("TST")
+        for k in ("6mo", "1y", "5y"):
+            self.assertIn(k, s)
+            self.assertGreaterEqual(len(s[k]), 2)
+            self.assertLessEqual(len(s[k]), 50)
+
+    def test_empty_when_no_price_data(self):
+        with patch("app.get_raw_close", return_value=None):
+            self.assertEqual(app.sparklines("TST"),
+                             {"6mo": [], "1y": [], "5y": []})
+
+    def test_values_are_json_floats(self):
+        with patch("app.get_raw_close", return_value=_CLOSE_SERIES):
+            s = app.sparklines("TST")
+        self.assertTrue(all(isinstance(v, float) for v in s["1y"]))
+        json.dumps(s)  # must not raise
+
+    def test_longer_window_starts_earlier(self):
+        # The 5y window's first close should be <= the 6mo window's first close
+        # index-wise (earlier start on a monotonically rising series → lower val).
+        with patch("app.get_raw_close", return_value=_CLOSE_SERIES):
+            s = app.sparklines("TST")
+        self.assertLessEqual(s["5y"][0], s["6mo"][0])
+
+
+class TestScreenerRowSparklines(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def test_row_carries_spark_series(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        for k in ("spark_6mo", "spark_1y", "spark_5y"):
+            self.assertIn(k, row)
+            self.assertIsInstance(row[k], list)
+            self.assertTrue(row[k])   # non-empty for the mocked price series
+
+
+# ---------------------------------------------------------------------------
+# 19. Performance columns — export order + percent number format
+# ---------------------------------------------------------------------------
+class TestPerfColumnOrder(unittest.TestCase):
+
+    def test_perf_block_follows_industry_longest_first(self):
+        keys = [k for k, _ in app._METRIC_COLS]
+        i = keys.index("industry")
+        self.assertEqual(
+            keys[i + 1:i + 6],
+            ["perf_10y", "perf_5y", "perf_3y", "perf_1y", "perf_ytd"],
+        )
+
+    def test_perf_columns_appear_once(self):
+        keys = [k for k, _ in app._METRIC_COLS]
+        for k in ("perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y"):
+            self.assertEqual(keys.count(k), 1)
+
+
+@unittest.skipUnless(app._HAS_OPENPYXL, "openpyxl not installed")
+class TestPerfColumnFormat(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _build(self):
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        close = pd.Series([100.0, 105.0],
+                          index=pd.DatetimeIndex(["2025-01-02", "2025-01-03"]))
+        mock_tk.history.return_value = pd.DataFrame({"Close": close, "Volume": [1e6, 1e6]})
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": _CF_DF}.get(attr)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}), \
+             patch("app.yf.Ticker", return_value=mock_tk):
+            raw = app.build_workbook(["TST"])
+        from openpyxl import load_workbook
+        return load_workbook(io.BytesIO(raw))["Metrics"]
+
+    def test_perf_cells_have_percent_format(self):
+        ws = self._build()
+        headers = [c.value for c in ws[1]]
+        label_for = {k: lab for k, lab in app._METRIC_COLS}
+        for key in ("perf_ytd", "perf_1y", "perf_5y", "perf_10y"):
+            col = headers.index(label_for[key]) + 1
+            cell = ws.cell(row=2, column=col)
+            self.assertEqual(cell.number_format, "0.00%",
+                             f"{key} not percent-formatted")
+
+    def test_perf_value_is_fraction(self):
+        ws = self._build()
+        headers = [c.value for c in ws[1]]
+        label_for = {k: lab for k, lab in app._METRIC_COLS}
+        # perf_1y = 12.0 (pct points) stored as the fraction 0.12; the % format
+        # renders it as 12.00%.
+        col = headers.index(label_for["perf_1y"]) + 1
+        self.assertAlmostEqual(ws.cell(row=2, column=col).value, 0.12)
 
 
 if __name__ == "__main__":

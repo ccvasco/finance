@@ -21,7 +21,13 @@ const Store = (() => {
   // hydrate immediately
   let watchlist = read(KEYS.wl, []);
   let settings = Object.assign(
-    { accent: "green", defaultTickers: "AAPL, MSFT, NVDA, GOOGL, AMZN", range: "1y" },
+    {
+      accent: "green", defaultTickers: "AAPL, MSFT, NVDA, GOOGL, AMZN", range: "1y",
+      // screener fetch tuning
+      batchSize: 20,      // tickers per request when analyzing many at once
+      batchDelay: 400,    // ms pause between batches
+      cacheSets: 25,      // how many analyzed ticker-sets to keep cached
+    },
     read(KEYS.settings, {})
   );
   let lastTickers = read(KEYS.last, []);

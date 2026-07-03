@@ -4,6 +4,9 @@ const Views = (() => {
   // Plain-language descriptions shown in a hover bubble on each header.
   const COL_DESC = {
     ticker: "Stock symbol. Click a row to open the deep-dive view.",
+    spark_6mo: "6-month price trend (dividend-unadjusted close). Green = up over the window, red = down.",
+    spark_1y: "1-year price trend (dividend-unadjusted close). Green = up over the window, red = down.",
+    spark_5y: "5-year price trend (dividend-unadjusted close). Green = up over the window, red = down.",
     price: "Latest trading price.",
     market_cap: "Market capitalization = share price × shares outstanding. The total value of the company's equity.",
     enterprise_value: "Enterprise Value = market cap + total debt − cash. The cost to acquire the whole business, debt included.",
@@ -18,10 +21,10 @@ const Views = (() => {
     ev_ebitda: "Enterprise Value ÷ EBITDA. A valuation neutral to capital structure (includes debt).",
     eps: "Diluted EPS (TTM). (Net Income − Preferred Dividends) ÷ Weighted Average Diluted Shares Outstanding. Accounts for all potentially dilutive securities (options, warrants, convertibles).",
     eps_basic: "Basic EPS (TTM). (Net Income − Preferred Dividends) ÷ Weighted Average Basic Shares Outstanding. Does not account for potentially dilutive securities.",
-    income: "Net income — profit attributable to shareholders (trailing 12 months).",
-    profit_margin: "Net Profit Margin = net income ÷ revenue. Share of each sales dollar kept as profit.",
-    gross_margin: "Gross Margin = (revenue − cost of goods sold) ÷ revenue. Pricing power and production efficiency.",
-    operating_margin: "Operating Margin = operating income ÷ revenue. Profit after running the business, before interest & tax.",
+    income: "Net income to common shareholders (Yahoo's trailing-12-month figure). Note: Yahoo's TTM window and definition differ from the fiscal-year statement Net Income, so the two can disagree.",
+    profit_margin: "Net Profit Margin = net income ÷ revenue (Yahoo's trailing-12-month figures). Share of each sales dollar kept as profit. Note: Yahoo derives its own net income and revenue base, so this can differ from margins computed off the statement lines (which the charts use).",
+    gross_margin: "Gross Margin = (revenue − cost of goods sold) ÷ revenue (Yahoo's trailing-12-month figures). Pricing power and production efficiency. Note: Yahoo derives its own gross profit and revenue base, so this can differ from margins computed off the statement lines (which the charts use).",
+    operating_margin: "Operating Margin = operating income ÷ revenue (Yahoo's trailing-12-month figures). Note: Yahoo derives its own operating income and revenue base, so this can differ — even in sign — from margins computed off the statement lines (which the charts use).",
     ebitda_margin: "EBITDA Margin = EBITDA ÷ revenue (Yahoo's trailing-12-month figures). Note: Yahoo's EBITDA is its own derived number and differs from the 'Normalized EBITDA' line in the statement, so dividing the statement figures won't reproduce this exactly.",
     fcf: "Free Cash Flow = operating cash flow − capital expenditure. Cash left for dividends, buybacks and debt.",
     roa: "Return on Assets = net income ÷ total assets. How efficiently assets generate profit.",
@@ -86,17 +89,17 @@ const Views = (() => {
     "5Y Avg Yield %": "Average dividend yield over the last 5 years.",
     "Div Growth 3Y %": "Annualized growth (CAGR) of dividends over 3 years.",
     "Div Growth 5Y %": "Annualized growth (CAGR) of dividends over 5 years.",
-    "Gross Margin %": "(Revenue − cost of goods) ÷ revenue.",
-    "Operating Margin %": "Operating income ÷ revenue. Profit after running the business, before interest & tax.",
+    "Gross Margin %": "(Revenue − cost of goods) ÷ revenue. (Yahoo's trailing-12-month figure — Yahoo derives its own gross profit and revenue base, so this can differ from the fiscal-year statement margin shown in the revenue chart below.)",
+    "Operating Margin %": "Operating income ÷ revenue. Profit after running the business, before interest & tax. (Yahoo's trailing-12-month figure — Yahoo derives its own operating income and revenue base, so this can differ, even in sign, from the fiscal-year statement margin shown in the revenue chart below.)",
     "EBITDA Margin %": "EBITDA ÷ revenue: Operating profitability before non-cash (D&A) and financing items. (Uses Yahoo's trailing-12-month figures).",
-    "Profit Margin %": "Net income ÷ revenue.",
+    "Profit Margin %": "Net income ÷ revenue. (Yahoo's trailing-12-month figure — Yahoo derives its own net income and revenue base, so this can differ from the fiscal-year net margin shown on hover in the revenue chart below.)",
     "ROE %": "Return on Equity: Net income ÷ shareholders' equity. (Can be inflated by high debt or small/negative equity base, as Shareholder's Equity = total assets minus total liabilities).",
     "ROA %": "Net income ÷ total assets. Shows how well assets are used to make profit. >5% is decent; banks/utilities run lower; asset-light firms higher.",
     "ROIC %": "Return on Invested Capital = after-tax operating profit ÷ (debt + equity). Compare against WACC: ROIC > WACC = value creation; ROIC < WACC = value destruction.",
     "ROCE %": "Return on Capital Employed = EBIT ÷ (total assets − current liabilities). Pre-tax return on the long-term capital running the business.",
     "WACC %": "Weighted Average Cost of Capital — the minimum return needed to satisfy all capital providers. Cost of equity via CAPM (10Y Treasury + Beta × 5.5% ERP); cost of debt from interest expense ÷ total debt (falls back to 10Y Treasury when unavailable). Compare against ROIC.",
     "Revenue/Share": "Trailing 12-month revenue ÷ shares outstanding. Shows sales backing each share. Rising over time is a good signal.",
-    "Net Income": "Net income — profit attributable to shareholders (trailing 12 months).",
+    "Net Income": "Net income to common shareholders (Yahoo's trailing-12-month figure). Yahoo's TTM window and definition differ from the fiscal-year statement Net Income, so this can disagree with the Net Income bars in the revenue chart below.",
     "Beta": "Measures how much the stock moves relative to the S&P 500. β = 1: moves with the market. β > 1: amplified swings (e.g. 1.5 = ~50% more volatile). β < 1: more stable. β < 0: tends to move against the market.",
     "Short Interest %": "Shares sold short as a percentage of the public float. Higher means more investors are betting the price will fall; very elevated levels signal bearish sentiment and can set up a short squeeze.",
     "Days to Cover": "Short interest ÷ average daily volume — the number of days of normal trading it would take short sellers to buy back all shorted shares. Higher means a more crowded short and greater squeeze potential. <1 easy to cover; >5–7 crowded short, higher squeeze potential.",
@@ -113,6 +116,7 @@ const Views = (() => {
     "Current Ratio": "Current assets ÷ current liabilities. Ability to cover bills due within a year. >1 covers near-term obligations; 1.5–3 comfortable; <1 potential squeeze;",
     "Quick Ratio": "Liquid assets (excl. inventory) ÷ current liabilities. Stricter liquidity test. >1 strong; <1 relies on selling inventory to pay bills.",
     "Free Cash Flow": "Operating cash flow − capital expenditure. Cash left for dividends, buybacks, and debt paydown.",
+    "EBITDA": "Earnings Before Interest, Tax, Depreciation & Amortization — a proxy for operating cash earnings. Yahoo's own trailing-12-month figure (the same EBITDA behind the Debt/EBITDA and EBITDA/FCF ratios).",
   };
 
   // FCF dividend-coverage color band (Free Cash Flow / Dividends Paid).
@@ -126,6 +130,10 @@ const Views = (() => {
   // Column definitions for the comparison/screener table.
   const COLS = [
     { key: "ticker", label: "Ticker", kind: "ticker" },
+    // leading mini price charts (like Yahoo Finance), longest window first
+    { key: "spark_5y", label: "5Y Chart", kind: "spark" },
+    { key: "spark_1y", label: "1Y Chart", kind: "spark" },
+    { key: "spark_6mo", label: "6M Chart", kind: "spark" },
     { key: "price", label: "Price", fmt: (v, r) => Fmt.price(v, r.currency) },
     { key: "market_cap", label: "Mkt Cap", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "enterprise_value", label: "EV", fmt: (v, r) => Fmt.big(v, r.currency) },
@@ -196,16 +204,123 @@ const Views = (() => {
 
   function render(root) { root.innerHTML = ""; return root; }
 
+  // HTML-escape untrusted text (company names, error strings) before it goes
+  // into innerHTML — Yahoo names contain &, and defends against stray markup.
+  const escHTML = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  /* ---------- shared screener fetch: throttled batches + result cache ------- */
+  // Requests are chunked so a big ticker set (e.g. 500) is fetched a batch at a
+  // time with a short pause between batches, rather than hammering the server in
+  // one giant request. Fetched rows are cached by ticker-set signature, so tab
+  // switches and deep-dive closes reuse them; only an explicit refresh (Analyze)
+  // replaces an entry.
+  // Batch size, inter-batch delay and cache capacity are user-configurable in
+  // Settings; read them live so changes take effect on the next fetch.
+  const rowsCache = new Map();
+  let fetchRun = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function cfgInt(key, def, min) {
+    const v = parseInt(Store.getSettings()[key], 10);
+    return Number.isFinite(v) && v >= min ? v : def;
+  }
+  const cfgBatchSize = () => cfgInt("batchSize", 20, 1);
+  const cfgBatchDelay = () => cfgInt("batchDelay", 400, 0);
+  const cfgCacheSets = () => cfgInt("cacheSets", 25, 1);
+
+  function cacheSet(key, rows) {
+    rowsCache.delete(key);
+    rowsCache.set(key, rows);
+    while (rowsCache.size > cfgCacheSets()) rowsCache.delete(rowsCache.keys().next().value);
+  }
+  function clearRowsCache() { rowsCache.clear(); }
+
+  /* Replace `ticker`'s row in every cached ticker-set. Used by a deep-dive
+     refresh to sync that one ticker into the screener/dashboard/watchlist
+     tables without re-fetching the whole set. */
+  function updateCachedRow(ticker, row) {
+    rowsCache.forEach((rows) => {
+      const i = rows.findIndex((r) => r.ticker === ticker);
+      if (i >= 0) rows[i] = row;
+    });
+  }
+
+  /* Fetch screener rows for `tickers` in throttled batches, streaming partial
+     results to onProgress after each batch. Reuses the cache unless refresh is
+     set; `force` additionally tells the server to drop its own cache, so the
+     data is re-pulled from Yahoo. Resolves to the full row array, or null if a
+     newer fetch superseded it. */
+  async function getScreenerRows(tickers, { refresh = false, force = false, onProgress } = {}) {
+    const key = tickers.join(",");
+    if (!refresh && !force && rowsCache.has(key)) {
+      const hit = rowsCache.get(key);
+      onProgress && onProgress({ rows: hit, loaded: hit.length, total: tickers.length,
+                                 batch: 0, batches: 0, done: true, cached: true });
+      return hit;
+    }
+    const size = cfgBatchSize(), delay = cfgBatchDelay();
+    const batches = [];
+    for (let i = 0; i < tickers.length; i += size) batches.push(tickers.slice(i, i + size));
+    const runId = ++fetchRun;
+    let rows = [];
+    for (let b = 0; b < batches.length; b++) {
+      if (runId !== fetchRun) return null;               // superseded by a newer fetch
+      const res = await API.screener(batches[b], force);
+      if (runId !== fetchRun) return null;
+      rows = rows.concat(res.rows || []);
+      onProgress && onProgress({ rows, loaded: rows.length, total: tickers.length,
+                                 batch: b + 1, batches: batches.length,
+                                 done: b === batches.length - 1, cached: false });
+      if (b < batches.length - 1 && delay) await sleep(delay);
+    }
+    if (runId !== fetchRun) return null;
+    cacheSet(key, rows);
+    return rows;
+  }
+
+  /* Compact inline SVG sparkline. Line + faint area fill; colored green when the
+     window ends above where it started, red otherwise (matching Yahoo). */
+  function sparklineSVG(values) {
+    if (!Array.isArray(values) || values.length < 2) return '<span class="na">—</span>';
+    const w = 82, h = 24, pad = 2;
+    let min = Infinity, max = -Infinity;
+    for (const v of values) { if (v < min) min = v; if (v > max) max = v; }
+    const span = (max - min) || 1;
+    const n = values.length;
+    const X = (i) => pad + (i / (n - 1)) * (w - 2 * pad);
+    const Y = (v) => pad + (1 - (v - min) / span) * (h - 2 * pad);
+    let line = "", area = `${X(0).toFixed(1)},${(h - pad).toFixed(1)}`;
+    for (let i = 0; i < n; i++) {
+      const px = X(i).toFixed(1), py = Y(values[i]).toFixed(1);
+      line += (i ? " " : "") + px + "," + py;
+      area += " " + px + "," + py;
+    }
+    area += ` ${X(n - 1).toFixed(1)},${(h - pad).toFixed(1)}`;
+    const stroke = values[n - 1] >= values[0] ? "var(--up)" : "var(--down)";
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">` +
+      `<polygon points="${area}" fill="${stroke}" fill-opacity="0.10"/>` +
+      `<polyline points="${line}" fill="none" stroke="${stroke}" stroke-width="1.3" ` +
+      `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+
+  /* Period price change (%) over a sparkline window: last vs first close. */
+  function sparkChangePct(values) {
+    if (!Array.isArray(values) || values.length < 2 || !values[0]) return null;
+    return (values[values.length - 1] / values[0] - 1) * 100;
+  }
+
   /* ---------- comparison table (used by Screener + Watchlist) ---------- */
   function tableHTML(rows, { withSort = true } = {}) {
     const head = COLS.map((c) => {
       if (c.kind === "star") return `<th data-col="star"></th>`;
-      const active = sort.key === c.key;
+      const sortable = withSort && c.kind !== "spark";  // sparkline arrays aren't sortable
+      const active = sortable && sort.key === c.key;
       const arrow = active ? `<span class="arrow">${sort.dir < 0 ? "▼" : "▲"}</span>` : "";
       const tip = COL_DESC[c.key];
       const tipAttr = tip ? ` data-tip="${tip.replace(/"/g, "&quot;")}"` : "";
-      const tipCls = tip ? " has-tip" : "";
-      return `<th data-col="${c.key}" class="${tipCls.trim()}"${tipAttr}>${c.label}${withSort ? arrow : ""}</th>`;
+      const cls = [tip ? "has-tip" : "", c.kind === "spark" ? "nosort" : ""].filter(Boolean).join(" ");
+      return `<th data-col="${c.key}" class="${cls}"${tipAttr}>${c.label}${arrow}</th>`;
     }).join("");
 
     const body = rows.map((r) => rowHTML(r)).join("");
@@ -214,19 +329,27 @@ const Views = (() => {
 
   function rowHTML(r) {
     if (r.error) {
-      return `<tr><td class="ticker-cell" data-ticker="${r.ticker}">${r.ticker}</td>` +
-        `<td colspan="${COLS.length - 2}" class="na">— ${r.error} —</td>` +
+      return `<tr><td class="ticker-cell" data-ticker="${escHTML(r.ticker)}">${escHTML(r.ticker)}</td>` +
+        `<td colspan="${COLS.length - 2}" class="na">— ${escHTML(r.error)} —</td>` +
         `<td>${starHTML(r.ticker)}</td></tr>`;
     }
     const cells = COLS.map((c) => {
       if (c.kind === "ticker") {
-        return `<td class="ticker-cell" data-ticker="${r.ticker}">${r.ticker}` +
-          `<div class="sub">${(r.name || "").slice(0, 22)}</div></td>`;
+        return `<td class="ticker-cell" data-ticker="${escHTML(r.ticker)}">${escHTML(r.ticker)}` +
+          `<div class="sub">${escHTML((r.name || "").slice(0, 22))}</div></td>`;
       }
       if (c.kind === "star") return `<td>${starHTML(r.ticker)}</td>`;
       const raw = r[c.key];
+      if (c.kind === "spark") {
+        const pct = sparkChangePct(raw);
+        const period = c.label.replace(" Chart", "");
+        const tipAttr = pct == null ? ""
+          : ` data-tip="${period} price change: ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%"`;
+        const cls = "spark-cell" + (pct == null ? "" : " has-tip");
+        return `<td class="${cls}"${tipAttr}>${sparklineSVG(raw)}</td>`;
+      }
       if (c.kind === "text") {
-        return `<td class="text-cell">${raw ? String(raw) : '<span class="na">—</span>'}</td>`;
+        return `<td class="text-cell">${raw ? escHTML(String(raw)) : '<span class="na">—</span>'}</td>`;
       }
       const disp = c.fmt ? c.fmt(raw, r) : Fmt.num(raw);
       if (disp === null) return `<td class="na">N/A</td>`;
@@ -265,6 +388,13 @@ const Views = (() => {
 
   /* wires sticky header sort + star toggles + row->deepdive for a rendered table */
   function wireTable(container, rows, rerender) {
+    // Attach the delegated handler once per container. paint() replaces the
+    // inner <table> on every render (and on each streamed batch), but the
+    // container element persists — re-adding the listener each time would stack
+    // duplicate handlers. Delegation reads current state, so one binding covers
+    // all subsequent re-renders.
+    if (container.__wired) return;
+    container.__wired = true;
     // Event delegation on the table catches clicks on the <th> OR any child
     // element inside it (e.g. the .arrow <span>), so closest() always resolves
     // to the header regardless of which pixel was clicked.
@@ -273,7 +403,7 @@ const Views = (() => {
       const th = e.target.closest("thead th[data-col]");
       if (th) {
         const col = th.dataset.col;
-        if (col && col !== "star") {
+        if (col && col !== "star" && !th.classList.contains("nosort")) {
           if (sort.key === col) sort.dir *= -1;
           else sort = { key: col, dir: col === "ticker" ? 1 : -1 };
           rerender();
@@ -296,7 +426,7 @@ const Views = (() => {
   }
 
   /* =================== SCREENER ===================== */
-  async function screener(root, tickers) {
+  async function screener(root, tickers, opts = {}) {
     render(root);
     root.innerHTML = `
       <div class="view-head">
@@ -307,7 +437,9 @@ const Views = (() => {
       <div class="toolbar">
         <input class="filter-input" id="scr-filter" placeholder="Filter by ticker, name, sector…" value="${filter}">
         <span class="view-sub" id="scr-count"></span>
+        <span class="scr-status" id="scr-status"></span>
         <div class="spacer"></div>
+        <button class="btn btn-sm" id="scr-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
         <button class="btn btn-sm" id="scr-save">💾 Save as watchlist</button>
         <button class="btn btn-sm" id="scr-addall">★ Add all to stars</button>
       </div>
@@ -315,8 +447,13 @@ const Views = (() => {
 
     const tableEl = root.querySelector("#scr-table");
     const sub = root.querySelector("#scr-sub");
+    const statusEl = root.querySelector("#scr-status");
     const fi = root.querySelector("#scr-filter");
     fi.addEventListener("input", () => { filter = fi.value; paint(); });
+    root.querySelector("#scr-refresh").addEventListener("click", () => {
+      if (!tickers.length) { App.toast("Analyze some tickers first", "err"); return; }
+      screener(root, tickers, { force: true });
+    });
     root.querySelector("#scr-addall").addEventListener("click", () => {
       (lastRows || []).forEach((r) => { if (!r.error && !Store.inWatchlist(r.ticker)) Store.toggleWatch(r.ticker); });
       App.toast("Added to stars", "ok"); paint();
@@ -355,12 +492,34 @@ const Views = (() => {
     }
     sub.textContent = `${tickers.length} tickers`;
     App.setExportTickers(tickers);
+
+    function setStatus(p) {
+      if (p.cached) { statusEl.innerHTML = `<span class="ok">✓</span> cached`; return; }
+      if (p.done) { statusEl.innerHTML = `<span class="ok">✓</span> all ${p.total} loaded`; return; }
+      const bi = p.batches > 1 ? ` · batch ${p.batch}/${p.batches}` : "";
+      statusEl.innerHTML = `<span class="spinner" style="width:11px;height:11px"></span> loading ${p.loaded}/${p.total}${bi}`;
+    }
+    // Initial loading state, before the first batch returns.
+    statusEl.innerHTML = `<span class="spinner" style="width:11px;height:11px"></span> loading 0/${tickers.length}`;
+
+    let lastP = null;
     try {
-      const { rows } = await API.screener(tickers);
+      const rows = await getScreenerRows(tickers, {
+        refresh: opts.refresh,
+        force: opts.force,
+        onProgress: (p) => { lastP = p; lastRows = p.rows; paint(); setStatus(p); },
+      });
+      if (rows == null) return;   // superseded by a newer analyze
       lastRows = rows;
       paint();
+      // Announce completion for multi-batch (freshly fetched) loads.
+      if (lastP && !lastP.cached && lastP.batches > 1)
+        App.toast(`Loaded all ${tickers.length} tickers`, "ok");
     } catch (e) {
-      tableEl.innerHTML = `<div class="empty"><div class="big">⚠</div>${e.message}</div>`;
+      statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
+      if (!lastRows || !lastRows.length)
+        tableEl.innerHTML = `<div class="empty"><div class="big">⚠</div>${e.message}</div>`;
+      App.toast(e.message, "err");
     }
   }
 
@@ -370,9 +529,6 @@ const Views = (() => {
   // navigating away and back keeps your selection; null = nothing loaded (and so
   // no API call is made until a list is explicitly selected).
   let wlSelected = null;
-
-  const escHTML = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function listCardHTML(l, isStarred) {
     const preview = l.tickers.slice(0, 8).join(" · ") + (l.tickers.length > 8 ? " …" : "");
@@ -403,7 +559,7 @@ const Views = (() => {
     return l ? { name: l.name, tickers: l.tickers } : null;
   }
 
-  async function loadSelected(root) {
+  async function loadSelected(root, opts = {}) {
     const detail = root.querySelector("#wl-detail");
     if (!detail) return;
     const sel = selectedSet();
@@ -418,8 +574,10 @@ const Views = (() => {
       <div class="wl-detail-head">
         <span class="wl-detail-name">${escHTML(sel.name)}</span>
         <span class="view-sub">${sel.tickers.length} tickers</span>
+        <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
       </div>
       <div class="table-wrap" id="wl-table"><div class="loading-box"><span class="spinner"></span> Loading ${escHTML(sel.name)}…</div></div>`;
+    detail.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
     const tableEl = detail.querySelector("#wl-table");
     let lastRows = null;
     function paint() {
@@ -428,8 +586,16 @@ const Views = (() => {
       wireTable(tableEl, view, paint);
     }
     try {
-      const { rows } = await API.screener(sel.tickers);
-      if (wlSelected !== id) return;   // selection changed while awaiting
+      const rows = await getScreenerRows(sel.tickers, {
+        refresh: opts.force,
+        force: opts.force,
+        onProgress: (p) => {
+          if (wlSelected !== id) return;   // selection changed mid-stream
+          lastRows = p.rows;
+          paint();
+        },
+      });
+      if (rows == null || wlSelected !== id) return;
       lastRows = rows;
       paint();
     } catch (e) {
@@ -498,19 +664,22 @@ const Views = (() => {
   }
 
   /* =================== DASHBOARD ===================== */
-  async function dashboard(root) {
+  async function dashboard(root, opts = {}) {
     render(root);
     const wl = Store.getWatchlist();
     const last = Store.getLastTickers();
     root.innerHTML = `
       <div class="view-head"><div class="view-title">Dashboard</div>
-        <div class="view-sub">Market snapshot</div></div>
+        <div class="view-sub">Market snapshot</div>
+        <div class="spacer"></div>
+        <button class="btn btn-sm" id="dash-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button></div>
       <div class="cards" id="dash-cards"></div>
       <div style="height:20px"></div>
       <div class="panel">
         <div class="panel-head"><span class="dot"></span>${wl.length ? "Watchlist" : "Recently analyzed"}</div>
         <div class="table-wrap" style="border:0;max-height:none" id="dash-table"></div>
       </div>`;
+    root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
     const set = wl.length ? wl : last;
     const tableEl = root.querySelector("#dash-table");
     const cardsEl = root.querySelector("#dash-cards");
@@ -521,7 +690,15 @@ const Views = (() => {
     }
     tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading…</div>`;
     try {
-      const { rows } = await API.screener(set);
+      const rows = await getScreenerRows(set, {
+        refresh: opts.force,
+        force: opts.force,
+        onProgress: (p) => {
+          if (!p.done && !p.cached && p.batches > 1)
+            tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading ${p.loaded}/${p.total}…</div>`;
+        },
+      });
+      if (rows == null) return;   // superseded
       const ok = rows.filter((r) => !r.error);
       const totalMcap = ok.reduce((s, r) => s + (r.market_cap || 0), 0);
       const gainers = ok.filter((r) => (r.change_pct || 0) > 0).length;
@@ -621,7 +798,7 @@ const Views = (() => {
     return `<table class="data">${head}<tbody>${body}</tbody></table>`;
   }
 
-  async function calendar(root) {
+  async function calendar(root, opts = {}) {
     render(root);
     const ranges = [["1w", "Next 7 days"], ["2w", "Next 14 days"], ["1m", "Next 30 days"]];
     root.innerHTML = `
@@ -629,6 +806,7 @@ const Views = (() => {
         <div class="view-title">Calendar</div>
         <div class="view-sub" id="cal-sub"></div>
         <div class="spacer"></div>
+        <button class="btn btn-sm" id="cal-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
       </div>
       <div class="toolbar">
         <div class="stmt-tabs" style="padding:0;border:0">
@@ -642,6 +820,7 @@ const Views = (() => {
       </div>
       <div class="table-wrap" id="cal-table"><div class="loading-box"><span class="spinner"></span> Loading calendar…</div></div>`;
 
+    root.querySelector("#cal-refresh").addEventListener("click", () => calendar(root, { force: true }));
     root.querySelectorAll("[data-cal]").forEach((t) =>
       t.addEventListener("click", () => { calState.tab = t.dataset.cal; calendar(root); }));
     root.querySelectorAll("#cal-ranges [data-r]").forEach((c) =>
@@ -653,7 +832,7 @@ const Views = (() => {
     subEl.textContent = `${Fmt.date(start)} – ${Fmt.date(end)}`;
 
     try {
-      const data = await API.calendar({ start, end, limit: 100 });
+      const data = await API.calendar({ start, end, limit: 100, refresh: opts.force });
       if (data.error) { tableEl.innerHTML = emptyMsg("⚠", data.error); return; }
       const earnings = calState.tab === "earnings";
       const items = (earnings ? data.earnings : data.splits) || [];
@@ -700,7 +879,19 @@ const Views = (() => {
           </select>
         </div>
         <div class="set-row">
-          <div><div>Server cache</div><div class="desc">Clear cached Yahoo responses to force a refresh</div></div>
+          <div><div>Batch size</div><div class="desc">Tickers fetched per request when analyzing many at once</div></div>
+          <input class="input" id="set-batch" type="number" min="1" style="width:100px" value="${s.batchSize}">
+        </div>
+        <div class="set-row">
+          <div><div>Batch interval</div><div class="desc">Pause between batches, in milliseconds — higher is gentler on the server</div></div>
+          <input class="input" id="set-delay" type="number" min="0" step="50" style="width:100px" value="${s.batchDelay}">
+        </div>
+        <div class="set-row">
+          <div><div>Cached result sets</div><div class="desc">How many analyzed ticker-sets to keep in memory (each set caches all of its tickers)</div></div>
+          <input class="input" id="set-cache-sets" type="number" min="1" style="width:100px" value="${s.cacheSets}">
+        </div>
+        <div class="set-row">
+          <div><div>Server cache</div><div class="desc">Clear cached Yahoo responses (server + this browser) to force a refresh</div></div>
           <button class="btn btn-sm" id="set-cache">Clear cache</button>
         </div>
         <div class="set-row">
@@ -712,11 +903,20 @@ const Views = (() => {
       sw.addEventListener("click", () => { Store.setSetting("accent", sw.dataset.accent); App.applyAccent(); settings(root); }));
     root.querySelector("#set-default").addEventListener("change", (e) => Store.setSetting("defaultTickers", e.target.value));
     root.querySelector("#set-range").addEventListener("change", (e) => Store.setSetting("range", e.target.value));
-    root.querySelector("#set-cache").addEventListener("click", async () => { await API.clearCache(); App.toast("Cache cleared", "ok"); });
+    const setNum = (id, key, def, min) => root.querySelector(id).addEventListener("change", (e) => {
+      let v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < min) v = def;
+      Store.setSetting(key, v);
+      e.target.value = v;   // reflect the clamped value
+    });
+    setNum("#set-batch", "batchSize", 20, 1);
+    setNum("#set-delay", "batchDelay", 400, 0);
+    setNum("#set-cache-sets", "cacheSets", 25, 1);
+    root.querySelector("#set-cache").addEventListener("click", async () => { await API.clearCache(); clearRowsCache(); App.toast("Cache cleared", "ok"); });
     root.querySelector("#set-wipe").addEventListener("click", () => { if (confirm("Clear watchlist?")) { Store.clearWatchlist(); settings(root); } });
   }
 
-  return { screener, watchlist, dashboard, calendar, settings, COLS, PANEL_TIPS };
+  return { screener, watchlist, dashboard, calendar, settings, COLS, PANEL_TIPS, updateCachedRow };
 })();
 
 /* =================== DEEP DIVE OVERLAY ===================== */
@@ -735,13 +935,13 @@ const DeepDive = (() => {
       desc: "Total sales for the fiscal year." },
     { key: "gross_profit", label: "Gross Margin", color: "#2f81f7", swatch: "#2f81f7",
       tip: (d) => pctTip(d.gross_margin),
-      desc: "Gross profit (revenue − cost of goods sold). Hover a bar for the gross margin %." },
+      desc: "Gross profit (revenue − cost of goods sold). Hover a bar for the gross margin %. Taken from the fiscal-year income statement, so it can differ from the TTM Gross Margin % in the Profitability panel (Yahoo derives that one itself)." },
     { key: "operating_income", label: "Operating Margin", color: "#e3b341", swatch: "#e3b341",
       tip: (d) => pctTip(d.operating_margin),
-      desc: "Operating income — profit after running the business, before interest & tax. Hover a bar for the operating margin %." },
+      desc: "Operating income — profit after running the business, before interest & tax. Hover a bar for the operating margin %. Taken from the fiscal-year income statement, so it can differ from the TTM Operating Margin % in the Profitability panel (Yahoo derives that one itself)." },
     { key: "net_income", label: "Net Income", color: "#5b6f86", swatch: "#5b6f86",
       tip: (d) => pctTip(d.net_margin),
-      desc: "Bottom-line profit attributable to shareholders. Hover a bar for the net margin %." },
+      desc: "Bottom-line profit attributable to shareholders. Hover a bar for the net margin %. Taken from the fiscal-year income statement, so it can differ from the TTM Net Income and Profit Margin % in the Profitability panel (Yahoo derives those itself)." },
     { key: "fcf", label: "FCF", color: "#168512", swatch: "#168512",
       desc: "Free cash flow = operating cash flow − capital expenditure." },
   ];
@@ -757,7 +957,7 @@ const DeepDive = (() => {
   // EBITDA margin drawn as a line (right %-axis) over the growth bars.
   const GROWTH_LINES = [
     { key: "ebitda_margin", label: "EBITDA Margin %", color: "#db61a2", swatch: "#db61a2",
-      desc: "EBITDA ÷ revenue for each fiscal year (right axis)." },
+      desc: "EBITDA ÷ revenue for each fiscal year (right axis). Statement-derived, so it can differ from the TTM EBITDA Margin % in the Profitability panel (Yahoo derives that one itself)." },
   ];
   // Share Dilution panel: share counts ($-axis bars) + yield/payout (% lines).
   const SHARE_BARS = [
@@ -812,20 +1012,35 @@ const DeepDive = (() => {
     return `<div class="panel"><div class="panel-head"><span class="dot"></span>${title}</div><div class="kv">${rows}</div></div>`;
   }
 
-  async function open(ticker) {
+  async function open(ticker, opts = {}) {
     current = ticker;
     const ov = elOverlay();
     ov.classList.remove("hidden");
     ov.innerHTML = `<div class="dd-top"><span class="dd-back" id="dd-back">‹ Back</span>
       <span class="dd-title">${ticker}</span></div>
-      <div class="dd-body"><div class="loading-box"><span class="spinner"></span> Loading ${ticker}…</div></div>`;
+      <div class="dd-body"><div class="loading-box"><span class="spinner"></span> ${opts.refresh ? "Refreshing" : "Loading"} ${ticker}…</div></div>`;
     document.getElementById("dd-back").addEventListener("click", close);
     document.addEventListener("keydown", escClose);
 
     let d;
-    try { d = await API.deepdive(ticker); }
+    // refresh drops the server's cache for this ticker first, so the panels,
+    // charts, statements and calendar below all reload with fresh Yahoo data.
+    try { d = await API.deepdive(ticker, opts.refresh); }
     catch (e) { ov.querySelector(".dd-body").innerHTML = `<div class="empty"><div class="big">⚠</div>${e.message}</div>`; return; }
     if (current !== ticker) return;
+
+    // After a refresh, sync this one ticker's row into the cached screener/
+    // dashboard/watchlist tables. Sent with refresh=1 so the row is built from
+    // a brand-new Yahoo pull (never from cache — a refresh may be recovering
+    // from a bad cached fetch). Only this ticker is touched, not the full set.
+    if (opts.refresh) {
+      API.screener([ticker], true)
+        .then((res) => {
+          const row = res.rows && res.rows[0];
+          if (row && !row.error) Views.updateCachedRow(ticker, row);
+        })
+        .catch(() => {});
+    }
 
     const cur = d.currency || "USD";
     const big = (v) => Fmt.cell(v, (x) => Fmt.big(x, cur));
@@ -833,7 +1048,7 @@ const DeepDive = (() => {
       valuation: { "Market Cap": (v) => Fmt.big(v, cur), "Enterprise Value": (v) => Fmt.big(v, cur), "Diluted EPS": (v) => Fmt.price(v, cur), "Basic EPS": (v) => Fmt.price(v, cur) },
       dividend: { "Dividend Rate": (v) => Fmt.price(v, cur), "Dividend TTM": (v) => Fmt.price(v, cur), "FCF Coverage": (v) => Fmt.num(v) + "×", "Years ▲ Dividend": (v) => String(Math.round(v)) },
       profitability: { "Net Income": (v) => Fmt.big(v, cur), "Revenue/Share": (v) => Fmt.price(v, cur), "ROIC %": (v) => Fmt.num(v, 1) + "%", "ROCE %": (v) => Fmt.num(v, 1) + "%", "WACC %": (v) => Fmt.num(v, 1) + "%" },
-      health: { "Total Cash": (v) => Fmt.big(v, cur), "Total Debt": (v) => Fmt.big(v, cur), "Total Equity": (v) => Fmt.big(v, cur), "Free Cash Flow": (v) => Fmt.big(v, cur), "Debt/EBITDA": (v) => Fmt.num(v, 2) + "×", "EBITDA/FCF": (v) => Fmt.num(v, 2) + "×" },
+      health: { "Total Cash": (v) => Fmt.big(v, cur), "Total Debt": (v) => Fmt.big(v, cur), "Total Equity": (v) => Fmt.big(v, cur), "Free Cash Flow": (v) => Fmt.big(v, cur), "EBITDA": (v) => Fmt.big(v, cur), "Debt/EBITDA": (v) => Fmt.num(v, 2) + "×", "EBITDA/FCF": (v) => Fmt.num(v, 2) + "×" },
       risk: {
         "Beta": (v) => Fmt.num(v, 2),
         "Days to Cover": (v) => Fmt.num(v, 2),
@@ -850,9 +1065,11 @@ const DeepDive = (() => {
       <span class="dd-title">${ticker}</span>
       <span class="dd-name">${d.name || ""} · ${d.exchange || ""} ${d.sector ? "· " + d.sector : ""}</span>
       <span class="dd-price">${Fmt.cell(d.price, (v) => Fmt.price(v, cur))} ${chgTxt}</span>
+      <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
       <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>
       <button class="btn btn-sm" id="dd-star">${star ? "★ Watching" : "☆ Watch"}</button>`;
     document.getElementById("dd-back").addEventListener("click", close);
+    document.getElementById("dd-refresh").addEventListener("click", () => open(ticker, { refresh: true }));
     document.getElementById("dd-star").addEventListener("click", () => {
       const now = Store.toggleWatch(ticker);
       document.getElementById("dd-star").textContent = now ? "★ Watching" : "☆ Watch";
@@ -934,9 +1151,11 @@ const DeepDive = (() => {
     Charts.bars(document.getElementById("dd-dilution"), d.share_dilution || [],
       SHARE_BARS, { height: 230, lines: SHARE_LINES, y2Fmt: pct1Axis });
 
-    // price chart with range tabs
-    const ranges = ["1mo", "6mo", "1y", "5y", "max"];
+    // price chart with range tabs — mirrors the Settings range options, and
+    // always includes the configured default so it renders as an active tab.
+    const RANGES = ["1mo", "6mo", "1y", "2y", "5y", "max"];
     const def = Store.getSettings().range || "1y";
+    const ranges = RANGES.includes(def) ? RANGES : [...RANGES, def];
     const rt = document.getElementById("dd-ranges");
     rt.innerHTML = ranges.map((r) => `<span class="chip ${r === def ? "active" : ""}" data-r="${r}">${r}</span>`).join("");
     async function loadPrice(r) {

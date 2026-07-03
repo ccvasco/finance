@@ -15,6 +15,7 @@ to build a side-by-side comparison grid:
 
 | Category | Metrics |
 |---|---|
+| **Price charts** | Inline 6-month, 1-year, and 5-year price sparklines (green = up over the window, red = down) |
 | **Valuation** | P/E, Forward P/E, PEG, P/B, P/S, P/C, P/FCF, EV/EBITDA, Diluted EPS, Basic EPS |
 | **Profitability** | Net Income, Profit Margin, Gross Margin, Operating Margin, EBITDA Margin, FCF, ROA, ROE, ROIC, ROCE, WACC, Revenue/Share |
 | **Financial Health** | Total Cash, Total Debt, Total Equity, Debt/Equity, Debt/EBITDA, LT Debt/Equity, Current Ratio, Quick Ratio, EBITDA/FCF |
@@ -31,6 +32,22 @@ filter, and spinners while data loads.
 > performance windows are derived from financial statements and price history.
 > The first fetch for a fresh set of tickers takes a few seconds; subsequent
 > fetches are served from a ~30-minute in-memory cache.
+
+**Large batches & caching.** There's no cap on how many tickers you can enter.
+Big sets are fetched in **throttled batches** (default 20 tickers per request,
+with a short pause between batches) and rows **stream into the table** as each
+batch arrives, with a live progress indicator. Results are **cached per
+ticker-set** in the browser, so switching tabs or closing a deep-dive reuses
+them — only pressing **Analyze** re-fetches. Batch size, batch interval, and
+how many sets to cache are all configurable in **Settings**.
+
+**⟳ Refresh.** Every data view — Dashboard, Screener, a loaded watchlist,
+Calendar, and the deep-dive — has a **⟳ Refresh** button that bypasses both the
+browser cache and the server's Yahoo cache, re-pulling fresh data in place (no
+need to go back and re-Analyze). A deep-dive refresh touches **only that
+ticker**: it reloads the panels, charts, statements, and calendar, and syncs
+the ticker's row into the screener/dashboard/watchlist tables — the rest of
+the set is untouched, so returning to a large table is instant.
 
 ### Deep dive
 Click any ticker row to open a full analysis page:
@@ -57,9 +74,17 @@ Saved to `localStorage`; auto-saved on every add/remove and hydrated on load.
 
 ### Excel export (screener)
 Export any set of tickers to `.xlsx` with three sheets:
-- **Metrics** — every screener column.
+- **Metrics** — every screener column (performance columns first).
 - **Price History** — 1-year close prices aligned by date across tickers.
 - **Financials** — annual income statement stacked per ticker.
+
+### Settings
+- **Accent color**, **default tickers**, and **default price-chart range**.
+- **Batch size** — tickers fetched per request when analyzing many at once (default 20).
+- **Batch interval** — pause between batches in milliseconds (default 400); raise it to be gentler on the server/Yahoo.
+- **Cached result sets** — how many analyzed ticker-sets to keep in memory (default 25); *each set caches all of its tickers*, so a 500-ticker analysis is one fully-cached set.
+- **Clear cache** — clears both the server-side Yahoo cache and this browser's cached results.
+All settings persist in `localStorage`.
 
 ---
 

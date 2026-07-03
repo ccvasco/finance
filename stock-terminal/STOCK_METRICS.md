@@ -73,16 +73,16 @@ Below that, metrics are grouped into the same panels shown in the app.
 
 | Metric | Meaning | Units | Rough read (as fraction) |
 | --- | --- | --- | --- |
-| Gross Margin | (Revenue − cost of goods) ÷ revenue. | fraction | >0.40 strong (software 0.70+, retail <0.30). |
-| Operating Margin | Operating income ÷ revenue. | fraction | >0.15 healthy; negative = core ops lose money. |
+| Gross Margin | (Revenue − cost of goods) ÷ revenue (Yahoo's TTM figures — Yahoo derives its own gross profit and revenue base, so this can differ from the fiscal-year statement margin in Charts Data). | fraction | >0.40 strong (software 0.70+, retail <0.30). |
+| Operating Margin | Operating income ÷ revenue (Yahoo's TTM figures — Yahoo derives its own operating income and revenue base, so this can differ, even in sign, from the fiscal-year statement margin in Charts Data). | fraction | >0.15 healthy; negative = core ops lose money. |
 | EBITDA Margin | EBITDA ÷ revenue. | fraction | >0.20 generally strong. |
-| Profit Margin | Net income ÷ revenue. | fraction | >0.10 solid, >0.20 excellent, negative = unprofitable. |
+| Profit Margin | Net income ÷ revenue (Yahoo's TTM figures — Yahoo derives its own net income and revenue base, so this can differ from the fiscal-year Net Margin in Charts Data). | fraction | >0.10 solid, >0.20 excellent, negative = unprofitable. |
 | ROE | Net income ÷ shareholders' equity. | fraction | >0.15 good; can be inflated by leverage. |
 | ROA | Net income ÷ total assets. | fraction | >0.05 decent; banks/utilities lower. |
 | ROIC | After-tax operating profit ÷ (debt + equity). | fraction | Creates value only when > cost of capital (~0.08–0.10). >0.15 excellent. |
 | ROCE | EBIT ÷ (total assets − current liabilities). | fraction | >0.15 strong; pre-tax sibling of ROIC. |
 | Revenue/Share | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising is the signal to want. |
-| Net Income | Net income — profit to shareholders (trailing 12 months). | currency | Positive and growing is the goal. |
+| Net Income | Net income to common shareholders (Yahoo's trailing 12 months — its window and definition differ from the fiscal-year statement figure in Charts Data, so the two can disagree). | currency | Positive and growing is the goal. |
 
 ### Financial Health
 
@@ -98,6 +98,7 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Current Ratio | Current assets ÷ current liabilities. | ratio | >1 covers near-term bills; 1.5–3 comfortable. |
 | Quick Ratio | (Current assets − inventory) ÷ current liabilities. | ratio | >1 strong; stricter than current ratio. |
 | Free Cash Flow | Operating cash flow − capital expenditure. | currency | Positive and growing is the goal. |
+| EBITDA | Earnings before interest, tax, depreciation & amortization (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion. |
 
 ### Risk
@@ -126,11 +127,11 @@ table needs a prior year per bar, so it shows one fewer.
 | Revenue | Total sales. | currency |
 | Gross Profit | Revenue − cost of goods sold. | currency |
 | Operating Income | Profit after running the business, before interest & tax. | currency |
-| Net Income | Bottom-line profit attributable to shareholders. | currency |
+| Net Income | Bottom-line profit attributable to shareholders (fiscal-year statement — can differ from the Overview sheet's TTM Net Income, which Yahoo derives itself). | currency |
 | FCF | Free cash flow = operating cash flow − capex. | currency |
-| Gross Margin | Gross profit ÷ revenue. | fraction |
-| Operating Margin | Operating income ÷ revenue. | fraction |
-| Net Margin | Net income ÷ revenue. | fraction |
+| Gross Margin | Gross profit ÷ revenue (from the fiscal-year statement — can differ from the Overview sheet's TTM Gross Margin, which Yahoo derives itself). | fraction |
+| Operating Margin | Operating income ÷ revenue (from the fiscal-year statement — can differ from the Overview sheet's TTM Operating Margin, which Yahoo derives itself). | fraction |
+| Net Margin | Net income ÷ revenue (from the fiscal-year statement — can differ from the Overview sheet's TTM Profit Margin, which Yahoo derives itself). | fraction |
 
 ### Growth · YoY
 
