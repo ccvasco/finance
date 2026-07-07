@@ -1,0 +1,5 @@
+# Doc-build dependencies (NOT app runtime) — used by scripts/build_pdfs.py to
+# render the Markdown reference docs to PDF. Install with:
+#   pip install -r scripts/requirements-docs.txt
+markdown>=3.5
+weasyprint>=60
