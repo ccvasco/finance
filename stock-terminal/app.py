@@ -21,11 +21,36 @@ from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Make the in-repo yfinance importable when run from the repo root.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, _REPO_ROOT)
+
+
+def _load_dotenv():
+    """Populate os.environ from a .env file (repo root, then CWD) — e.g. for
+    ANTHROPIC_API_KEY. No python-dotenv dependency; real env vars still win."""
+    for base in (_REPO_ROOT, os.getcwd()):
+        path = os.path.join(base, ".env")
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 import yfinance as yf  # noqa: E402
 import pandas as pd  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+from strategies import grade_row, flag_legend  # noqa: E402  (strategy graders, same dir)
+import chat as chat_agent  # noqa: E402  (chat agent for /api/chat, same dir)
 
 try:
     from openpyxl import Workbook
@@ -352,7 +377,7 @@ def _screener_row(ticker):
     perf = performance(ticker)
     spark = sparklines(ticker)
 
-    return {
+    row = {
         "ticker": ticker,
         "name": info.get("shortName") or info.get("longName") or ticker,
         # mini price-chart series (dividend-unadjusted close), for the screener
@@ -399,6 +424,7 @@ def _screener_row(ticker):
         "total_cash": _num(total_cash),
         "total_debt": _num(total_debt),
         "total_equity": _num(equity),
+        "ebitda": _num(ebitda),
         "ebitda_fcf": _num(ebitda_fcf),
         # dividend
         "div_yield": _num(div_yield),
@@ -424,6 +450,8 @@ def _screener_row(ticker):
         "perf_5y": perf["5y"],
         "perf_10y": perf["10y"],
     }
+    row.update(grade_row(row))
+    return row
 
 
 def dividend_growth(ticker):
@@ -617,6 +645,23 @@ def share_dilution(income, balance, cashflow, ticker, info):
             "payout_ratio": _num(payout),
         })
     return rows
+
+
+def _strategy_panel(srow):
+    """Deep-dive 'Strategy Ratings' panel rows from a graded screener row.
+    Falls back to N/A strings when the row is an error row (no grades)."""
+    def fmt(score, verdict):
+        if score is None:
+            return verdict or None
+        return f"{int(round(score))} / 100 — {verdict}" if verdict else f"{int(round(score))} / 100"
+    smin = srow.get("strategy_min")
+    return {
+        "S1 · Triage": fmt(srow.get("strategy_1"), srow.get("strategy_1_verdict")),
+        "S1 · Flags": srow.get("strategy_1_flags") or None,
+        "S2 · Compounder": fmt(srow.get("strategy_2"), srow.get("strategy_2_verdict")),
+        "S3 · Defensive Value": fmt(srow.get("strategy_3"), srow.get("strategy_3_verdict")),
+        "Min · All Strategies": None if smin is None else f"{int(round(smin))} / 100",
+    }
 
 
 def deepdive(ticker):
@@ -835,6 +880,9 @@ def deepdive(ticker):
                     "Altman Z-Score": altman_z(income, balance, _num(info.get("marketCap"))),
                     "Piotroski F-Score": piotroski_f(income, balance, cashflow),
                 },
+                # Strategy grades come off the (cached) screener row so the
+                # deep-dive and screener always show identical scores.
+                "strategies": _strategy_panel(screener_row(ticker)),
             },
             "dividend_growth": growth,
             "revenue_net_income": rev_ni,
@@ -1088,6 +1136,10 @@ def stock_calendar(ticker):
 _METRIC_COLS = [
     ("ticker", "Ticker"), ("name", "Name"), ("sector", "Sector"),
     ("industry", "Industry"),
+    # strategy grades (0-100; see the strategy .md docs in this directory)
+    ("strategy_1", "S1 Triage"), ("strategy_2", "S2 Compounder"),
+    ("strategy_3", "S3 Defensive"), ("strategy_min", "Strat Min"),
+    ("strategy_1_flags", "S1 Flags"),
     # performance (price only) — right after Industry so returns read first,
     # longest window (10Y) leftmost down to YTD
     ("perf_10y", "Perf 10Y"), ("perf_5y", "Perf 5Y"),
@@ -1108,7 +1160,8 @@ _METRIC_COLS = [
     ("debt_ebitda", "Debt/EBITDA"), ("lt_debt_to_equity", "LT Debt/Eq"),
     ("current_ratio", "Current Ratio"), ("quick_ratio", "Quick Ratio"),
     ("total_cash", "Total Cash"), ("total_debt", "Total Debt"),
-    ("total_equity", "Total Equity"), ("ebitda_fcf", "EBITDA/FCF"),
+    ("total_equity", "Total Equity"), ("ebitda", "EBITDA"),
+    ("ebitda_fcf", "EBITDA/FCF"),
     # dividend
     ("div_yield", "Yield"), ("five_year_avg_yield", "5Y Avg Yield"),
     ("payout_ratio", "Payout Ratio"), ("div_growth_3y", "Div Growth 3Y"),
@@ -1126,7 +1179,7 @@ _METRIC_COLS = [
 # convention holds across both workbooks; the already-fraction keys (margins,
 # ROE/ROA, payout ratio, short interest) pass through unchanged.
 _PCT_KEYS = {
-    "roic", "roce", "div_yield", "five_year_avg_yield",
+    "roic", "roce", "wacc", "div_yield", "five_year_avg_yield",
     "div_growth_3y", "div_growth_5y", "debt_to_equity", "debt_to_equity_mrq",
     "lt_debt_to_equity", "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
 }
@@ -1216,6 +1269,7 @@ def build_workbook(tickers):
 _PANEL_ORDER = [
     ("valuation", "Valuation"), ("profitability", "Profitability"),
     ("health", "Financial Health"), ("dividend", "Dividend"), ("risk", "Risk"),
+    ("strategies", "Strategy Ratings"),
 ]
 
 # Deep-dive panel metrics stored in percentage points but without a trailing
@@ -1369,10 +1423,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_bytes(self, data, content_type, filename=None, status=200):
+    def _send_bytes(self, data, content_type, filename=None, status=200,
+                    no_cache=False):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        if no_cache:
+            # Without an explicit Cache-Control, browsers heuristically cache
+            # static files and can keep running stale JS/CSS after an update.
+            # no-cache = may store, but must revalidate before reuse.
+            self.send_header("Cache-Control", "no-cache")
         if filename:
             self.send_header("Content-Disposition",
                              f'attachment; filename="{filename}"')
@@ -1394,7 +1454,25 @@ class Handler(BaseHTTPRequestHandler):
         }.get(os.path.splitext(full)[1], "application/octet-stream")
         with open(full, "rb") as f:
             data = f.read()
-        self._send_bytes(data, ctype + ("; charset=utf-8" if ctype.startswith("text") or ctype.endswith("javascript") else ""))
+        self._send_bytes(data, ctype + ("; charset=utf-8" if ctype.startswith("text") or ctype.endswith("javascript") else ""),
+                         no_cache=True)
+
+    def _stream_chat(self, payload):
+        """/api/chat: relay the agent's reply as Server-Sent Events. Headers
+        go out before the first model token, so failures after that point
+        must arrive as in-stream error events (chat_agent never raises)."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            for event in chat_agent.stream_reply(payload.get("messages"),
+                                                 payload.get("rows"),
+                                                 payload.get("context_label")):
+                self.wfile.write(b"data: " + json.dumps(event).encode("utf-8") + b"\n\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # user closed the tab mid-reply
 
     # -- routing ----------------------------------------------------------- #
     def do_GET(self):
@@ -1407,6 +1485,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/health":
                 return self._send_json({"ok": True})
+            if path == "/api/meta":
+                # Static reference data (S1 flag legend) for the UI — generated
+                # from the grader's own flag catalogue so the two can't drift.
+                return self._send_json({"flags": flag_legend()})
             if path == "/api/screener":
                 tickers = _parse_tickers(qs)
                 if not tickers:
@@ -1497,6 +1579,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/cache/clear":
                 clear_cache()
                 return self._send_json({"ok": True})
+            if path == "/api/chat":
+                return self._stream_chat(payload)
             return self._send_json({"error": "unknown endpoint"}, 404)
         except BrokenPipeError:
             pass
@@ -1511,7 +1595,7 @@ def main():
     args = ap.parse_args()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  📈  Stock Terminal running at  {url}")
+    print(f"\n  📈  Bibes Terminal running at  {url}")
     print(f"      openpyxl export: {'enabled' if _HAS_OPENPYXL else 'DISABLED (pip install openpyxl)'}")
     print("      Press Ctrl+C to stop.\n")
     try:

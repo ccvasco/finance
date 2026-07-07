@@ -129,6 +129,26 @@ const App = (() => {
     document.documentElement.setAttribute("data-accent", Store.getSettings().accent || "green");
   }
 
+  // ---- whole-app UI zoom (browser-style, persisted) ---------------------
+  const ZOOM_MIN = 50, ZOOM_MAX = 200, ZOOM_STEP = 10;
+  function currentZoom() {
+    const z = Number(Store.getSettings().zoom) || 100;
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  }
+  function applyZoom() {
+    const z = currentZoom();
+    document.documentElement.style.zoom = z / 100;
+    const lbl = document.getElementById("zoom-level");
+    if (lbl) lbl.textContent = z + "%";
+  }
+  function setZoom(z) {
+    z = Math.round(z / ZOOM_STEP) * ZOOM_STEP;
+    z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    Store.setSetting("zoom", z);
+    applyZoom();
+  }
+  function nudgeZoom(dir) { setZoom(currentZoom() + dir * ZOOM_STEP); }
+
   /* Floating description bubble for any element carrying [data-tip].
      Appended to <body> so the table's overflow can't clip it. */
   const Tooltip = (() => {
@@ -141,11 +161,10 @@ const App = (() => {
       }
       return bubble;
     }
-    function show(target) {
-      const text = target.getAttribute("data-tip");
-      if (!text) return;
-      const b = ensure();
-      b.textContent = text;
+    // Position the (already-populated) bubble against its anchor. Prefers
+    // above; flips below when there isn't room.
+    function place(target) {
+      const b = bubble;
       b.classList.remove("hidden");
       const r = target.getBoundingClientRect();
       const bw = b.offsetWidth, bh = b.offsetHeight;
@@ -157,6 +176,23 @@ const App = (() => {
       b.style.left = left + "px";
       b.style.top = top + "px";
       b.style.setProperty("--arrow-x", (r.left + r.width / 2 - left) + "px");
+    }
+    function show(target) {
+      const text = target.getAttribute("data-tip");
+      if (!text) return;
+      const b = ensure();
+      b.classList.remove("rich");
+      b.textContent = text;
+      place(target);
+    }
+    // Rich variant: caller supplies a trusted HTML string (built from our own
+    // data, never user input). Used for the strategy-grade derivation tables.
+    function showHTML(target, html) {
+      if (!html) return;
+      const b = ensure();
+      b.classList.add("rich");
+      b.innerHTML = html;
+      place(target);
     }
     function hide() { if (bubble) bubble.classList.add("hidden"); }
     function init() {
@@ -170,7 +206,7 @@ const App = (() => {
       document.addEventListener("click", hide, true);  // dismiss on sort-clicks
       window.addEventListener("scroll", hide, true);
     }
-    return { init };
+    return { init, showHTML, hide };
   })();
 
   function updateWatchCount() {
@@ -187,6 +223,7 @@ const App = (() => {
 
   function init() {
     applyAccent();
+    applyZoom();
     // hydrate input from settings/last session
     const last = Store.getLastTickers();
     document.getElementById("ticker-input").value =
@@ -200,6 +237,17 @@ const App = (() => {
     document.getElementById("ticker-input").addEventListener("keydown", (e) => { if (e.key === "Enter") analyze(); });
     document.getElementById("export-btn").addEventListener("click", doExport);
 
+    // zoom controls + keyboard shortcuts (Ctrl/⌘ +/- , Ctrl/⌘ 0 to reset)
+    document.getElementById("zoom-in").addEventListener("click", () => nudgeZoom(1));
+    document.getElementById("zoom-out").addEventListener("click", () => nudgeZoom(-1));
+    document.getElementById("zoom-level").addEventListener("click", () => setZoom(100));
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key === "=" || e.key === "+") { e.preventDefault(); nudgeZoom(1); }
+      else if (e.key === "-" || e.key === "_") { e.preventDefault(); nudgeZoom(-1); }
+      else if (e.key === "0") { e.preventDefault(); setZoom(100); }
+    });
+
     // keep nav badge + any open list in sync when watchlist changes
     Store.onChange(() => updateWatchCount());
 
@@ -210,7 +258,8 @@ const App = (() => {
     checkConn();
   }
 
-  return { go, refreshCurrent, toast, applyAccent, setExportTickers, modalPrompt, init };
+  const tip = { html: (t, h) => Tooltip.showHTML(t, h), hide: () => Tooltip.hide() };
+  return { go, refreshCurrent, toast, applyAccent, setExportTickers, modalPrompt, parseTickers, tip, init };
 })();
 
 document.addEventListener("DOMContentLoaded", App.init);

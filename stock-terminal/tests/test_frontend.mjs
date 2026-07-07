@@ -438,6 +438,78 @@ test("named lists are independent of the star watchlist", () => {
   assert.deepEqual(Store.getLists()[0].tickers, ["MSFT", "NVDA"]);
 });
 
+test("addToList appends, dedupes and uppercases", () => {
+  const id = Store.getLists()[0].id;
+  const l = Store.addToList(id, ["amd", "MSFT", "TSM", "amd"]);
+  assert.deepEqual(l.tickers, ["MSFT", "NVDA", "AMD", "TSM"]);
+});
+
+test("addToList persists to localStorage", () => {
+  const stored = JSON.parse(localStorage.getItem("st.lists"));
+  assert.deepEqual(stored[0].tickers, ["MSFT", "NVDA", "AMD", "TSM"]);
+});
+
+test("removeFromList drops multiple tickers", () => {
+  const id = Store.getLists()[0].id;
+  const l = Store.removeFromList(id, ["nvda", "TSM", "NOTIN"]);
+  assert.deepEqual(l.tickers, ["MSFT", "AMD"]);
+});
+
+test("addToList/removeFromList return null for unknown id", () => {
+  assert.equal(Store.addToList("nope", ["AAPL"]), null);
+  assert.equal(Store.removeFromList("nope", ["AAPL"]), null);
+});
+
+test("removeFromList can empty a list without deleting it", () => {
+  const id = Store.getLists()[0].id;
+  const l = Store.removeFromList(id, ["MSFT", "AMD"]);
+  assert.deepEqual(l.tickers, []);
+  assert.equal(Store.getLists().length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Store — persisted rows cache (survives page reloads)
+// ---------------------------------------------------------------------------
+section("Store — persisted rows cache");
+
+test("rows cache empty by default", () => {
+  localStorage.clear();
+  loadJS("store.js");
+  assert.deepEqual(Store.getRowsCache(), []);
+});
+
+test("setRowsCache round-trips entries", () => {
+  const entries = [["AAPL,MSFT", [{ ticker: "AAPL" }, { ticker: "MSFT" }]]];
+  Store.setRowsCache(entries);
+  assert.deepEqual(Store.getRowsCache(), entries);
+});
+
+test("quota failure falls back to newest 5 sets", () => {
+  const entries = [];
+  for (let i = 0; i < 8; i++) entries.push([`SET${i}`, [{ ticker: `T${i}` }]]);
+  const realSet = localStorage.setItem;
+  let calls = 0;
+  localStorage.setItem = (k, v) => {
+    calls++;
+    if (calls === 1) throw new Error("QuotaExceededError");
+    realSet(k, v);
+  };
+  Store.setRowsCache(entries);
+  localStorage.setItem = realSet;
+  const kept = Store.getRowsCache();
+  assert.equal(kept.length, 5);
+  assert.equal(kept[0][0], "SET3");   // oldest three dropped
+  assert.equal(kept[4][0], "SET7");
+});
+
+test("total quota failure drops the persisted cache without throwing", () => {
+  const realSet = localStorage.setItem;
+  localStorage.setItem = () => { throw new Error("QuotaExceededError"); };
+  Store.setRowsCache([["K", [{ ticker: "A" }]]]);
+  localStorage.setItem = realSet;
+  assert.deepEqual(Store.getRowsCache(), []);
+});
+
 // ---------------------------------------------------------------------------
 // Fmt.date / Fmt.weekday  (Calendar tab)
 // ---------------------------------------------------------------------------
@@ -493,6 +565,267 @@ section("API — refresh param");
 
   delete globalThis.fetch;
 }
+
+// ---------------------------------------------------------------------------
+// Strategy-grade derivation tooltip (mirrors views.js gradeTipHTML/gradePayload
+// /fmtPts — views.js is a DOM-coupled IIFE that can't be loaded here, so these
+// pure helpers are inlined the same way covClass is above).
+// ---------------------------------------------------------------------------
+section("Strategy tooltip — fmtPts / gradePayload / gradeTipHTML");
+
+const escHTML = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtPts = (v) => String(parseFloat(v.toFixed(1))).replace("-", "−");
+const GRADE_FULL = { "1": "S1 · Triage", "2": "S2 · Compounder", "3": "S3 · Defensive Value" };
+
+function gradePayload(which, r) {
+  if (which === "min") {
+    const s = [r.strategy_1, r.strategy_2, r.strategy_3];
+    if (s.every((v) => v == null) && r.strategy_min == null) return null;
+    return { kind: "min", s, min: r.strategy_min };
+  }
+  return {
+    kind: "s", label: GRADE_FULL[which], score: r["strategy_" + which],
+    verdict: r["strategy_" + which + "_verdict"],
+    pillars: r["strategy_" + which + "_detail"],   // undefined on pre-feature rows
+  };
+}
+
+function gradeTipHTML(d) {
+  if (d.kind === "min") {
+    const names = ["S1 Triage", "S2 Compounder", "S3 Defensive"];
+    const body = d.s.map((v, i) => {
+      const isMin = v != null && v === d.min;
+      return `<tr class="${isMin ? "tip-min" : ""}"><td>${names[i]}</td>` +
+        `<td class="tip-p">${v == null ? "—" : v}</td></tr>`;
+    }).join("");
+    return `<div class="tip-h">Strat Min · ${d.min == null ? "N/A" : d.min + " / 100"}</div>` +
+      `<div class="tip-sub">the lowest of the three — a name ranks high here only when it holds up under every lens</div>` +
+      `<table class="tip-tbl">${body}</table>`;
+  }
+  const head = `<div class="tip-h">${escHTML(d.label)} · ` +
+    `${d.score == null ? "N/A" : d.score + " / 100"}` +
+    `${d.verdict ? " — " + escHTML(d.verdict) : ""}</div>`;
+  if (d.pillars === undefined) {
+    return head + `<div class="tip-sub">Breakdown not loaded for this row — press ↻ Refresh to compute it.</div>`;
+  }
+  if (!d.pillars.length) {
+    return head + `<div class="tip-sub">${d.score == null
+      ? "Not scored — reason above." : "Disqualified before scoring — reason above."}</div>`;
+  }
+  const body = d.pillars.map((p) => {
+    const adj = p.m === 0;
+    const pts = adj
+      ? `<span class="tip-adj">${p.p > 0 ? "+" : ""}${fmtPts(p.p)}</span>`
+      : `${fmtPts(p.p)}<span class="tip-max">/${p.m}</span>`;
+    return `<tr><td>${escHTML(p.k)}</td><td class="tip-p">${pts}</td>` +
+      `<td class="tip-d">${escHTML(p.d)}</td></tr>`;
+  }).join("");
+  return head + `<table class="tip-tbl">${body}</table>`;
+}
+
+test("fmtPts drops trailing .0", () => assert.equal(fmtPts(25.0), "25"));
+test("fmtPts keeps a half point", () => assert.equal(fmtPts(12.5), "12.5"));
+test("fmtPts uses a real minus sign", () => assert.equal(fmtPts(-17), "−17"));
+
+test("gradePayload returns pillars for a scored strategy", () => {
+  const r = { strategy_1: 72, strategy_1_verdict: "Advance",
+    strategy_1_detail: [{ k: "Value creation", p: 30, m: 30, d: "x" }] };
+  const p = gradePayload("1", r);
+  assert.equal(p.kind, "s");
+  assert.equal(p.score, 72);
+  assert.equal(p.pillars.length, 1);
+});
+
+test("gradePayload for min flags the binding strategy", () => {
+  const p = gradePayload("min", { strategy_1: 72, strategy_2: 55, strategy_3: 40, strategy_min: 40 });
+  assert.equal(p.kind, "min");
+  assert.equal(p.min, 40);
+});
+
+test("gradePayload null on a fully blank row", () =>
+  assert.equal(gradePayload("min", {}), null));
+
+test("gradeTipHTML renders a pillar row with points/max", () => {
+  const html = gradeTipHTML(gradePayload("1", {
+    strategy_1: 100, strategy_1_verdict: "Advance",
+    strategy_1_detail: [{ k: "Value creation", p: 30, m: 30, d: "ROIC−WACC +9" }],
+  }));
+  assert.match(html, /S1 · Triage · 100 \/ 100 — Advance/);
+  assert.match(html, /Value creation/);
+  assert.match(html, /30<span class="tip-max">\/30<\/span>/);
+});
+
+test("gradeTipHTML shows an adjustment (cap) row signed", () => {
+  const html = gradeTipHTML({ kind: "s", label: "S1 · Triage", score: 55, verdict: "Watchlist",
+    pillars: [{ k: "Neg-spread cap", p: -17, m: 0, d: "capped at 55" }] });
+  assert.match(html, /tip-adj">−17</);
+});
+
+test("gradeTipHTML: a scored row missing its detail says to refresh, not 'disqualified'", () => {
+  // Regression: rows cached before the breakdown feature carry no detail field.
+  const html = gradeTipHTML(gradePayload("2",
+    { strategy_2: 95, strategy_2_verdict: "Compounder" }));   // no strategy_2_detail
+  assert.match(html, /95 \/ 100 — Compounder/);
+  assert.match(html, /Breakdown not loaded/);
+  assert.ok(!html.includes("Disqualified"));
+});
+
+test("gradeTipHTML quarantine (no pillars) explains instead of tabling", () => {
+  const html = gradeTipHTML({ kind: "s", label: "S1 · Triage", score: null,
+    verdict: "Quarantine — missing total_equity", pillars: [] });
+  assert.match(html, /N\/A/);
+  assert.match(html, /Not scored/);
+  assert.ok(!html.includes("tip-tbl"));
+});
+
+test("gradeTipHTML min table highlights the minimum strategy", () => {
+  const html = gradeTipHTML(gradePayload("min",
+    { strategy_1: 72, strategy_2: 55, strategy_3: 40, strategy_min: 40 }));
+  assert.match(html, /class="tip-min"><td>S3 Defensive/);
+  assert.ok(!/class="tip-min"><td>S1 Triage/.test(html));
+});
+
+test("gradeTipHTML escapes pillar detail text", () => {
+  const html = gradeTipHTML({ kind: "s", label: "S1 · Triage", score: 50, verdict: "x",
+    pillars: [{ k: "A", p: 1, m: 2, d: "a<b>&c" }] });
+  assert.match(html, /a&lt;b&gt;&amp;c/);
+});
+
+// ---------------------------------------------------------------------------
+// Fmt.md — markdown-lite renderer for chat replies (api.js)
+// ---------------------------------------------------------------------------
+section("Fmt.md — chat markdown");
+
+test("plain text becomes a paragraph", () =>
+  assert.equal(Fmt.md("hello"), "<p>hello</p>"));
+
+test("escapes HTML before rendering", () => {
+  const html = Fmt.md('<script>alert("x")</script>');
+  assert.ok(!html.includes("<script>"));
+  assert.match(html, /&lt;script&gt;/);
+});
+
+test("bold, italic and inline code", () => {
+  const html = Fmt.md("**AAPL** is *maybe* `cheap`");
+  assert.match(html, /<strong>AAPL<\/strong>/);
+  assert.match(html, /<em>maybe<\/em>/);
+  assert.match(html, /<code>cheap<\/code>/);
+});
+
+test("code fences are verbatim (no markdown inside)", () => {
+  const html = Fmt.md("```\n**not bold** <b>\n```");
+  assert.match(html, /<pre><code>\*\*not bold\*\* &lt;b&gt;<\/code><\/pre>/);
+});
+
+test("unordered and ordered lists", () => {
+  const ul = Fmt.md("- one\n- two");
+  assert.match(ul, /<ul><li>one<\/li><li>two<\/li><\/ul>/);
+  const ol = Fmt.md("1. one\n2. two");
+  assert.match(ol, /<ol><li>one<\/li><li>two<\/li><\/ol>/);
+});
+
+test("markdown table renders with header row", () => {
+  const html = Fmt.md("| Ticker | P/E |\n|---|---|\n| AAPL | 30 |");
+  assert.match(html, /<table><tr><th>Ticker<\/th><th>P\/E<\/th><\/tr><tr><td>AAPL<\/td><td>30<\/td><\/tr><\/table>/);
+});
+
+test("headings map to h4", () =>
+  assert.match(Fmt.md("### Risks"), /<h4>Risks<\/h4>/));
+
+test("null/undefined render as empty", () => {
+  assert.equal(Fmt.md(null), "");
+  assert.equal(Fmt.md(undefined), "");
+});
+
+// ---------------------------------------------------------------------------
+// API.chat — SSE stream parsing (fetch stubbed with a fake body reader)
+// ---------------------------------------------------------------------------
+section("API.chat — SSE parsing");
+
+function fakeStreamResponse(chunks, ok = true) {
+  const enc = new TextEncoder();
+  let i = 0;
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    body: {
+      getReader: () => ({
+        read: async () =>
+          i < chunks.length
+            ? { done: false, value: enc.encode(chunks[i++]) }
+            : { done: true, value: undefined },
+      }),
+    },
+  };
+}
+
+await (async () => {
+  // Events split mid-frame across network chunks must still parse.
+  globalThis.fetch = async () => fakeStreamResponse([
+    'data: {"text": "Hel',
+    'lo"}\n\ndata: {"text": " world"}\n\ndata: {"do',
+    'ne": true}\n\n',
+  ]);
+  const events = [];
+  await API.chat({ messages: [], rows: [] }, (e) => events.push(e));
+  test("chat reassembles frames split across chunks", () => {
+    assert.deepEqual(events, [{ text: "Hello" }, { text: " world" }, { done: true }]);
+  });
+
+  globalThis.fetch = async () => fakeStreamResponse([], false);
+  const errEvents = [];
+  await API.chat({ messages: [], rows: [] }, (e) => errEvents.push(e));
+  test("chat surfaces HTTP failure as an error event", () => {
+    assert.deepEqual(errEvents, [{ error: "HTTP 500" }]);
+  });
+
+  // Body must forward messages, rows and the tab's context_label.
+  let sentBody = null;
+  globalThis.fetch = async (_url, opts) => {
+    sentBody = JSON.parse(opts.body);
+    return fakeStreamResponse(['data: {"done": true}\n\n']);
+  };
+  await API.chat({ messages: [{ role: "user", content: "hi" }],
+                  rows: [{ ticker: "AAPL" }], context_label: "Dashboard" },
+                 () => {});
+  test("chat forwards messages, rows and context_label in the body", () => {
+    assert.deepEqual(sentBody, {
+      messages: [{ role: "user", content: "hi" }],
+      rows: [{ ticker: "AAPL" }],
+      context_label: "Dashboard",
+    });
+  });
+
+  delete globalThis.fetch;
+})();
+
+// ---------------------------------------------------------------------------
+// Store.getChatHistory / setChatHistory — persistent chat across reloads
+// ---------------------------------------------------------------------------
+section("Store — chat history");
+
+test("chat history round-trips through localStorage", () => {
+  const h = [{ role: "user", content: "hi" }, { role: "assistant", content: "yo" }];
+  Store.setChatHistory(h);
+  assert.deepEqual(Store.getChatHistory(), h);
+});
+
+test("chat history caps at 60 messages (keeps the newest)", () => {
+  const many = Array.from({ length: 80 }, (_, i) => ({ role: "user", content: `m${i}` }));
+  Store.setChatHistory(many);
+  const out = Store.getChatHistory();
+  assert.equal(out.length, 60);
+  assert.equal(out[0].content, "m20");
+  assert.equal(out[59].content, "m79");
+});
+
+test("chat history tolerates junk / empty", () => {
+  localStorage.setItem("st.chatHistory", "{not json");
+  assert.deepEqual(Store.getChatHistory(), []);
+  Store.setChatHistory([]);
+  assert.deepEqual(Store.getChatHistory(), []);
+});
 
 // ---------------------------------------------------------------------------
 // Summary

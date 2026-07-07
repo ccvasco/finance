@@ -1,0 +1,125 @@
+# Strategy 3 — Defensive Value
+
+## Purpose and philosophy
+
+This is the margin-of-safety lens, in the Graham "defensive investor"
+tradition: **pay clearly less than the business is conservatively worth, and
+only for businesses strong enough to survive being wrong about.** Where
+strategy 2 hunts excellence and tolerates a full price, this strategy hunts
+resilience at a discount — the long-term return here comes as much from the
+price paid as from the business bought.
+
+It complements the other two deliberately: strategy 1 removes the broken,
+strategy 2 finds the excellent, strategy 3 finds the *safe and cheap*. A stock
+that scores well on **all three** is a quality business, in demonstrable
+health, at a defensible price — the intersection the whole framework exists to
+find.
+
+Scores run 0–100. Missing data earns 0 for that metric — an unverifiable
+margin of safety is no margin of safety.
+
+---
+
+## Pillar A — Earnings and cash yield (25 points)
+
+Cheapness against what the business actually produces.
+
+| Metric | Full points | Half points | Zero |
+|---|---|---|---|
+| **P/E** (10 pts) | 0 < P/E < 15 | 15–25 | > 25 or loss-making |
+| **P/FCF** (10 pts) | < 15 | 15–25 | > 25 or FCF ≤ 0 |
+| **EV/EBITDA** (5 pts) | 0 < EV/EBITDA < 10 | 10–14 | > 14 |
+
+## Pillar B — Asset backing (15 points)
+
+The classic anchor: what is the claim on real net assets worth?
+
+| Metric | Full points | Half points | Zero |
+|---|---|---|---|
+| **P/B** (8 pts) | 0 < P/B < 1.5 | 1.5–3.0 | > 3.0 |
+| **Graham multiplier** — P/E × P/B (7 pts) | ≤ 22.5 | — | > 22.5 (or either input unavailable) |
+
+The 22.5 threshold is Graham's original (15 × 1.5): a stock may exceed one
+bound if it compensates on the other. Asset-light franchises will routinely
+fail Pillar B — that is by design; they belong to strategy 2.
+
+## Pillar C — Financial strength (25 points)
+
+Cheap and fragile is a value trap. The discount only counts on a balance sheet
+that can wait out a bad decade.
+
+| Metric | Full points | Half points | Zero |
+|---|---|---|---|
+| **Current Ratio** (8 pts) | ≥ 2.0 | 1.5–2.0 | < 1.5 |
+| **Debt/Equity** (9 pts) | < 0.5 (or debt-free) | 0.5–1.0 | > 1.0 |
+| **Altman Z-Score** (8 pts) | ≥ 3.0 | 1.81–3.0 | < 1.81 |
+
+A company with no debt at all takes full Debt/Equity points. A company with
+**negative equity** takes zero: the sign-flipped D/E would otherwise read as
+"low leverage" when it is in fact the most levered state a balance sheet can
+be in — the opposite of the resilience this pillar is buying.
+
+## Pillar D — Earnings quality (20 points)
+
+A low multiple on bad earnings is a high multiple in disguise.
+
+| Metric | Full points | Half points | Zero |
+|---|---|---|---|
+| **Net Income > 0** (5 pts) | positive | — | negative or missing |
+| **Free Cash Flow > 0** (5 pts) | positive | — | negative or missing |
+| **Piotroski F-Score** (10 pts) | ≥ 7 | 4–6 | ≤ 3 |
+
+## Pillar E — Dividend record (15 points)
+
+For the defensive investor the dividend is both return and discipline — a
+management that pays and grows a covered dividend has fewer ways to waste the
+margin of safety.
+
+| Metric | Full points | Half points | Zero |
+|---|---|---|---|
+| **Dividend yield** (5 pts) | ≥ 2% | > 0% | none |
+| **Consecutive years of increases** (5 pts) | ≥ 10 | ≥ 3 | < 3 |
+| **Sustainability** (5 pts) | payout ≤ 60% **and** FCF coverage ≥ 1.5× | payout ≤ 75% **and** coverage ≥ 1.0× | worse |
+
+Non-payers can still reach ~85/100 on business strength and price alone, but
+the full score is reserved for names that also pay the owner while they wait.
+
+---
+
+## Decision bands
+
+| Score | Verdict | Meaning |
+|---|---|---|
+| **≥ 70** | **Value candidate** | Cheap on multiple measures *and* strong enough to hold — deep-dive for the reason it's cheap |
+| **50 – 69** | **Fair** | Reasonably priced or reasonably strong, not compellingly both |
+| **< 50** | **Expensive / weak** | No margin of safety at this price, or too fragile to trust one |
+
+The deep dive on any Value candidate must answer one question first: **why is
+it cheap?** Cheapness plus deteriorating fundamentals (low strategy 1 score)
+is the classic value trap; cheapness with health intact is what this screen
+exists to surface.
+
+---
+
+## Sector adjustments
+
+**Financials (banks, insurers).** Current ratio, Debt/Equity and Altman Z are
+structurally meaningless for balance-sheet businesses. Classification is by
+*industry* (banks, insurance carriers, capital markets, credit services,
+mortgage finance, conglomerates); fee businesses in the "Financial Services"
+sector — insurance brokers, exchanges/data vendors, asset managers — score on
+the standard rubric. For financials,
+Pillar C is scored on ROA instead: ≥ 1.5% full (25 pts), 0.8–1.5% half.
+Pillars A, B, D, E apply unchanged — P/E and P/B are, if anything, *more*
+informative for banks than for industrials.
+
+**Cyclicals.** A trough-of-cycle P/E can look expensive (depressed earnings)
+exactly when the stock is cheapest, and vice versa. Pillars B and C carry the
+signal through the cycle; treat a strong B+C with a weak A as a name to
+re-score next quarter, not to discard.
+
+---
+
+**One-line summary:** *buy demonstrable financial strength at a price that
+already assumes disappointment, insist the earnings behind the multiple are
+real, and let a covered, growing dividend pay you to be patient.*

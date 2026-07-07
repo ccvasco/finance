@@ -43,6 +43,29 @@ what it means, and the **units of the raw exported value**.
 | Market Cap | `market_cap` | Share price × shares outstanding — total equity value. | currency |
 | Enterprise Value | `enterprise_value` | Market cap + total debt − cash. Cost to acquire the whole business, debt included. | currency |
 
+## Strategy grades (0–100 integers; higher is better)
+
+Each stock is graded against the three long-term investing strategies
+documented in this directory. Grades are computed server-side from the same
+row metrics listed below, so an empty metric can lower a grade (missing data
+never helps a stock).
+
+| Excel header | Field key | Meaning | Bands |
+| --- | --- | --- | --- |
+| S1 Triage | `strategy_1` | [Triage framework](stock-triage-strategy.md): data-hygiene quarantine → hard kill-switches (distress, twin-negative earnings, leverage, liquidity, value destruction) → quality score across value creation, profitability, balance sheet, cash conversion. Empty cell = quarantined (missing critical data); 0 = a kill-switch fired. | ≥65 Advance · 45–64 Watchlist · <45 Discard |
+| S2 Compounder | `strategy_2` | [Quality Compounder](strategy-2-quality-compounder.md): returns on capital (ROIC/ROCE/ROE), margin moat, capital discipline, 5Y/10Y compounding track record, valuation sanity. Distress or twin-negative earnings caps the score at 35. | ≥70 Compounder · 50–69 Quality watch · <50 Pass |
+| S3 Defensive | `strategy_3` | [Defensive Value](strategy-3-defensive-value.md): Graham-style — earnings/cash yield, asset backing (incl. P/E×P/B ≤ 22.5), financial strength, earnings quality, dividend record. | ≥70 Value candidate · 50–69 Fair · <50 Expensive/weak |
+| Strat Min | `strategy_min` | Minimum of the three grades — the "good under every lens" rank. **Sort this column descending to find the stocks with the best rating across all strategies.** Empty when any strategy could not be graded. | interpret via the per-strategy bands |
+| S1 Flags | `strategy_1_flags` | Triage Stage-0/Stage-3 context flags — never disqualifying, they tell the deep dive where to look first: 🔺 priced for perfection (PEG > 3, P/FCF > 40 or EV/EBITDA > 30) · 🔻 suspiciously cheap (P/E < 8 or EV/EBITDA < 5 with a sub-60 score) · ⚠ divergent multiples / data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress (payout > 70% or FCF coverage < 1.5×) · 📉 crowded short (>15% of float) · 🌀 high beta (>1.7). | empty = no warnings |
+
+Financials are scored with each strategy's documented sector substitutions,
+since Altman Z, Debt/EBITDA, current ratio and ROIC are structurally
+meaningless for balance-sheet businesses. Classification is by *industry*
+(banks, insurance carriers, capital markets, credit services, mortgage
+finance, conglomerates) — fee businesses that Yahoo files under the
+"Financial Services" sector (insurance brokers, exchanges/data vendors,
+asset managers) score on the standard rubric instead.
+
 ## Valuation (lower is usually cheaper; a very low multiple can signal trouble)
 
 | Excel header | Field key | Meaning | Units | Rough read |
@@ -69,6 +92,7 @@ what it means, and the **units of the raw exported value**.
 | ROA | `roa` | Net income ÷ total assets. | fraction | >0.05 decent; banks/utilities lower. |
 | ROIC | `roic` | After-tax operating profit ÷ (debt + equity). | fraction | Creates value only when > cost of capital (~0.08–0.10). >0.15 excellent. |
 | ROCE | `roce` | EBIT ÷ (total assets − current liabilities). Pre-tax sibling of ROIC. | fraction | >0.15 strong. |
+| WACC | `wacc` | Weighted average cost of capital (cost of equity via CAPM + after-tax cost of debt). | fraction | Benchmark for ROIC; typically ~0.06–0.12. Value is created when ROIC > WACC. |
 | Revenue/Share | `revenue_per_share` | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising over time is the signal to want. |
 | Net Income | `income` | Net income (trailing 12 months). | currency | Profit attributable to shareholders. |
 | FCF | `fcf` | Free cash flow = operating cash flow − capex. | currency | Positive and growing is the goal. |
@@ -86,6 +110,7 @@ what it means, and the **units of the raw exported value**.
 | Total Cash | `total_cash` | Cash + short-term investments. | currency | Dry powder; compare to total debt. |
 | Total Debt | `total_debt` | Short- + long-term borrowings. | currency | Judge against cash, equity, EBITDA. |
 | Total Equity | `total_equity` | Assets − liabilities (book value). | currency | Negative is a red flag. |
+| EBITDA | `ebitda` | Earnings before interest, tax, depreciation & amortization (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | `ebitda_fcf` | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion; high values flag capex/tax/working-capital drag. |
 
 ## Dividends (sustainability matters more than headline yield)

@@ -40,6 +40,7 @@ const Views = (() => {
     piotroski_f: "Piotroski F-Score (0–9): fundamental strength across 9 tests (profitability, leverage and efficiency). 7–9 strong, 0–3 weak.",
     debt_to_equity: "Total debt ÷ shareholders' equity (shown as %), computed from the Total Debt and Total Equity in this row so the three reconcile. Higher means more leverage.",
     debt_to_equity_mrq: "Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. Differs from the Debt/Eq column when the quarterly and annual periods don't coincide.",
+    ebitda: "Earnings Before Interest, Tax, Depreciation & Amortization — a proxy for operating cash earnings. Yahoo's own trailing-12-month figure (the same EBITDA behind the Debt/EBITDA and EBITDA/FCF ratios).",
     debt_ebitda: "Total Debt ÷ EBITDA. How many years of EBITDA it would take to repay all debt. Lower is safer — <3× is generally comfortable, >4–5× is heavily leveraged.",
     ebitda_fcf: "EBITDA ÷ Free Cash Flow. How much reported EBITDA it takes to produce a dollar of free cash. Closer to 1× means EBITDA converts cleanly to cash; high values flag heavy capex, taxes or working-capital drag.",
     lt_debt_to_equity: "Long-term debt ÷ shareholders' equity (shown as %).",
@@ -58,6 +59,11 @@ const Views = (() => {
     fcf_coverage: "FCF Coverage = free cash flow ÷ dividends paid. How many times cash flow covers the dividend. Green ≥ 1.2×, yellow 0.8–1.2×, red < 0.8×.",
     years_div_increase: "Consecutive completed calendar years of rising annual dividends.",
     ex_dividend_date: "Buy before this date to receive the next dividend.",
+    strategy_1: "Strategy 1 · Triage grade (0–100) — data hygiene, kill-switches, then a quality score across value creation, profitability, balance sheet and cash conversion. ≥65 Advance (green), 45–64 Watchlist (yellow), <45 Discard (red). N/A = quarantined for missing critical data. See stock-triage-strategy.md.",
+    strategy_2: "Strategy 2 · Quality Compounder grade (0–100) — returns on capital, margin moat, capital discipline, long-term compounding track record, valuation sanity. ≥70 Compounder (green), 50–69 Quality watch (yellow), <50 Pass (red). See strategy-2-quality-compounder.md.",
+    strategy_3: "Strategy 3 · Defensive Value grade (0–100) — Graham-style: earnings/cash yield, asset backing, financial strength, earnings quality, dividend record. ≥70 Value candidate (green), 50–69 Fair (yellow), <50 Expensive/weak (red). See strategy-3-defensive-value.md.",
+    strategy_min: "Minimum of the three strategy grades — the 'good under every lens' sort key. Sort descending to find stocks with the best rating across ALL strategies. N/A when any strategy could not be graded.",
+    strategy_1_flags: "Strategy 1 context flags — never disqualifying, they shape the deep dive: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ divergent multiples / data-sanity warnings · 💰 payout stress · 📉 crowded short (>15% of float) · 🌀 high beta (>1.7). Empty = no warnings.",
     perf_ytd: "Price return since Jan 1 of this year. Excludes dividends.",
     perf_1y: "Price return over the last 1 year. Excludes dividends.",
     perf_3y: "Price return over the last 3 years. Excludes dividends.",
@@ -117,6 +123,11 @@ const Views = (() => {
     "Quick Ratio": "Liquid assets (excl. inventory) ÷ current liabilities. Stricter liquidity test. >1 strong; <1 relies on selling inventory to pay bills.",
     "Free Cash Flow": "Operating cash flow − capital expenditure. Cash left for dividends, buybacks, and debt paydown.",
     "EBITDA": "Earnings Before Interest, Tax, Depreciation & Amortization — a proxy for operating cash earnings. Yahoo's own trailing-12-month figure (the same EBITDA behind the Debt/EBITDA and EBITDA/FCF ratios).",
+    "S1 · Triage": "Strategy 1 grade (0–100): data-hygiene quarantine, hard kill-switches, then a quality score across value creation, profitability, balance sheet and cash conversion. ≥65 Advance, 45–64 Watchlist, <45 Discard. Full rules: stock-triage-strategy.md.",
+    "S2 · Compounder": "Strategy 2 grade (0–100): returns on capital, margin moat, capital discipline, long-term compounding track record and valuation sanity. ≥70 Compounder, 50–69 Quality watch, <50 Pass. Full rules: strategy-2-quality-compounder.md.",
+    "S3 · Defensive Value": "Strategy 3 grade (0–100): Graham-style margin of safety — earnings/cash yield, asset backing, financial strength, earnings quality and dividend record. ≥70 Value candidate, 50–69 Fair, <50 Expensive/weak. Full rules: strategy-3-defensive-value.md.",
+    "S1 · Flags": "Strategy 1 context flags — never disqualifying, they tell the deep dive where to look first: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ divergent multiples / data-sanity warnings · 💰 payout stress · 📉 crowded short · 🌀 high beta.",
+    "Min · All Strategies": "The minimum of the three strategy grades — a stock only scores high here when it holds up under every lens. This is the number to rank by when hunting names that are strong across all strategies.",
   };
 
   // FCF dividend-coverage color band (Free Cash Flow / Dividends Paid).
@@ -125,6 +136,94 @@ const Views = (() => {
     if (v >= 1.2) return "cov-green";
     if (v >= 0.8) return "cov-yellow";
     return "cov-red";
+  }
+
+  // Strategy-grade color band; `hi`/`lo` are each strategy's decision-band
+  // cutoffs (reuses the cov-* classes so no new CSS is needed).
+  const gradeClass = (hi, lo) => (v) => {
+    if (Fmt.isNull(v)) return "";
+    if (v >= hi) return "cov-green";
+    if (v >= lo) return "cov-yellow";
+    return "cov-red";
+  };
+  // Advance/watch/fail bands per strategy (must match the graders + COLS below).
+  const STRAT_BANDS = { strategy_1: [65, 45], strategy_2: [70, 50], strategy_3: [70, 50] };
+  // Colour the Strat Min cell with the bands of whichever strategy produced the
+  // min — the min IS that strategy's score, so the same number must never carry
+  // a different colour than its source column (e.g. an S3 of 48 shown red there
+  // must not turn yellow here).
+  const minGradeClass = (v, r) => {
+    if (Fmt.isNull(v)) return "";
+    const disp = Math.round(v);
+    const rank = { "cov-red": 0, "cov-yellow": 1, "cov-green": 2 };
+    let worst = "";
+    // Among the strategy cells showing this same (rounded) number, take the
+    // most severe colour — the min can't look healthier than its source cell.
+    for (const k of ["strategy_1", "strategy_2", "strategy_3"]) {
+      if (r && r[k] != null && Math.round(r[k]) === disp) {
+        const c = gradeClass(STRAT_BANDS[k][0], STRAT_BANDS[k][1])(r[k]);
+        if (worst === "" || rank[c] < rank[worst]) worst = c;
+      }
+    }
+    return worst || gradeClass(65, 45)(v);
+  };
+  const gradeFmt = (v) => (v == null ? null : String(Math.round(v)));
+
+  // ---- strategy-grade derivation tooltip ----------------------------------
+  const GRADE_FULL = { "1": "S1 · Triage", "2": "S2 · Compounder", "3": "S3 · Defensive Value" };
+  // Points as a tidy number: 25.0 → "25", 12.5 → "12.5", −17 → "−17".
+  const fmtPts = (v) => String(parseFloat(v.toFixed(1))).replace("-", "−");
+
+  // Compact payload stashed on each grade cell (parsed back on hover). Returns
+  // null when there is nothing to show (a fully blank row).
+  function gradePayload(which, r) {
+    if (which === "min") {
+      const s = [r.strategy_1, r.strategy_2, r.strategy_3];
+      if (s.every((v) => v == null) && r.strategy_min == null) return null;
+      return { kind: "min", s, min: r.strategy_min };
+    }
+    return {
+      kind: "s", label: GRADE_FULL[which], score: r["strategy_" + which],
+      verdict: r["strategy_" + which + "_verdict"],
+      // Left undefined (not []) when the row predates the breakdown feature —
+      // an empty list means a genuine kill/quarantine, a missing field means
+      // the detail simply wasn't loaded. The two get different messages.
+      pillars: r["strategy_" + which + "_detail"],
+    };
+  }
+
+  // Build the tooltip HTML from a parsed payload. Trusted input (our own data).
+  function gradeTipHTML(d) {
+    if (d.kind === "min") {
+      const names = ["S1 Triage", "S2 Compounder", "S3 Defensive"];
+      const body = d.s.map((v, i) => {
+        const isMin = v != null && v === d.min;
+        return `<tr class="${isMin ? "tip-min" : ""}"><td>${names[i]}</td>` +
+          `<td class="tip-p">${v == null ? "—" : v}</td></tr>`;
+      }).join("");
+      return `<div class="tip-h">Strat Min · ${d.min == null ? "N/A" : d.min + " / 100"}</div>` +
+        `<div class="tip-sub">the lowest of the three — a name ranks high here only when it holds up under every lens</div>` +
+        `<table class="tip-tbl">${body}</table>`;
+    }
+    const head = `<div class="tip-h">${escHTML(d.label)} · ` +
+      `${d.score == null ? "N/A" : d.score + " / 100"}` +
+      `${d.verdict ? " — " + escHTML(d.verdict) : ""}</div>`;
+    if (d.pillars === undefined) {          // row cached before the breakdown existed
+      return head + `<div class="tip-sub">Breakdown not loaded for this row — press ↻ Refresh to compute it.</div>`;
+    }
+    if (!d.pillars.length) {                // genuine quarantine (null) or kill (0)
+      return head + `<div class="tip-sub">${d.score == null
+        ? "Not scored — reason above." : "Disqualified before scoring — reason above."}</div>`;
+    }
+    const body = d.pillars.map((p) => {
+      const adj = p.m === 0;                       // signed adjustment row (a cap)
+      const pts = adj
+        ? `<span class="tip-adj">${p.p > 0 ? "+" : ""}${fmtPts(p.p)}</span>`
+        : `${fmtPts(p.p)}<span class="tip-max">/${p.m}</span>`;
+      return `<tr><td>${escHTML(p.k)}</td><td class="tip-p">${pts}</td>` +
+        `<td class="tip-d">${escHTML(p.d)}</td></tr>`;
+    }).join("");
+    return head + `<table class="tip-tbl">${body}</table>`;
   }
 
   // Column definitions for the comparison/screener table.
@@ -138,6 +237,13 @@ const Views = (() => {
     { key: "market_cap", label: "Mkt Cap", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "enterprise_value", label: "EV", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "industry", label: "Industry", kind: "text" },
+    // strategy grades (0-100) — see the strategy .md docs in stock-terminal/.
+    // `gradeTip` marks the cell for the derivation-table hover tooltip.
+    { key: "strategy_1", label: "S1 Triage", fmt: gradeFmt, cls: gradeClass(65, 45), gradeTip: "1" },
+    { key: "strategy_2", label: "S2 Compounder", fmt: gradeFmt, cls: gradeClass(70, 50), gradeTip: "2" },
+    { key: "strategy_3", label: "S3 Defensive", fmt: gradeFmt, cls: gradeClass(70, 50), gradeTip: "3" },
+    { key: "strategy_min", label: "Strat Min", fmt: gradeFmt, cls: minGradeClass, gradeTip: "min" },
+    { key: "strategy_1_flags", label: "S1 Flags", kind: "text" },
     // valuation (most-scanned first)
     { key: "pe", label: "P/E", fmt: (v) => Fmt.num(v) },
     { key: "forward_pe", label: "Fwd P/E", fmt: (v) => Fmt.num(v) },
@@ -172,6 +278,7 @@ const Views = (() => {
     { key: "total_cash", label: "Cash", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "total_debt", label: "Debt", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "total_equity", label: "Equity", fmt: (v, r) => Fmt.big(v, r.currency) },
+    { key: "ebitda", label: "EBITDA", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "ebitda_fcf", label: "EBITDA/FCF", fmt: (v) => v == null ? null : Fmt.num(v, 2) + "×" },
     // dividend
     { key: "div_yield", label: "Yield", fmt: (v) => Fmt.pct(v) },
@@ -221,6 +328,33 @@ const Views = (() => {
   let fetchRun = 0;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Hydrate persisted rows so cached tables survive page reloads.
+  try {
+    Store.getRowsCache().forEach(([k, rows]) => {
+      if (typeof k === "string" && Array.isArray(rows)) rowsCache.set(k, rows);
+    });
+  } catch { /* corrupted entry — start with an empty cache */ }
+
+  // Delegated hover for the strategy-grade cells: build the derivation table on
+  // demand from the compact [data-grade] payload and show it as a rich tooltip.
+  document.addEventListener("mouseover", (e) => {
+    const cell = e.target.closest("[data-grade]");
+    if (!cell) return;
+    let d;
+    try { d = JSON.parse(cell.getAttribute("data-grade")); } catch { return; }
+    App.tip.html(cell, gradeTipHTML(d));
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (e.target.closest("[data-grade]")) App.tip.hide();
+  });
+
+  // Persist (debounced — entries can be several MB for big ticker sets).
+  let persistTimer = null;
+  function persistRowsCache() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => Store.setRowsCache([...rowsCache.entries()]), 400);
+  }
+
   function cfgInt(key, def, min) {
     const v = parseInt(Store.getSettings()[key], 10);
     return Number.isFinite(v) && v >= min ? v : def;
@@ -233,8 +367,44 @@ const Views = (() => {
     rowsCache.delete(key);
     rowsCache.set(key, rows);
     while (rowsCache.size > cfgCacheSets()) rowsCache.delete(rowsCache.keys().next().value);
+    persistRowsCache();
   }
-  function clearRowsCache() { rowsCache.clear(); }
+  function clearRowsCache() { rowsCache.clear(); persistRowsCache(); }
+
+  /* Cached rows for a ticker-set, or null — never triggers a fetch. Views use
+     this so that no Yahoo data is pulled on startup or tab switches; fetching
+     happens only on explicit user action (Analyze, ↻ Refresh, opening a list). */
+  function peekRows(tickers) {
+    return rowsCache.get(tickers.join(",")) || null;
+  }
+
+  /* Like peekRows, but reuses rows per ticker from ANY cached set (screener
+     runs, other lists, dashboard) when the exact set isn't cached. Tickers
+     cached nowhere become "not loaded" placeholder rows. Returns null only
+     when none of the tickers have cached data. Newer sets win on conflicts. */
+  function assembleCachedRows(tickers) {
+    const exact = peekRows(tickers);
+    if (exact) return exact;
+    const byTicker = new Map();
+    rowsCache.forEach((rows) => rows.forEach((r) => {
+      if (!r.error) byTicker.set(r.ticker, r);
+    }));
+    if (!tickers.some((t) => byTicker.has(t))) return null;
+    return tickers.map((t) =>
+      byTicker.get(t) || { ticker: t, error: "Not loaded — press ↻ Refresh" });
+  }
+
+  /* Status-line fragments shared by the cache-first views (watchlist,
+     dashboard): a small spinner with text, and the final "✓ N loaded
+     (x cached, y fetched)" / "⚠ n batches failed" summary. */
+  const spinHTML = (txt) =>
+    `<span class="spinner" style="width:11px;height:11px"></span> ${txt}`;
+  function doneStatusHTML(total, fetched, fromCache, failedBatches) {
+    return failedBatches
+      ? `<span class="err">⚠ ${failedBatches} batch${failedBatches > 1 ? "es" : ""} failed — ↻ Refresh to retry</span>`
+      : `<span class="ok">✓</span> ${total} loaded` +
+        (fromCache ? ` (${fromCache} cached${fetched ? `, ${fetched} fetched` : ""})` : "");
+  }
 
   /* Replace `ticker`'s row in every cached ticker-set. Used by a deep-dive
      refresh to sync that one ticker into the screener/dashboard/watchlist
@@ -244,6 +414,7 @@ const Views = (() => {
       const i = rows.findIndex((r) => r.ticker === ticker);
       if (i >= 0) rows[i] = row;
     });
+    persistRowsCache();
   }
 
   /* Fetch screener rows for `tickers` in throttled batches, streaming partial
@@ -286,7 +457,7 @@ const Views = (() => {
     }
     if (runId !== fetchRun) return null;
     // Don't cache a set containing transport failures — a retry (tab switch,
-    // re-Analyze, ⟳ Refresh) should re-fetch rather than replay the errors.
+    // re-Analyze, ↻ Refresh) should re-fetch rather than replay the errors.
     if (!failedBatches) cacheSet(key, rows);
     return rows;
   }
@@ -320,6 +491,61 @@ const Views = (() => {
   function sparkChangePct(values) {
     if (!Array.isArray(values) || values.length < 2 || !values[0]) return null;
     return (values[values.length - 1] / values[0] - 1) * 100;
+  }
+
+  /* Collapsible reference for the strategy grades + S1 flags. Explains what
+     each grade measures and — crucially — that the flags are valuation/data
+     context that never move the grade, so a top-rated and a bottom-rated
+     stock can carry the same flag (e.g. both "Priced for perfection").
+     The flag rows are hydrated from /api/meta (see hydrateFlagLegend) so their
+     triggers stay in lock-step with the grader's own catalogue. */
+  function legendBox() {
+    // Collapsed by default on every tab — click the summary to expand.
+    return `
+      <details class="legend-box" id="scr-legend">
+        <summary><span class="legend-ico">ⓘ</span> What the grades &amp; flags mean</summary>
+        <div class="legend-grid">
+          <div class="legend-sec">
+            <div class="legend-h">Strategy grades — 0–100, higher is better. Each views the same company through a different lens; the cell colour is that grade's band <span class="legend-band"><b class="g">green</b> pass · <b class="y">yellow</b> watch · <b class="r">red</b> fail</span>.</div>
+            <ul class="legend-list">
+              <li><b>S1 Triage</b> — overall business quality after data-hygiene &amp; kill-switch checks: value creation, profitability, balance sheet, cash conversion. <span class="legend-bands">≥65 · 45–64 · &lt;45</span></li>
+              <li><b>S2 Compounder</b> — quality-compounder fit: returns on capital, margin moat, capital discipline, long-run compounding, valuation sanity. <span class="legend-bands">≥70 · 50–69 · &lt;50</span></li>
+              <li><b>S3 Defensive</b> — Graham-style defensive value: earnings/cash yield, asset backing, financial strength, earnings quality, dividend record. <span class="legend-bands">≥70 · 50–69 · &lt;50</span></li>
+              <li><b>Strat Min</b> — the lowest of the three: how the stock holds up under <i>every</i> lens at once.</li>
+            </ul>
+          </div>
+          <div class="legend-sec">
+            <div class="legend-h">S1 Flags — context only, they <b>never change the grade</b>. They flag the <b>price you'd pay</b> and data quality, so a top-rated and a bottom-rated stock can share a flag (e.g. NVDA and COIN both "Priced for perfection" — both trade at rich multiples, whatever their quality score).</div>
+            <ul class="legend-list legend-flags"><li class="legend-loading">Loading flag reference…</li></ul>
+          </div>
+        </div>
+      </details>`;
+  }
+
+  // Flag legend metadata from /api/meta, fetched once and cached. Single source
+  // of truth is the backend grader (strategies.TRIAGE_FLAGS).
+  let _flagMeta = null;
+  async function getFlagMeta() {
+    if (_flagMeta) return _flagMeta;
+    try { _flagMeta = (await API.meta()).flags || []; }
+    catch { _flagMeta = []; }
+    return _flagMeta;
+  }
+  // Fill any rendered legend's flag list (within `scope`) from the cached meta.
+  async function hydrateFlagLegend(scope) {
+    const ul = (scope || document).querySelector(".legend-flags");
+    if (!ul) return;
+    const flags = await getFlagMeta();
+    if (!flags.length) {
+      ul.innerHTML = `<li class="legend-loading">Flag reference unavailable — server offline.</li>`;
+      return;
+    }
+    ul.innerHTML = flags.map((f) => {
+      const trig = f.threshold
+        ? ` <span class="legend-bands">${escHTML(f.threshold)}</span>` : "";
+      return `<li><span class="flag-ico">${escHTML(f.icon)}</span> <b>${escHTML(f.name)}</b>${trig}` +
+        `<div class="flag-why">${escHTML(f.why)}</div></li>`;
+    }).join("");
   }
 
   /* ---------- comparison table (used by Screener + Watchlist) ---------- */
@@ -360,12 +586,27 @@ const Views = (() => {
         const cls = "spark-cell" + (pct == null ? "" : " has-tip");
         return `<td class="${cls}"${tipAttr}>${sparklineSVG(raw)}</td>`;
       }
+      if (c.key === "strategy_1_flags") {
+        // Flags are ellipsis-truncated in the cell; the full list (one per
+        // line) rides along in a hover tooltip so none are lost.
+        if (!raw) return `<td class="text-cell"><span class="na">—</span></td>`;
+        const full = String(raw).replace(/ · /g, "\n");
+        return `<td class="text-cell has-tip" data-tip="${escHTML(full)}">${escHTML(String(raw))}</td>`;
+      }
       if (c.kind === "text") {
         return `<td class="text-cell">${raw ? escHTML(String(raw)) : '<span class="na">—</span>'}</td>`;
       }
+      if (c.gradeTip) {
+        const disp = c.fmt ? c.fmt(raw, r) : Fmt.num(raw);
+        const payload = gradePayload(c.gradeTip, r);
+        const attr = payload ? ` data-grade="${escHTML(JSON.stringify(payload))}"` : "";
+        const cls = ((c.cls ? c.cls(raw, r) : "") + (payload ? " has-tip grade-cell" : "")).trim();
+        const inner = disp === null ? '<span class="na">N/A</span>' : disp;
+        return `<td class="${cls}"${attr}>${inner}</td>`;
+      }
       const disp = c.fmt ? c.fmt(raw, r) : Fmt.num(raw);
       if (disp === null) return `<td class="na">N/A</td>`;
-      let cls = c.cls ? c.cls(raw) : "";
+      let cls = c.cls ? c.cls(raw, r) : "";
       if (c.signed && typeof raw === "number") cls += (raw >= 0 ? " pos" : " neg");
       const txt = c.signed && typeof raw === "number" && raw > 0 ? "+" + disp : disp;
       return `<td class="${cls.trim()}">${txt}</td>`;
@@ -451,11 +692,13 @@ const Views = (() => {
         <span class="view-sub" id="scr-count"></span>
         <span class="scr-status" id="scr-status"></span>
         <div class="spacer"></div>
-        <button class="btn btn-sm" id="scr-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
+        <button class="btn btn-sm" id="scr-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
         <button class="btn btn-sm" id="scr-save">💾 Save as watchlist</button>
         <button class="btn btn-sm" id="scr-addall">★ Add all to stars</button>
       </div>
+      ${legendBox()}
       <div class="table-wrap" id="scr-table"><div class="loading-box"><span class="spinner"></span> Fetching market data…</div></div>`;
+    hydrateFlagLegend(root);
 
     const tableEl = root.querySelector("#scr-table");
     const sub = root.querySelector("#scr-sub");
@@ -495,6 +738,7 @@ const Views = (() => {
       tableEl.innerHTML = tableHTML(view);
       root.querySelector("#scr-count").textContent = `${view.length} of ${lastRows.length} shown`;
       wireTable(tableEl, view, paint);
+      setChatContext("Screener", lastRows);
     }
 
     if (!tickers.length) {
@@ -505,11 +749,28 @@ const Views = (() => {
     sub.textContent = `${tickers.length} tickers`;
     App.setExportTickers(tickers);
 
+    // Fetch only on explicit user action — Analyze (refresh) or ↻ Refresh
+    // (force). Otherwise render from the browser cache, or show a hint; no
+    // Yahoo data is pulled just by opening the app or switching tabs.
+    if (!opts.refresh && !opts.force) {
+      const hit = peekRows(tickers);
+      if (hit) {
+        lastRows = hit;
+        paint();
+        statusEl.innerHTML = `<span class="ok">✓</span> cached`;
+      } else {
+        tableEl.innerHTML = `<div class="empty"><div class="big">▦</div>Data not loaded.` +
+          `<div class="hint">Press <b>Analyze</b> or <b>↻ Refresh</b> to fetch these ${tickers.length} tickers.</div></div>`;
+        statusEl.innerHTML = "";
+      }
+      return;
+    }
+
     function setStatus(p) {
       if (p.cached) { statusEl.innerHTML = `<span class="ok">✓</span> cached`; return; }
       if (p.done) {
         statusEl.innerHTML = p.failedBatches
-          ? `<span class="err">⚠ ${p.failedBatches} of ${p.batches} batches failed — use ⟳ Refresh to retry</span>`
+          ? `<span class="err">⚠ ${p.failedBatches} of ${p.batches} batches failed — use ↻ Refresh to retry</span>`
           : `<span class="ok">✓</span> all ${p.total} loaded`;
         return;
       }
@@ -532,7 +793,7 @@ const Views = (() => {
       // Announce completion for multi-batch (freshly fetched) loads.
       if (lastP && !lastP.cached && lastP.batches > 1) {
         if (lastP.failedBatches)
-          App.toast(`${lastP.failedBatches} of ${lastP.batches} batches failed — ⟳ Refresh to retry`, "err");
+          App.toast(`${lastP.failedBatches} of ${lastP.batches} batches failed — ↻ Refresh to retry`, "err");
         else
           App.toast(`Loaded all ${tickers.length} tickers`, "ok");
       }
@@ -586,40 +847,146 @@ const Views = (() => {
     const sel = selectedSet();
     if (!sel) { detail.innerHTML = ""; return; }
     const id = wlSelected;
-    if (!sel.tickers.length) {
-      detail.innerHTML = `<div class="empty"><div class="hint">This watchlist is empty.</div></div>`;
-      return;
-    }
     App.setExportTickers(sel.tickers);
     detail.innerHTML = `
       <div class="wl-detail-head">
         <span class="wl-detail-name">${escHTML(sel.name)}</span>
         <span class="view-sub">${sel.tickers.length} tickers</span>
-        <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
+        <span class="scr-status" id="wl-status"></span>
+        <div class="spacer"></div>
+        <input class="input wl-edit" id="wl-edit" placeholder="Tickers — e.g. AAPL, MSFT"
+               title="Type one or more tickers (comma or space separated), then Add or Remove">
+        <button class="btn btn-sm" id="wl-add" title="Add these tickers to the list">+ Add</button>
+        <button class="btn btn-sm btn-ghost" id="wl-del" title="Remove these tickers from the list">− Remove</button>
+        <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       </div>
-      <div class="table-wrap" id="wl-table"><div class="loading-box"><span class="spinner"></span> Loading ${escHTML(sel.name)}…</div></div>`;
+      ${legendBox()}
+      <div class="table-wrap" id="wl-table"></div>`;
+    hydrateFlagLegend(detail);
     detail.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
+
+    // Bulk add/remove: parse the input like the top search box, mutate the
+    // list (stars for ★ Starred, the saved list otherwise) and re-render.
+    function editList(mode) {
+      const input = detail.querySelector("#wl-edit");
+      const arr = App.parseTickers(input.value);
+      if (!arr.length) { App.toast("Enter one or more tickers", "err"); return; }
+      const before = sel.tickers.slice();
+      let after;
+      if (id === STARRED_ID) {
+        if (mode === "add") arr.forEach((t) => { if (!Store.inWatchlist(t)) Store.toggleWatch(t); });
+        else arr.forEach((t) => Store.removeWatch(t));
+        after = Store.getWatchlist();
+      } else {
+        const l = mode === "add" ? Store.addToList(id, arr) : Store.removeFromList(id, arr);
+        if (!l) return;
+        after = l.tickers;
+      }
+      // Carry cached rows over to the new set signature so the table stays
+      // usable without a re-fetch; freshly added tickers are then fetched
+      // automatically by the cache-first load below.
+      const prev = peekRows(before);
+      if (prev && after.length) {
+        const byTicker = new Map(prev.map((r) => [r.ticker, r]));
+        cacheSet(after.join(","), after.map((t) =>
+          byTicker.get(t) || { ticker: t, error: "Not loaded — press ↻ Refresh" }));
+      }
+      const delta = Math.abs(after.length - before.length);
+      if (delta) {
+        App.toast(`${mode === "add" ? "Added" : "Removed"} ${delta} ticker${delta > 1 ? "s" : ""}`, "ok");
+      } else {
+        App.toast(mode === "add" ? "Already in the list" : "None of those are in the list", "err");
+      }
+      watchlist(root);   // re-render cards (counts) and restore the selection
+    }
+    detail.querySelector("#wl-add").addEventListener("click", () => editList("add"));
+    detail.querySelector("#wl-del").addEventListener("click", () => editList("remove"));
+    detail.querySelector("#wl-edit").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); editList("add"); }
+    });
+
     const tableEl = detail.querySelector("#wl-table");
+    const statusEl = detail.querySelector("#wl-status");
+    if (!sel.tickers.length) {
+      tableEl.innerHTML = `<div class="empty"><div class="hint">This watchlist is empty — add tickers above.</div></div>`;
+      return;
+    }
     let lastRows = null;
     function paint() {
       const view = applyView(lastRows);
       tableEl.innerHTML = tableHTML(view);
       wireTable(tableEl, view, paint);
+      setChatContext("Watchlist · " + sel.name, lastRows);
     }
+    const spin = spinHTML;
+    const finishStatus = (fetched, fromCache, failedBatches) => {
+      statusEl.innerHTML = doneStatusHTML(sel.tickers.length, fetched, fromCache, failedBatches);
+    };
+
+    // Cache-first: show every ticker we already have data for immediately,
+    // then fetch ONLY the missing ones. A full re-fetch happens exclusively
+    // on an explicit ↻ Refresh.
+    if (!opts.force) {
+      const have = new Map();
+      (assembleCachedRows(sel.tickers) || []).forEach((r) => {
+        if (!r.error) have.set(r.ticker, r);
+      });
+      const missing = sel.tickers.filter((t) => !have.has(t));
+      lastRows = sel.tickers.map((t) =>
+        have.get(t) || { ticker: t, error: "loading…" });
+      paint();
+      if (!missing.length) {
+        cacheSet(sel.tickers.join(","), lastRows);   // exact-set hit next time
+        finishStatus(0, have.size, 0);
+        return;
+      }
+      statusEl.innerHTML = spin(`${have.size} cached · loading ${missing.length} more…`);
+      let lastP = null;
+      try {
+        const rows = await getScreenerRows(missing, {
+          onProgress: (p) => {
+            if (wlSelected !== id) return;   // selection changed mid-stream
+            lastP = p;
+            const byT = new Map(p.rows.map((r) => [r.ticker, r]));
+            lastRows = lastRows.map((r) => byT.get(r.ticker) || r);
+            paint();
+            statusEl.innerHTML = spin(`${have.size} cached · loading ${p.loaded}/${p.total} more…`);
+          },
+        });
+        if (rows == null || wlSelected !== id) return;
+        const byT = new Map(rows.map((r) => [r.ticker, r]));
+        lastRows = lastRows.map((r) => byT.get(r.ticker) || r);
+        paint();
+        const failed = (lastP && lastP.failedBatches) || 0;
+        if (!failed) cacheSet(sel.tickers.join(","), lastRows);
+        finishStatus(missing.length, have.size, failed);
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
+      }
+      return;
+    }
+
+    // Explicit ↻ Refresh: re-fetch the whole list fresh from Yahoo.
+    tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading ${escHTML(sel.name)}…</div>`;
+    let lastP = null;
     try {
       const rows = await getScreenerRows(sel.tickers, {
-        refresh: opts.force,
-        force: opts.force,
+        refresh: true,
+        force: true,
         onProgress: (p) => {
           if (wlSelected !== id) return;   // selection changed mid-stream
+          lastP = p;
           lastRows = p.rows;
           paint();
+          statusEl.innerHTML = spin(`refreshing ${p.loaded}/${p.total}…`);
         },
       });
       if (rows == null || wlSelected !== id) return;
       lastRows = rows;
       paint();
+      finishStatus(sel.tickers.length, 0, (lastP && lastP.failedBatches) || 0);
     } catch (e) {
+      statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
       tableEl.innerHTML = `<div class="empty"><div class="big">⚠</div>${e.message}</div>`;
     }
   }
@@ -674,7 +1041,8 @@ const Views = (() => {
       watchlist(root);
     }));
 
-    // Restore a still-valid selection after a re-render (rename/delete/nav return).
+    // Restore a still-valid selection after a re-render (rename/delete/nav
+    // return) — from cache only, so returning to the tab never re-fetches.
     if (wlSelected && selectedSet()) {
       const card = [...root.querySelectorAll(".wl-card")].find((c) => c.dataset.list === wlSelected);
       if (card) card.classList.add("active");
@@ -692,35 +1060,30 @@ const Views = (() => {
     root.innerHTML = `
       <div class="view-head"><div class="view-title">Dashboard</div>
         <div class="view-sub">Market snapshot</div>
+        <span class="scr-status" id="dash-status"></span>
         <div class="spacer"></div>
-        <button class="btn btn-sm" id="dash-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button></div>
+        <button class="btn btn-sm" id="dash-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button></div>
       <div class="cards" id="dash-cards"></div>
       <div style="height:20px"></div>
+      ${(wl.length || last.length) ? legendBox() : ""}
       <div class="panel">
         <div class="panel-head"><span class="dot"></span>${wl.length ? "Watchlist" : "Recently analyzed"}</div>
         <div class="table-wrap" style="border:0;max-height:none" id="dash-table"></div>
       </div>`;
+    hydrateFlagLegend(root);
     root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
     const set = wl.length ? wl : last;
     const tableEl = root.querySelector("#dash-table");
     const cardsEl = root.querySelector("#dash-cards");
+    const statusEl = root.querySelector("#dash-status");
     if (!set.length) {
       cardsEl.innerHTML = "";
-      tableEl.innerHTML = `<div class="empty"><div class="big">◧</div>Welcome to Stock Terminal.<div class="hint">Type tickers up top and press Analyze, or build a watchlist.</div></div>`;
+      tableEl.innerHTML = `<div class="empty"><div class="big">◧</div>Welcome to Bibes Terminal.<div class="hint">Type tickers up top and press Analyze, or build a watchlist.</div></div>`;
       return;
     }
-    tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading…</div>`;
-    try {
-      const rows = await getScreenerRows(set, {
-        refresh: opts.force,
-        force: opts.force,
-        onProgress: (p) => {
-          if (!p.done && !p.cached && p.batches > 1)
-            tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading ${p.loaded}/${p.total}…</div>`;
-        },
-      });
-      if (rows == null) return;   // superseded
-      const ok = rows.filter((r) => !r.error);
+    let lastRows = null;
+    function paint() {
+      const ok = lastRows.filter((r) => !r.error);
       const totalMcap = ok.reduce((s, r) => s + (r.market_cap || 0), 0);
       const gainers = ok.filter((r) => (r.change_pct || 0) > 0).length;
       const avgPe = (() => { const v = ok.map((r) => r.pe).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; })();
@@ -729,10 +1092,75 @@ const Views = (() => {
         ${card("Total Mkt Cap", Fmt.big(totalMcap, "USD"), "combined")}
         ${card("Advancing", `${gainers}/${ok.length}`, "positive today")}
         ${card("Avg P/E", avgPe != null ? avgPe.toFixed(1) : "N/A", "trailing")}`;
-      const view = applyView(rows);
+      const view = applyView(lastRows);
       tableEl.innerHTML = tableHTML(view);
-      wireTable(tableEl, view, () => { tableEl.innerHTML = tableHTML(applyView(rows)); wireTable(tableEl, rows, () => {}); });
+      wireTable(tableEl, view, paint);
+      setChatContext("Dashboard", lastRows);
+    }
+    const mergeInto = (fetched) => {
+      const byT = new Map(fetched.map((r) => [r.ticker, r]));
+      lastRows = lastRows.map((r) => byT.get(r.ticker) || r);
+    };
+
+    // Cache-first: render every ticker we already have data for immediately,
+    // then fetch ONLY the missing ones. A full re-fetch happens exclusively
+    // on an explicit ↻ Refresh.
+    if (!opts.force) {
+      const have = new Map();
+      (assembleCachedRows(set) || []).forEach((r) => {
+        if (!r.error) have.set(r.ticker, r);
+      });
+      const missing = set.filter((t) => !have.has(t));
+      lastRows = set.map((t) => have.get(t) || { ticker: t, error: "loading…" });
+      paint();
+      if (!missing.length) {
+        cacheSet(set.join(","), lastRows);
+        statusEl.innerHTML = doneStatusHTML(set.length, 0, have.size, 0);
+        return;
+      }
+      statusEl.innerHTML = spinHTML(`${have.size} cached · loading ${missing.length} more…`);
+      let lastP = null;
+      try {
+        const rows = await getScreenerRows(missing, {
+          onProgress: (p) => {
+            lastP = p;
+            mergeInto(p.rows);
+            paint();
+            statusEl.innerHTML = spinHTML(`${have.size} cached · loading ${p.loaded}/${p.total} more…`);
+          },
+        });
+        if (rows == null) return;   // superseded
+        mergeInto(rows);
+        paint();
+        const failed = (lastP && lastP.failedBatches) || 0;
+        if (!failed) cacheSet(set.join(","), lastRows);
+        statusEl.innerHTML = doneStatusHTML(set.length, missing.length, have.size, failed);
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
+      }
+      return;
+    }
+
+    // Explicit ↻ Refresh: re-fetch the whole set fresh from Yahoo.
+    tableEl.innerHTML = `<div class="loading-box"><span class="spinner"></span> Loading…</div>`;
+    let lastP = null;
+    try {
+      const rows = await getScreenerRows(set, {
+        refresh: true,
+        force: true,
+        onProgress: (p) => {
+          lastP = p;
+          lastRows = p.rows;
+          paint();
+          statusEl.innerHTML = spinHTML(`refreshing ${p.loaded}/${p.total}…`);
+        },
+      });
+      if (rows == null) return;   // superseded
+      lastRows = rows;
+      paint();
+      statusEl.innerHTML = doneStatusHTML(set.length, set.length, 0, (lastP && lastP.failedBatches) || 0);
     } catch (e) {
+      statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
       tableEl.innerHTML = `<div class="empty">${e.message}</div>`;
     }
   }
@@ -821,13 +1249,14 @@ const Views = (() => {
 
   async function calendar(root, opts = {}) {
     render(root);
+    setChatContext("Calendar", []);   // events, not stock rows — no snapshot
     const ranges = [["1w", "Next 7 days"], ["2w", "Next 14 days"], ["1m", "Next 30 days"]];
     root.innerHTML = `
       <div class="view-head">
         <div class="view-title">Calendar</div>
         <div class="view-sub" id="cal-sub"></div>
         <div class="spacer"></div>
-        <button class="btn btn-sm" id="cal-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
+        <button class="btn btn-sm" id="cal-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       </div>
       <div class="toolbar">
         <div class="stmt-tabs" style="padding:0;border:0">
@@ -878,6 +1307,7 @@ const Views = (() => {
   /* =================== SETTINGS ===================== */
   function settings(root) {
     render(root);
+    setChatContext("Settings", []);
     const s = Store.getSettings();
     const accents = [["green", "#1fd1a0"], ["blue", "#2f81f7"], ["amber", "#f5a623"], ["violet", "#a371f7"]];
     root.innerHTML = `
@@ -937,7 +1367,38 @@ const Views = (() => {
     root.querySelector("#set-wipe").addEventListener("click", () => { if (confirm("Clear watchlist?")) { Store.clearWatchlist(); settings(root); } });
   }
 
-  return { screener, watchlist, dashboard, calendar, settings, COLS, PANEL_TIPS, updateCachedRow };
+  /* ===================== ANALYST CHAT — TAB CONTEXT ==================== */
+  // Row keys stripped before the chat agent sees them: chart arrays and the
+  // derivation blobs are big and carry nothing extra (scores/verdicts/flags
+  // stay). The FAB widget (window.ChatWidget) reads getChatContext() when the
+  // user sends a message, so it always analyses whatever tab they're on.
+  const CHAT_SKIP_KEYS = new Set([
+    "spark_6mo", "spark_1y", "spark_5y",
+    "strategy_1_detail", "strategy_2_detail", "strategy_3_detail",
+  ]);
+
+  let chatContext = { label: "", rows: [] };
+
+  /* Publish the active tab's rows as chat context: drop error/loading rows
+     and heavy keys, round nothing (already numbers). The widget's header
+     updates live via ChatWidget.contextChanged(). */
+  function setChatContext(label, rows) {
+    const slim = (rows || [])
+      .filter((r) => r && !r.error && r.ticker)
+      .map((r) => {
+        const o = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (!CHAT_SKIP_KEYS.has(k) && v !== null && v !== "") o[k] = v;
+        }
+        return o;
+      });
+    chatContext = { label, rows: slim };
+    if (window.ChatWidget) window.ChatWidget.contextChanged();
+  }
+  function getChatContext() { return chatContext; }
+
+  return { screener, watchlist, dashboard, calendar, settings,
+           getChatContext, COLS, PANEL_TIPS, updateCachedRow };
 })();
 
 /* =================== DEEP DIVE OVERLAY ===================== */
@@ -1025,6 +1486,11 @@ const DeepDive = (() => {
       let cls = "";
       if (/Growth|Yield|Margin|ROE|ROA|ROIC|ROCE/.test(k) && typeof v === "number") cls = v >= 0 ? "pos" : "neg";
       if (k === "FCF Coverage" && typeof v === "number") cls = v >= 1.2 ? "pos" : v >= 0.8 ? "amber" : "neg";
+      if (typeof v === "string" && / \/ 100/.test(v)) {   // strategy-grade rows
+        cls = /Advance|Compounder|Value candidate/.test(v) ? "pos"
+          : /Watchlist|Quality watch|Fair/.test(v) ? "amber"
+          : /Discard|Pass|Expensive/.test(v) ? "neg" : "";
+      }
       const tip = Views.PANEL_TIPS[k];
       const tipAttr = tip ? ` data-tip="${tip.replace(/"/g, "&quot;")}"` : "";
       const kCls = tip ? "k has-tip" : "k";
@@ -1086,7 +1552,7 @@ const DeepDive = (() => {
       <span class="dd-title">${ticker}</span>
       <span class="dd-name">${d.name || ""} · ${d.exchange || ""} ${d.sector ? "· " + d.sector : ""}</span>
       <span class="dd-price">${Fmt.cell(d.price, (v) => Fmt.price(v, cur))} ${chgTxt}</span>
-      <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">⟳ Refresh</button>
+      <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>
       <button class="btn btn-sm" id="dd-star">${star ? "★ Watching" : "☆ Watch"}</button>`;
     document.getElementById("dd-back").addEventListener("click", close);
@@ -1137,6 +1603,7 @@ const DeepDive = (() => {
           <div class="chart-box" id="dd-dilution"></div>
         </div></div>
 
+        ${d.panels.strategies ? `<div class="col-6">${panel("Strategy Ratings", d.panels.strategies)}</div>` : ""}
         <div class="col-6">${panel("Risk", d.panels.risk, fmtMaps.risk)}</div>
 
         <div class="col-6"><div class="panel" id="dd-calendar">
@@ -1307,3 +1774,163 @@ const DeepDive = (() => {
 
   return { open, close };
 })();
+
+/* ================= ANALYST CHAT — FLOATING WIDGET ================= */
+/* A persistent bubble on every tab. It lives outside the view root (mounted
+   once on <body>), so the conversation survives tab switches; each send pulls
+   the CURRENT tab's rows from Views.getChatContext(). History is persisted to
+   localStorage so it also survives reloads. */
+window.ChatWidget = (() => {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const state = {
+    history: Store.getChatHistory(),   // [{role, content}]
+    open: false,
+    busy: false,
+    attach: true,                      // send the current tab's rows as context
+  };
+  let els = null;                      // {fab, panel, log, input, send, attach, ctx}
+
+  const ctx = () => (window.Views ? Views.getChatContext() : { label: "", rows: [] });
+
+  function persist() { Store.setChatHistory(state.history); }
+
+  function bubbleHTML(role, html) {
+    return `<div class="chat-msg ${role}"><div class="chat-bubble">${html}</div></div>`;
+  }
+
+  function paintLog() {
+    els.log.innerHTML = state.history.length
+      ? state.history.map((m) =>
+          bubbleHTML(m.role, m.role === "assistant" ? Fmt.md(m.content) : esc(m.content))).join("")
+      : `<div class="chat-empty"><div class="big">✦</div>Ask the analyst about the stocks on this tab.` +
+        `<div class="hint">Answers are grounded in the rows currently shown — grades, valuation, health, dividends. Your conversation follows you across tabs.</div></div>`;
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  // Reflect the active tab's context in the header + attach toggle.
+  function contextChanged() {
+    if (!els) return;
+    const c = ctx();
+    const n = c.rows.length;
+    els.attach.disabled = !n;
+    if (!n) els.attach.checked = false;
+    else if (state.attach) els.attach.checked = true;
+    els.ctx.textContent = (els.attach.checked && n)
+      ? `${c.label || "This tab"} · ${n} stock${n === 1 ? "" : "s"}`
+      : (n ? `${n} available — off` : "no table data on this tab");
+  }
+
+  function setOpen(open) {
+    state.open = open;
+    els.panel.classList.toggle("hidden", !open);
+    els.fab.classList.toggle("active", open);
+    if (open) { contextChanged(); paintLog(); els.input.focus(); }
+  }
+
+  async function submit() {
+    const text = els.input.value.trim();
+    if (!text || state.busy) return;
+    state.busy = true;
+    els.input.value = "";
+    els.send.disabled = true;
+    state.history.push({ role: "user", content: text });
+    persist();
+    paintLog();
+    els.log.insertAdjacentHTML("beforeend",
+      bubbleHTML("assistant", '<span class="spinner" style="width:11px;height:11px"></span> thinking…'));
+    els.log.scrollTop = els.log.scrollHeight;
+    const bubble = els.log.lastElementChild.querySelector(".chat-bubble");
+
+    const c = ctx();
+    let reply = "";
+    let failed = null;
+    try {
+      await API.chat({
+        messages: state.history,
+        rows: (els.attach.checked ? c.rows : []),
+        context_label: (els.attach.checked ? c.label : ""),
+      }, (ev) => {
+        if (ev.text) {
+          reply += ev.text;
+          bubble.innerHTML = Fmt.md(reply);
+          els.log.scrollTop = els.log.scrollHeight;
+        } else if (ev.error) {
+          failed = ev.error;
+        }
+      });
+    } catch (e) {
+      failed = String(e.message || e);
+    }
+    if (reply) { state.history.push({ role: "assistant", content: reply }); persist(); }
+    else state.history.pop();              // failed turn: drop it so a retry is clean
+    if (failed) {
+      bubble.innerHTML = (reply ? Fmt.md(reply) : "") +
+        `<div class="chat-error">⚠ ${esc(failed)}</div>`;
+    } else if (!reply) {
+      bubble.innerHTML = `<div class="chat-error">⚠ No reply — is the server still running?</div>`;
+    }
+    if (failed || !reply) persist();
+    state.busy = false;
+    els.send.disabled = false;
+    els.input.focus();
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  function init() {
+    if (els) return;
+    const fab = document.createElement("button");
+    fab.className = "chat-fab";
+    fab.title = "Analyst chat";
+    fab.innerHTML = "✦";
+
+    const panel = document.createElement("div");
+    panel.className = "chat-panel hidden";
+    panel.innerHTML = `
+      <div class="chat-head">
+        <span class="chat-title">✦ Analyst</span>
+        <span class="chat-ctxlabel has-tip" id="cw-ctx"
+              data-tip="The agent analyses the stocks on your current tab. Toggle 'data' off to ask general questions. Your conversation continues as you move between tabs."></span>
+        <div class="spacer"></div>
+        <label class="chat-attach has-tip" data-tip="Attach the current tab's rows as context.">
+          <input type="checkbox" id="cw-attach"> data
+        </label>
+        <button class="chat-icon" id="cw-clear" title="Clear conversation">🗑</button>
+        <button class="chat-icon" id="cw-close" title="Close">✕</button>
+      </div>
+      <div class="chat-log" id="cw-log"></div>
+      <div class="chat-inputrow">
+        <textarea class="input chat-input" id="cw-input" rows="1"
+          placeholder="Ask about this tab’s stocks…"></textarea>
+        <button class="btn btn-primary btn-sm" id="cw-send">Send</button>
+      </div>`;
+
+    document.body.append(fab, panel);
+    els = {
+      fab, panel,
+      log: panel.querySelector("#cw-log"),
+      input: panel.querySelector("#cw-input"),
+      send: panel.querySelector("#cw-send"),
+      attach: panel.querySelector("#cw-attach"),
+      ctx: panel.querySelector("#cw-ctx"),
+    };
+    els.attach.checked = state.attach;
+
+    fab.addEventListener("click", () => setOpen(!state.open));
+    panel.querySelector("#cw-close").addEventListener("click", () => setOpen(false));
+    panel.querySelector("#cw-clear").addEventListener("click", () => {
+      state.history = []; persist(); paintLog();
+    });
+    els.send.addEventListener("click", submit);
+    els.attach.addEventListener("change", () => { state.attach = els.attach.checked; contextChanged(); });
+    els.input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    contextChanged();
+  }
+
+  return { init, contextChanged };
+})();
+
+document.addEventListener("DOMContentLoaded", () => window.ChatWidget.init());

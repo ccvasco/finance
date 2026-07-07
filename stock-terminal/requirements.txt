@@ -4,3 +4,4 @@
 yfinance>=1.4.1
 openpyxl>=3.1.0   # Excel (.xlsx) export
 lxml>=4.9.0       # parses the per-ticker earnings-history table (Calendar tab)
+anthropic>=0.116.0  # Analyst Chat (/api/chat) — needs ANTHROPIC_API_KEY at runtime

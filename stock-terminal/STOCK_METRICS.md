@@ -111,6 +111,28 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Altman Z-Score | Bankruptcy-risk gauge (higher = safer). | number | >2.99 safe, 1.81–2.99 grey, <1.81 distress. Blank for banks/financials. |
 | Piotroski F-Score | Fundamental strength across 9 tests (1 pt each). | integer 0–9 | 7–9 strong, 4–6 middling, 0–3 weak. |
 
+### Strategy Ratings
+
+This company graded against three long-term investing strategies, each
+0–100 (unlike every other metric in this sheet, these are **not** fraction-
+scaled — the raw score out of 100 is exported directly). Computed server-side
+from the same underlying metrics shown elsewhere on this sheet, so a blank
+input anywhere can lower a score (missing data never helps a stock).
+
+| Metric | Meaning | Units | Rough read |
+| --- | --- | --- | --- |
+| S1 · Triage | [Triage framework](stock-triage-strategy.md) grade: data-hygiene quarantine → hard kill-switches (distress, twin-negative earnings, leverage, liquidity, value destruction) → quality score across value creation, profitability, balance sheet, cash conversion. | integer 0–100, or text | ≥65 "Advance", 45–64 "Watchlist", <45 "Discard". Reads as `N/A` in the Overview panel value when quarantined (a critical field like Total Debt or Net Income is missing and unrecoverable) — the reason is shown instead. |
+| S1 · Flags | Triage Stage-0 sanity + Stage-3 valuation-context flags. Never disqualifying — they tell the deep dive where to look first: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ divergent multiples / data-sanity warnings · 💰 payout stress · 📉 crowded short · 🌀 high beta. | text | `N/A` = no warnings (or S1 quarantined). |
+| S2 · Compounder | [Quality Compounder](strategy-2-quality-compounder.md) grade: returns on capital (ROIC/ROCE/ROE), margin moat, capital discipline, 5Y/10Y compounding track record, valuation sanity. A distress or twin-negative-earnings guard caps the score at 35. | integer 0–100 | ≥70 "Compounder", 50–69 "Quality watch", <50 "Pass". |
+| S3 · Defensive Value | [Defensive Value](strategy-3-defensive-value.md) grade: Graham-style margin of safety — earnings/cash yield, asset backing (incl. P/E × P/B ≤ 22.5), financial strength, earnings quality, dividend record. | integer 0–100 | ≥70 "Value candidate", 50–69 "Fair", <50 "Expensive/weak". |
+| Min · All Strategies | The minimum of the three scores above — the "good under every lens" figure. | integer 0–100, or blank | Blank when any strategy above is ungradable (e.g. S1 quarantined). |
+
+In the exported Overview sheet, each strategy's cell reads as
+`"<score> / 100 — <verdict>"` (e.g. `71 / 100 — Advance`) rather than a bare
+number, so the grade and its interpretation travel together in one cell.
+Financials (banks, insurers) are graded on each strategy's own documented
+sector substitution rather than the metrics above.
+
 ---
 
 ## Sheet 2 — Charts Data
@@ -192,4 +214,6 @@ The deep-dive page also shows an **Earnings & Splits Calendar** (next earnings
 date, EPS/revenue estimates, recent earnings surprises, stock-split history) and
 an interactive **Price** chart. These are not part of the Excel export.
 
-See [SCREENER_COLUMNS.md](SCREENER_COLUMNS.md) for the multi-ticker screener export.
+See [SCREENER_COLUMNS.md](SCREENER_COLUMNS.md) for the multi-ticker screener
+export, and [METRICS.md](METRICS.md) §6 for the strategy-rating methodology in
+plain language.

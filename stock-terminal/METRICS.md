@@ -72,7 +72,7 @@ better**, and consistency over time matters as much as the level.
 > differ from the chart's margin **even in sign** (e.g. a negative TTM Operating
 > Margin % next to a positive fiscal-year operating margin). Read the panel as
 > Yahoo's published TTM view and the charts as the audited fiscal-year view.
-> See **§9 Interpreting panel-vs-chart discrepancies** for what to conclude
+> See **§10 Interpreting panel-vs-chart discrepancies** for what to conclude
 > from these gaps.
 
 ---
@@ -115,7 +115,35 @@ For income investors. Sustainability matters more than headline yield.
 
 ---
 
-## 6. Risk
+## 6. Strategy ratings
+
+Three independent long-term investing strategies, each grading every stock
+0–100 from the metrics above. Missing data always scores 0 for that metric —
+a strategy can never be flattered by a gap in the data. Each strategy is fully
+documented in its own file in this directory; this section is a summary.
+
+| Strategy | Question it answers | Verdict bands | Full rules |
+| --- | --- | --- | --- |
+| **S1 · Triage** | Is this business obviously broken? Quarantines unreadable rows, then applies hard kill-switches (distress, twin-negative earnings, over-leverage, liquidity crunch, value destruction) before scoring survivors on value creation, profitability, balance sheet, and cash conversion. | ≥65 **Advance**, 45–64 **Watchlist**, <45 **Discard**. Blank = quarantined (a critical field like Total Debt or Net Income is missing and unrecoverable). | [stock-triage-strategy.md](stock-triage-strategy.md) |
+| **S2 · Compounder** | Can this business compound capital for a decade? Weighs returns on capital (ROIC/ROCE/ROE), margin moat, capital discipline, a demonstrated 5Y/10Y price-compounding record, and a valuation sanity check. | ≥70 **Compounder**, 50–69 **Quality watch**, <50 **Pass**. A distress or twin-negative-earnings guard caps the score at 35 regardless of the rest. | [strategy-2-quality-compounder.md](strategy-2-quality-compounder.md) |
+| **S3 · Defensive Value** | Is this cheap *and* safe enough to hold? A Graham-style margin-of-safety score: earnings/cash yield, asset backing (including the classic P/E × P/B ≤ 22.5 test), financial strength, earnings quality, and dividend record. | ≥70 **Value candidate**, 50–69 **Fair**, <50 **Expensive/weak**. | [strategy-3-defensive-value.md](strategy-3-defensive-value.md) |
+| **Strat Min** | Which stocks hold up under *every* lens at once? The minimum of the three scores above. | Read against whichever strategy produced the minimum. Blank if any strategy is ungradable (e.g. S1 quarantined). | — (composite; see `strategies.py`) |
+| **S1 Flags** | Where should the deep dive look first? The triage framework's never-disqualifying context flags: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ divergent multiples and data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress · 📉 crowded short · 🌀 high beta. | Informational only — flags never change a score. Blank = no warnings. | [stock-triage-strategy.md](stock-triage-strategy.md) (Stages 0 & 3) |
+
+Financials (banks, insurers) are graded on each strategy's own documented
+substitution — e.g. S1 and S2 swap in ROE/net-margin/Piotroski where
+Altman Z, Debt/EBITDA and ROIC are structurally meaningless for
+balance-sheet-driven businesses; S3 swaps in ROA for the financial-strength
+pillar.
+
+**Where to sort:** rank by **Strat Min**, descending, to surface the stocks
+that score well under *all three* strategies simultaneously — a business in
+demonstrable health (S1), with a durable moat (S2), at a defensible price
+(S3) is the intersection this whole framework exists to find.
+
+---
+
+## 7. Risk
 
 Volatility, crowding, and distress signals.
 
@@ -136,7 +164,7 @@ ratio, (6) higher current ratio, (7) no new share issuance. *Efficiency:*
 
 ---
 
-## 7. Charts (deep-dive)
+## 8. Charts (deep-dive)
 
 ### Revenue · Profit · Net Income · FCF (last 5 years)
 Dollar bars per fiscal year:
@@ -177,7 +205,7 @@ creeping toward unsustainable levels.
 
 ---
 
-## 8. Performance (price return)
+## 9. Performance (price return)
 
 Price-only returns over **YTD, 1Y, 3Y, 5Y, 10Y**. These **exclude dividends**
 (they are price appreciation only), so a high-yield stock's true total return is
@@ -186,7 +214,7 @@ but past performance does not predict future returns.
 
 ---
 
-## 9. Interpreting panel-vs-chart discrepancies
+## 10. Interpreting panel-vs-chart discrepancies
 
 The metric panels and the charts can show different figures for the same
 metric — sometimes very different (a panel Operating Margin of −7% next to a
@@ -264,6 +292,7 @@ settlements.
 | Profitability | §3 Profitability |
 | Financial Health | §4 Financial health |
 | Dividend | §5 Dividends |
-| Risk | §6 Risk |
-| Revenue/Growth/Share-Dilution charts | §7 Charts |
-| Performance columns | §8 Performance |
+| Strategy Ratings | §6 Strategy ratings |
+| Risk | §7 Risk |
+| Revenue/Growth/Share-Dilution charts | §8 Charts |
+| Performance columns | §9 Performance |

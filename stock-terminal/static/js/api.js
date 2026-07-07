@@ -24,6 +24,8 @@ const API = (() => {
   }
   return {
     health: () => get("/api/health"),
+    // Static UI reference data (S1 flag legend), sourced from the grader.
+    meta: () => get("/api/meta"),
     // `refresh` asks the server to evict its cache for the request first,
     // forcing a fresh pull from Yahoo.
     screener: (tickers, refresh = false) =>
@@ -52,6 +54,36 @@ const API = (() => {
         `${ticker}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
     clearCache: () => fetch("/api/cache/clear", { method: "POST" }),
+    /* POST /api/chat and stream the agent's reply. Calls onEvent for every
+       SSE event: {text} chunks while streaming, then {done,...} or {error}.
+       Returns when the stream closes. */
+    async chat({ messages, rows, context_label }, onEvent) {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages, rows, context_label }),
+      });
+      if (!r.ok || !r.body) {
+        onEvent({ error: `HTTP ${r.status}` });
+        return;
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE frames are separated by a blank line; keep the tail partial.
+        const frames = buf.split("\n\n");
+        buf = frames.pop();
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          try { onEvent(JSON.parse(line.slice(6))); } catch { /* skip bad frame */ }
+        }
+      }
+    },
   };
 })();
 
@@ -125,5 +157,61 @@ const Fmt = {
   cell(v, formatter) {
     const s = formatter(v);
     return s === null ? Fmt.na : s;
+  },
+
+  /* Markdown-lite -> HTML for chat replies. Escapes first (model output is
+     untrusted), then supports: ``` code fences, `code`, **bold**, *italic*,
+     ### headings, - / 1. lists, | tables |, and paragraphs. */
+  md(src) {
+    const esc = (s) => s.replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const inline = (s) => s
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    const out = [];
+    // Code fences first so their contents are never parsed as markdown.
+    const parts = String(src == null ? "" : src).split(/```[^\n]*\n?/);
+    parts.forEach((part, i) => {
+      if (i % 2 === 1) {                       // inside a fence
+        out.push(`<pre><code>${esc(part.replace(/\n$/, ""))}</code></pre>`);
+        return;
+      }
+      let list = null;                          // "ul" | "ol" while open
+      let table = null;                         // collected table rows
+      const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+      const closeTable = () => {
+        if (!table) return;
+        const rows = table.map((cells, ri) =>
+          `<tr>${cells.map((c) => `<t${ri === 0 ? "h" : "d"}>${inline(esc(c))}</t${ri === 0 ? "h" : "d"}>`).join("")}</tr>`);
+        out.push(`<table>${rows.join("")}</table>`);
+        table = null;
+      };
+      for (const rawLine of part.split("\n")) {
+        const line = rawLine.trimEnd();
+        const t = line.trim();
+        if (/^\|.*\|$/.test(t)) {               // | table row |
+          closeList();
+          if (/^\|[\s:|-]+\|$/.test(t)) continue;  // |---|---| separator
+          (table = table || []).push(t.slice(1, -1).split("|").map((c) => c.trim()));
+          continue;
+        }
+        closeTable();
+        const h = t.match(/^(#{1,4})\s+(.*)$/);
+        const ul = t.match(/^[-*]\s+(.*)$/);
+        const ol = t.match(/^\d+[.)]\s+(.*)$/);
+        if (h) { closeList(); out.push(`<h4>${inline(esc(h[2]))}</h4>`); }
+        else if (ul || ol) {
+          const kind = ul ? "ul" : "ol";
+          if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; }
+          out.push(`<li>${inline(esc((ul || ol)[1]))}</li>`);
+        } else if (t) { closeList(); out.push(`<p>${inline(esc(t))}</p>`); }
+        else closeList();
+      }
+      closeList();
+      closeTable();
+    });
+    return out.join("");
   },
 };

@@ -3,8 +3,9 @@
 const Store = (() => {
   const KEYS = {
     wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
-    lists: "st.lists",
+    lists: "st.lists", rows: "st.rowsCache", chat: "st.chatHistory",
   };
+  const CHAT_MAX = 60;   // keep the last N messages (agent context is capped too)
 
   function read(key, fallback) {
     try {
@@ -23,6 +24,7 @@ const Store = (() => {
   let settings = Object.assign(
     {
       accent: "green", defaultTickers: "AAPL, MSFT, NVDA, GOOGL, AMZN", range: "1y",
+      zoom: 100,          // whole-app UI zoom, percent (Ctrl +/- or topbar controls)
       // screener fetch tuning
       batchSize: 20,      // tickers per request when analyzing many at once
       batchDelay: 400,    // ms pause between batches
@@ -94,7 +96,59 @@ const Store = (() => {
       const l = lists.find((x) => x.id === id);
       if (l) { l.name = (name || "").trim(); l.updatedAt = Date.now(); write(KEYS.lists, lists); notify(); }
     },
+    // Append tickers (deduplicated, uppercased) to a list. Returns the updated
+    // list, or null if the id doesn't exist.
+    addToList(id, tickers) {
+      const l = lists.find((x) => x.id === id);
+      if (!l) return null;
+      const seen = new Set(l.tickers);
+      (tickers || []).forEach((t) => {
+        t = String(t).trim().toUpperCase();
+        if (t && !seen.has(t)) { seen.add(t); l.tickers.push(t); }
+      });
+      l.updatedAt = Date.now();
+      write(KEYS.lists, lists); notify();
+      return cloneList(l);
+    },
+    // Remove tickers from a list. Returns the updated list, or null if the id
+    // doesn't exist.
+    removeFromList(id, tickers) {
+      const l = lists.find((x) => x.id === id);
+      if (!l) return null;
+      const drop = new Set((tickers || []).map((t) => String(t).trim().toUpperCase()));
+      l.tickers = l.tickers.filter((t) => !drop.has(t));
+      l.updatedAt = Date.now();
+      write(KEYS.lists, lists); notify();
+      return cloneList(l);
+    },
     deleteList(id) { lists = lists.filter((x) => x.id !== id); write(KEYS.lists, lists); notify(); },
+
+    // -- persisted screener rows (so cached tables survive page reloads) ----
+    // entries: [[setKey, rows], ...] in oldest→newest order.
+    getRowsCache: () => read(KEYS.rows, []),
+    setRowsCache(entries) {
+      try {
+        localStorage.setItem(KEYS.rows, JSON.stringify(entries));
+      } catch {
+        // Quota exceeded — retry with only the newest few sets, else drop.
+        try {
+          localStorage.setItem(KEYS.rows, JSON.stringify(entries.slice(-5)));
+        } catch {
+          try { localStorage.removeItem(KEYS.rows); } catch {}
+        }
+      }
+    },
+
+    // -- analyst-chat history (survives reloads; capped) -------------------
+    getChatHistory() {
+      const h = read(KEYS.chat, []);
+      return Array.isArray(h) ? h : [];
+    },
+    setChatHistory(history) {
+      const trimmed = (history || []).slice(-CHAT_MAX);
+      try { localStorage.setItem(KEYS.chat, JSON.stringify(trimmed)); }
+      catch { try { localStorage.removeItem(KEYS.chat); } catch {} }
+    },
 
     // -- settings ----------------------------------------------------------
     getSettings: () => Object.assign({}, settings),

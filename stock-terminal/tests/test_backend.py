@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.dirname(TERMINAL_DIR))   # repo root → yfinance imp
 sys.path.insert(0, TERMINAL_DIR)                     # stock-terminal/ → app importable
 
 import app  # noqa: E402  (the stock-terminal app module)
+import strategies  # noqa: E402  (strategy graders)
 
 
 # ---------------------------------------------------------------------------
@@ -932,7 +933,8 @@ class TestDeepdive(unittest.TestCase):
     def test_panel_names(self):
         d = self._run()
         self.assertEqual(set(d["panels"].keys()),
-                         {"valuation", "dividend", "profitability", "health", "risk"})
+                         {"valuation", "dividend", "profitability", "health",
+                          "risk", "strategies"})
 
     def test_valuation_keys(self):
         d = self._run()
@@ -1632,6 +1634,14 @@ class TestHTTPServer(unittest.TestCase):
         self.assertIn("text/html", ct)
         self.assertIn(b"<!DOCTYPE html>", body)
 
+    def test_static_files_not_browser_cached(self):
+        # Static responses must carry Cache-Control so browsers revalidate
+        # instead of heuristically caching stale JS/CSS across app updates.
+        for path in ("/", "/js/views.js", "/css/styles.css"):
+            with urlopen(f"{self.base}{path}", timeout=10) as r:
+                self.assertEqual(r.headers.get("Cache-Control"), "no-cache",
+                                 f"missing no-cache on {path}")
+
     def test_js_file_served(self):
         status, body, ct = _get(f"{self.base}/js/api.js")
         self.assertEqual(status, 200)
@@ -2010,6 +2020,12 @@ class TestExportValHelper(unittest.TestCase):
         self.assertAlmostEqual(app._export_val("div_yield", 2.0), 0.02)
         self.assertAlmostEqual(app._export_val("debt_to_equity", 50.0), 0.50)
 
+    def test_wacc_normalized_like_roic_roce(self):
+        # WACC is stored in percentage points like ROIC/ROCE, so it must export
+        # as a decimal fraction too — not a raw percentage.
+        self.assertAlmostEqual(app._export_val("wacc", 8.5), 0.085)
+        self.assertAlmostEqual(app._export_val("roce", 15.0), 0.15)
+
     def test_fraction_keys_pass_through(self):
         self.assertEqual(app._export_val("profit_margin", 0.25), 0.25)
         self.assertEqual(app._export_val("roe", 0.20), 0.20)
@@ -2251,6 +2267,17 @@ class TestEbitdaRatios(unittest.TestCase):
         # ebitda 120e9 / fcf 40e9 = 3.0
         self.assertAlmostEqual(row["ebitda_fcf"], 3.0)
 
+    def test_screener_ebitda_value(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertAlmostEqual(row["ebitda"], 120e9)
+
+    def test_screener_ebitda_none_when_missing(self):
+        info = {k: v for k, v in _BASE_INFO.items() if k != "ebitda"}
+        with _patch_all(), patch("app.get_info", return_value=info):
+            row = app.screener_row("TST")
+        self.assertIsNone(row["ebitda"])
+
     def test_screener_ratios_none_without_ebitda(self):
         info = {k: v for k, v in _BASE_INFO.items() if k != "ebitda"}
         with patch("app.get_info", return_value=info), \
@@ -2299,6 +2326,7 @@ class TestEbitdaRatios(unittest.TestCase):
         self.assertEqual(app._export_val("ebitda_fcf", 3.0), 3.0)
         keys = {k for k, _ in app._METRIC_COLS}
         self.assertIn("debt_ebitda", keys)
+        self.assertIn("ebitda", keys)   # raw EBITDA exported alongside its ratios
         self.assertIn("ebitda_fcf", keys)
 
 
@@ -2426,10 +2454,17 @@ class TestScreenerRowSparklines(unittest.TestCase):
 class TestPerfColumnOrder(unittest.TestCase):
 
     def test_perf_block_follows_industry_longest_first(self):
+        # After Industry come the strategy grades and flags, then the
+        # performance block (longest window first).
         keys = [k for k, _ in app._METRIC_COLS]
         i = keys.index("industry")
         self.assertEqual(
             keys[i + 1:i + 6],
+            ["strategy_1", "strategy_2", "strategy_3", "strategy_min",
+             "strategy_1_flags"],
+        )
+        self.assertEqual(
+            keys[i + 6:i + 11],
             ["perf_10y", "perf_5y", "perf_3y", "perf_1y", "perf_ytd"],
         )
 
@@ -2484,6 +2519,777 @@ class TestPerfColumnFormat(unittest.TestCase):
         # renders it as 12.00%.
         col = headers.index(label_for["perf_1y"]) + 1
         self.assertAlmostEqual(ws.cell(row=2, column=col).value, 0.12)
+
+
+# ---------------------------------------------------------------------------
+# 20. Strategy graders (strategies.py)
+# ---------------------------------------------------------------------------
+def _strategy_row(**over):
+    """A healthy non-financial screener row (units match screener_row):
+    margins/roe/roa/payout are fractions; roic/roce/wacc/div_yield/
+    debt_to_equity/perf_* are percentage points."""
+    row = {
+        "ticker": "TST", "name": "Test Co", "sector": "Technology",
+        "industry": "Software", "currency": "USD",
+        "price": 100.0, "market_cap": 1e12, "enterprise_value": 1e12,
+        "pe": 20.0, "forward_pe": 18.0, "peg": 1.2, "pb": 5.0, "ps": 5.0,
+        "pc": 50.0, "p_fcf": 20.0, "ev_ebitda": 12.0, "eps": 5.0, "eps_basic": 5.0,
+        "income": 10e9, "profit_margin": 0.20, "gross_margin": 0.55,
+        "operating_margin": 0.25, "ebitda_margin": 0.30, "fcf": 9e9,
+        "roa": 0.12, "roe": 0.25, "roic": 18.0, "roce": 20.0, "wacc": 9.0,
+        "revenue_per_share": 40.0,
+        "debt_to_equity": 40.0, "debt_to_equity_mrq": 40.0, "debt_ebitda": 1.0,
+        "lt_debt_to_equity": 30.0, "current_ratio": 2.0, "quick_ratio": 1.5,
+        "total_cash": 20e9, "total_debt": 10e9, "total_equity": 50e9,
+        "ebitda": 15e9, "ebitda_fcf": 1.67,
+        "div_yield": 2.0, "five_year_avg_yield": 2.0, "payout_ratio": 0.35,
+        "div_growth_3y": 8.0, "div_growth_5y": 8.0, "dividend_estimate": 2.0,
+        "dividend_ttm": 2.0, "fcf_coverage": 3.0, "years_div_increase": 12,
+        "ex_dividend_date": "2026-05-11",
+        "beta": 1.0, "short_interest": 0.02, "days_to_cover": 2.0,
+        "altman_z": 5.0, "piotroski_f": 8,
+        "perf_ytd": 5.0, "perf_1y": 15.0, "perf_3y": 60.0,
+        "perf_5y": 120.0, "perf_10y": 300.0,
+    }
+    row.update(over)
+    return row
+
+
+class TestStrategyTriage(unittest.TestCase):
+
+    def test_strong_row_scores_100_advance(self):
+        score, verdict = strategies.grade_triage(_strategy_row())
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Advance")
+
+    def test_missing_equity_quarantines(self):
+        score, verdict = strategies.grade_triage(_strategy_row(total_equity=None))
+        self.assertIsNone(score)
+        self.assertIn("Quarantine", verdict)
+        self.assertIn("total_equity", verdict)
+
+    def test_blank_debt_with_cash_treated_as_zero_not_quarantined(self):
+        # The blank-but-cash-rich carve-out: no Total Debt but cash on hand ->
+        # zero debt (best case), so leverage metrics take full points.
+        row = _strategy_row(total_debt=None, debt_ebitda=None, debt_to_equity=None)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Advance")
+
+    def test_blank_debt_without_cash_quarantines(self):
+        row = _strategy_row(total_debt=None, total_cash=None,
+                            debt_ebitda=None, debt_to_equity=None)
+        score, verdict = strategies.grade_triage(row)
+        self.assertIsNone(score)
+        self.assertIn("total_debt", verdict)
+
+    def test_high_ev_market_cap_ratio_is_not_quarantined(self):
+        # There is no currency-mixing quarantine on EV/Market Cap: Yahoo
+        # always returns both in the same currency, so a large ratio here
+        # means genuine leverage, not a data artifact — it must score
+        # normally (and can still legitimately fail Stage 1/2 on its own
+        # merits, just not via a Stage 0 quarantine).
+        row = _strategy_row(market_cap=1e9, enterprise_value=5e9)
+        score, verdict = strategies.grade_triage(row)
+        self.assertIsNotNone(score)
+        self.assertNotIn("Quarantine", verdict)
+
+    def test_twin_negative_kill_switch(self):
+        score, verdict = strategies.grade_triage(
+            _strategy_row(income=-1e9, fcf=-1e9))
+        self.assertEqual(score, 0)
+        self.assertIn("Discard", verdict)
+        self.assertIn("twin-negative", verdict)
+
+    def test_single_negative_is_not_killed(self):
+        score, _ = strategies.grade_triage(_strategy_row(fcf=-1e9))
+        self.assertGreater(score, 0)
+
+    def test_liquidity_kill_requires_both_conditions(self):
+        # CR < 1 but QR at 0.6 (not < 0.5): compound condition must NOT fire.
+        score, verdict = strategies.grade_triage(
+            _strategy_row(current_ratio=0.96, quick_ratio=0.6))
+        self.assertGreater(score, 0)
+        self.assertNotIn("Discard", verdict)
+        # Both legs breached -> kill.
+        score2, verdict2 = strategies.grade_triage(
+            _strategy_row(current_ratio=0.96, quick_ratio=0.4))
+        self.assertEqual(score2, 0)
+        self.assertIn("liquidity", verdict2)
+
+    def test_altman_distress_kill(self):
+        score, verdict = strategies.grade_triage(_strategy_row(altman_z=1.2))
+        self.assertEqual(score, 0)
+        self.assertIn("Altman", verdict)
+
+    def test_roe_leverage_cap(self):
+        # Same ROE but D/E > 1.5 (150 pct points): ROE points halved (10 -> 5).
+        base, _ = strategies.grade_triage(_strategy_row(debt_to_equity=140.0))
+        capped, _ = strategies.grade_triage(_strategy_row(debt_to_equity=160.0))
+        # d_eq 140 already loses the Pillar-C debt/equity points vs 160 equally
+        # (both > 100), so the only difference is the ROE cap.
+        self.assertEqual(base - capped, 5)
+
+    def test_financials_scored_on_roe_margin_piotroski(self):
+        row = _strategy_row(sector="Financial Services",
+                            industry="Banks—Diversified", altman_z=1.0,
+                            debt_ebitda=8.0, current_ratio=0.5, quick_ratio=0.4,
+                            roe=0.18, profit_margin=0.25, piotroski_f=8)
+        score, verdict = strategies.grade_triage(row)
+        # Altman / leverage / liquidity kill-switches must not fire; full marks
+        # on the financial rubric: ROE 40 + net margin 30 + Piotroski 30.
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Advance")
+
+    def test_negative_spread_caps_score_at_55(self):
+        # roic=18, wacc=9 (default) -> spread +9 -> no gate, full 100.
+        # Push wacc above roic for a negative spread; everything else stays
+        # strong, so without the gate this would still score 100/Advance.
+        row = _strategy_row(wacc=20.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 55)
+        self.assertEqual(verdict, "Watchlist")
+
+    def test_thin_positive_spread_is_not_gated(self):
+        # roic=9.5, wacc=9 -> spread +0.5 (thin, but not negative): the gate
+        # must not fire on estimation noise around a small positive spread.
+        row = _strategy_row(roic=9.5, wacc=9.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertGreater(score, 55)
+
+    def test_negative_equity_scores_worst_leverage_band(self):
+        # Negative equity flips D/E negative, which would otherwise beat every
+        # "low leverage" band; ROE on negative equity is arithmetic noise.
+        # Both must score 0: -10 (ROE) and -8 (Pillar C D/E) vs the base row.
+        row = _strategy_row(total_equity=-5e9, debt_to_equity=-20.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 82)
+        self.assertEqual(verdict, "Advance")
+
+    def test_negative_ebitda_with_net_debt_kills(self):
+        # Debt/EBITDA is undefined (None) when EBITDA <= 0 — without the
+        # companion switch this row would sail past the leverage kill.
+        row = _strategy_row(ebitda=-2e9, debt_ebitda=None, ebitda_fcf=None,
+                            total_cash=1e9)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 0)
+        self.assertIn("negative EBITDA", verdict)
+
+    def test_negative_ebitda_with_net_cash_not_killed(self):
+        # Same negative EBITDA but cash exceeds debt: no leverage problem.
+        row = _strategy_row(ebitda=-2e9, debt_ebitda=None, ebitda_fcf=None)
+        score, verdict = strategies.grade_triage(row)
+        self.assertGreater(score, 0)
+        self.assertNotIn("Discard", verdict)
+
+    def test_growth_phase_routed_to_watchlist(self):
+        # A 40-44 scorer failing purely on margins, with strong gross margin
+        # (>60%) and positive FCF, is routed to Watchlist instead of Discard.
+        row = _strategy_row(gross_margin=0.65, operating_margin=0.02,
+                            profit_margin=0.01, roe=0.05, roic=2.0,
+                            income=0.5e9, fcf=0.45e9, ebitda_fcf=5.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 42)
+        self.assertEqual(verdict, "Watchlist")
+        # Same shape but a thin gross margin: genuinely weak -> Discard.
+        weak = _strategy_row(gross_margin=0.30, operating_margin=0.02,
+                             profit_margin=0.01, roe=0.05, roic=2.0,
+                             income=0.5e9, fcf=0.45e9, ebitda_fcf=5.0)
+        score2, verdict2 = strategies.grade_triage(weak)
+        self.assertLess(score2, 45)
+        self.assertEqual(verdict2, "Discard")
+
+    def test_negative_spread_gate_does_not_apply_to_financials(self):
+        # Financials don't use ROIC/WACC in Stage 2 at all, so a negative
+        # spread on a financial-sector row must not trigger the gate.
+        row = _strategy_row(sector="Financial Services",
+                            industry="Banks—Diversified", altman_z=1.0,
+                            debt_ebitda=8.0, current_ratio=0.5, quick_ratio=0.4,
+                            roe=0.18, profit_margin=0.25, piotroski_f=8,
+                            roic=-5.0, wacc=9.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Advance")
+
+
+class TestFinancialClassification(unittest.TestCase):
+    """_is_financial matches balance-sheet businesses by industry — Yahoo's
+    'Financial Services' sector alone also sweeps in fee businesses."""
+
+    def _fin(self, industry, sector="Financial Services"):
+        return strategies._is_financial({"sector": sector, "industry": industry})
+
+    def test_balance_sheet_industries_match(self):
+        for ind in ("Banks—Diversified", "Banks—Regional",
+                    "Insurance—Property & Casualty", "Capital Markets",
+                    "Credit Services", "Mortgage Finance",
+                    "Financial Conglomerates"):
+            self.assertTrue(self._fin(ind), ind)
+
+    def test_fee_businesses_score_on_standard_rubric(self):
+        for ind in ("Insurance Brokers", "Financial Data & Stock Exchanges",
+                    "Asset Management"):
+            self.assertFalse(self._fin(ind), ind)
+
+    def test_non_financial_industry_wins_over_financial_sector(self):
+        self.assertFalse(self._fin("Software—Infrastructure"))
+
+    def test_sector_fallback_when_industry_missing(self):
+        self.assertTrue(self._fin(None))
+        self.assertFalse(strategies._is_financial(
+            {"sector": "Technology", "industry": None}))
+
+
+class TestRoundScore(unittest.TestCase):
+
+    def test_rounds_half_up_not_bankers(self):
+        # Python's round() is banker's rounding (64.5 -> 64); band edges must
+        # round predictably upward instead.
+        self.assertEqual(strategies._round_score(64.5), 65)
+        self.assertEqual(strategies._round_score(63.5), 64)
+        self.assertEqual(strategies._round_score(64.4), 64)
+
+
+class TestTriageFlags(unittest.TestCase):
+    """Stage 0 sanity + Stage 3 valuation-context flags (never disqualifying)."""
+
+    def test_healthy_row_has_no_flags(self):
+        self.assertEqual(strategies.triage_flags(_strategy_row(), 80), [])
+
+    def test_quarantined_row_gets_no_flags(self):
+        self.assertEqual(
+            strategies.triage_flags(_strategy_row(pb=45.0), None), [])
+
+    def test_priced_for_perfection_triggers(self):
+        for over in ({"peg": 3.5}, {"p_fcf": 45.0}, {"ev_ebitda": 35.0}):
+            flags = strategies.triage_flags(_strategy_row(**over), 80)
+            self.assertTrue(any("Priced for perfection" in f for f in flags), over)
+
+    def test_suspiciously_cheap_needs_mediocre_score(self):
+        cheap = _strategy_row(pe=7.0)
+        self.assertTrue(any("Suspiciously cheap" in f
+                            for f in strategies.triage_flags(cheap, 55)))
+        # Same multiples on a strong scorer: cheapness alone is not suspicious.
+        self.assertFalse(any("Suspiciously cheap" in f
+                             for f in strategies.triage_flags(cheap, 65)))
+
+    def test_divergent_multiples(self):
+        flags = strategies.triage_flags(_strategy_row(pe=20.0, forward_pe=9.0), 80)
+        self.assertTrue(any("Divergent multiples" in f for f in flags))
+
+    def test_payout_stress(self):
+        for over in ({"payout_ratio": 0.80}, {"fcf_coverage": 1.2}):
+            flags = strategies.triage_flags(_strategy_row(**over), 80)
+            self.assertTrue(any("Payout stress" in f for f in flags), over)
+
+    def test_crowded_short_and_high_beta(self):
+        flags = strategies.triage_flags(
+            _strategy_row(short_interest=0.20, beta=2.0), 80)
+        self.assertTrue(any("Crowded short" in f for f in flags))
+        self.assertTrue(any("High beta" in f for f in flags))
+
+    def test_data_sanity_flags(self):
+        flags = strategies.triage_flags(
+            _strategy_row(pb=45.0, enterprise_value=-1e9), 80)
+        self.assertTrue(any("P/B > 40" in f for f in flags))
+        self.assertTrue(any("negative EV" in f for f in flags))
+
+    def test_grade_row_joins_flags_into_string(self):
+        g = strategies.grade_row(_strategy_row(peg=3.5, beta=2.0))
+        self.assertIn("Priced for perfection", g["strategy_1_flags"])
+        self.assertIn("High beta", g["strategy_1_flags"])
+        self.assertIn(" · ", g["strategy_1_flags"])
+
+
+class TestStrategyCompounder(unittest.TestCase):
+
+    def test_strong_row_is_compounder(self):
+        score, verdict = strategies.grade_compounder(_strategy_row())
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Compounder")
+
+    def test_solvency_guard_caps_at_35(self):
+        score, verdict = strategies.grade_compounder(_strategy_row(altman_z=1.2))
+        self.assertLessEqual(score, 35)
+        self.assertEqual(verdict, "Pass")
+
+    def test_no_10y_history_loses_track_record_points(self):
+        score, _ = strategies.grade_compounder(_strategy_row(perf_10y=None))
+        self.assertEqual(score, 90)
+
+    def test_roe_leverage_cap_de_above_1(self):
+        full, _ = strategies.grade_compounder(_strategy_row(debt_to_equity=90.0))
+        capped, _ = strategies.grade_compounder(_strategy_row(debt_to_equity=110.0))
+        self.assertEqual(full - capped, 5)
+
+    def test_negative_equity_zeroes_roe_points(self):
+        # ROE on negative equity is noise: full 10 ROE points lost vs base.
+        score, _ = strategies.grade_compounder(
+            _strategy_row(total_equity=-5e9, debt_to_equity=-20.0))
+        self.assertEqual(score, 90)
+
+    def test_financial_rubric_full_marks(self):
+        # Bank rubric: ROE 30 + net margin 20 + (payout 10 + Piotroski 10)
+        # + track record 20 + valuation 10 = 100.
+        row = _strategy_row(sector="Financial Services",
+                            industry="Banks—Diversified",
+                            roe=0.18, profit_margin=0.25,
+                            payout_ratio=0.35, piotroski_f=8)
+        score, verdict = strategies.grade_compounder(row)
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Compounder")
+
+    def test_valuation_pillar_tiers(self):
+        # Full tier (10): default row (peg 1.2) scores 100. Second tier (5):
+        # peg unavailable, P/FCF 30 (< 40). Zero: both unavailable.
+        mid, _ = strategies.grade_compounder(_strategy_row(peg=None, p_fcf=30.0))
+        self.assertEqual(mid, 95)
+        none, _ = strategies.grade_compounder(_strategy_row(peg=None, p_fcf=None))
+        self.assertEqual(none, 90)
+
+    def test_cagr_pct_edges(self):
+        self.assertIsNone(strategies._cagr_pct(None, 5))
+        self.assertEqual(strategies._cagr_pct(-100.0, 5), -100.0)
+        # +300% over 10y -> 4^(1/10) - 1 ~ 14.87%/yr
+        self.assertAlmostEqual(strategies._cagr_pct(300.0, 10), 14.87, places=2)
+
+
+class TestStrategyDefensive(unittest.TestCase):
+
+    def _value_row(self):
+        return _strategy_row(pe=10.0, pb=1.2, p_fcf=12.0, ev_ebitda=8.0,
+                             current_ratio=2.5, debt_to_equity=30.0,
+                             altman_z=4.0, div_yield=3.0, payout_ratio=0.4,
+                             fcf_coverage=2.0)
+
+    def test_value_row_scores_100(self):
+        score, verdict = strategies.grade_defensive(self._value_row())
+        self.assertEqual(score, 100)
+        self.assertEqual(verdict, "Value candidate")
+
+    def test_growth_stock_fails_asset_backing(self):
+        # The default row (P/B 5, P/E 20): pillar B = 0, verdict below Value.
+        score, verdict = strategies.grade_defensive(_strategy_row())
+        self.assertLess(score, 80)
+        self.assertGreaterEqual(score, 50)   # still healthy, just not cheap
+
+    def test_graham_multiplier(self):
+        # P/E 14 × P/B 1.6 = 22.4 <= 22.5 -> +7 vs the same row at P/B 1.7.
+        # ev_ebitda=8 keeps both totals integral (no half-point rounding).
+        ok, _ = strategies.grade_defensive(_strategy_row(pe=14.0, pb=1.6, ev_ebitda=8.0))
+        over, _ = strategies.grade_defensive(_strategy_row(pe=14.0, pb=1.7, ev_ebitda=8.0))
+        self.assertEqual(ok - over, 7)
+
+    def test_loss_maker_gets_no_pe_points(self):
+        score_neg, _ = strategies.grade_defensive(_strategy_row(pe=None, income=-1e9))
+        score_pos, _ = strategies.grade_defensive(self._value_row())
+        self.assertLess(score_neg, score_pos)
+
+    def test_negative_equity_loses_debt_equity_points(self):
+        # Negative equity -> negative D/E must not read as "low leverage":
+        # the 9 Pillar-C D/E points are lost vs the base value row.
+        score, _ = strategies.grade_defensive(
+            self._value_row() | {"total_equity": -5e9, "debt_to_equity": -20.0})
+        self.assertEqual(score, 91)
+
+    def test_non_payer_capped_at_85(self):
+        row = self._value_row() | {"div_yield": None, "years_div_increase": None,
+                                   "payout_ratio": None, "fcf_coverage": None}
+        score, verdict = strategies.grade_defensive(row)
+        self.assertEqual(score, 85)
+        self.assertEqual(verdict, "Value candidate")
+
+    def test_dividend_half_tiers(self):
+        # Yield 1% (2.5) + 5 yrs of increases (2.5) + payout 0.70/cov 1.2
+        # (2.5) = 7.5 -> 85 + 7.5 = 92.5, rounded half-up to 93.
+        row = self._value_row() | {"div_yield": 1.0, "years_div_increase": 5,
+                                   "payout_ratio": 0.70, "fcf_coverage": 1.2}
+        score, _ = strategies.grade_defensive(row)
+        self.assertEqual(score, 93)
+
+    def test_financials_use_roa_for_strength(self):
+        row = _strategy_row(sector="Financial Services",
+                            industry="Insurance—Diversified", current_ratio=None,
+                            debt_to_equity=None, altman_z=None, roa=0.02,
+                            pe=10.0, pb=1.2, p_fcf=12.0, ev_ebitda=8.0,
+                            div_yield=3.0, payout_ratio=0.4, fcf_coverage=2.0)
+        score, _ = strategies.grade_defensive(row)
+        self.assertEqual(score, 100)
+
+
+class TestGradeRowComposite(unittest.TestCase):
+
+    def test_grade_row_keys_and_min(self):
+        g = strategies.grade_row(_strategy_row())
+        for k in ("strategy_1", "strategy_2", "strategy_3", "strategy_min",
+                  "strategy_1_verdict", "strategy_2_verdict", "strategy_3_verdict",
+                  "strategy_1_flags"):
+            self.assertIn(k, g)
+        self.assertEqual(g["strategy_1_flags"], "")   # healthy row: no flags
+        self.assertEqual(g["strategy_min"],
+                         min(g["strategy_1"], g["strategy_2"], g["strategy_3"]))
+
+    def test_quarantine_makes_min_none(self):
+        g = strategies.grade_row(_strategy_row(total_equity=None))
+        self.assertIsNone(g["strategy_1"])
+        self.assertIsNone(g["strategy_min"])
+
+    def test_grade_row_attaches_pillar_detail(self):
+        g = strategies.grade_row(_strategy_row())
+        for k in ("strategy_1_detail", "strategy_2_detail", "strategy_3_detail"):
+            self.assertIsInstance(g[k], list)
+            self.assertTrue(g[k])                    # scored row has pillars
+            for p in g[k]:
+                self.assertEqual(set(p), {"k", "p", "m", "d"})
+
+    def test_quarantine_and_kill_have_empty_detail(self):
+        quar = strategies.grade_row(_strategy_row(total_equity=None))
+        self.assertEqual(quar["strategy_1_detail"], [])
+        kill = strategies.grade_row(_strategy_row(income=-1e9, fcf=-1e9))
+        self.assertEqual(kill["strategy_1_detail"], [])   # Stage 1 kill
+
+
+class TestPillarBreakdownInvariant(unittest.TestCase):
+    """The derivation is a by-product of the real scoring, so a scored row's
+    pillar points must always re-sum to its score — this guards against the
+    breakdown drifting away from the number it explains."""
+
+    def _rows(self):
+        return [
+            _strategy_row(),
+            _strategy_row(total_equity=-5e9, debt_to_equity=-20.0),
+            _strategy_row(sector="Financial Services",
+                          industry="Banks—Diversified"),
+            _strategy_row(wacc=20.0),                        # neg-spread cap
+            _strategy_row(altman_z=1.2),                     # solvency guard
+            _strategy_row(pe=10.0, pb=1.2, p_fcf=12.0, ev_ebitda=8.0),
+            _strategy_row(perf_10y=None, peg=None, p_fcf=None),
+        ]
+
+    def test_pillars_resum_to_score(self):
+        graders = (("s1", strategies._grade_triage),
+                   ("s2", strategies._grade_compounder),
+                   ("s3", strategies._grade_defensive))
+        for i, row in enumerate(self._rows()):
+            for name, fn in graders:
+                score, _verdict, pillars = fn(dict(row))
+                if score is None or not pillars:
+                    continue
+                total = strategies._round_score(sum(p["p"] for p in pillars))
+                self.assertEqual(total, score, f"row {i} {name}")
+
+    def test_pillar_points_never_exceed_their_max(self):
+        # (adjustment rows carry m=0 and a signed delta — skip those)
+        for row in self._rows():
+            for fn in (strategies._grade_triage, strategies._grade_compounder,
+                       strategies._grade_defensive):
+                _score, _v, pillars = fn(dict(row))
+                for p in pillars:
+                    if p["m"] > 0:
+                        self.assertLessEqual(p["p"], p["m"])
+                        self.assertGreaterEqual(p["p"], 0)
+
+    def test_empty_row_grades_without_crashing(self):
+        g = strategies.grade_row({"ticker": "X"})
+        self.assertIsNone(g["strategy_1"])       # quarantined
+        self.assertIsInstance(g["strategy_2"], int)
+        self.assertIsInstance(g["strategy_3"], int)
+
+
+class TestStrategyRobustness(unittest.TestCase):
+    """Every grader stays in [0, 100] (or None) and never raises, whatever
+    shape the row arrives in."""
+
+    def test_scores_bounded_on_adversarial_rows(self):
+        rows = [
+            {"ticker": "X"},
+            {k: None for k in _strategy_row()},
+            _strategy_row(income=-1e12, fcf=-1e12, total_debt=1e12,
+                          total_equity=-1e12, ebitda=-1e12),
+            _strategy_row(roe=-50.0, roic=-500.0, wacc=50.0,
+                          debt_to_equity=-999.0, pe=-5.0, pb=-2.0, peg=-1.0,
+                          altman_z=-10.0, piotroski_f=0, current_ratio=0.01,
+                          quick_ratio=0.0, ebitda=-1e12),
+            _strategy_row(pe=1e9, pb=1e9, peg=1e9, p_fcf=1e9, ev_ebitda=1e9,
+                          perf_5y=1e9, perf_10y=1e9),
+        ]
+        graders = (strategies.grade_triage, strategies.grade_compounder,
+                   strategies.grade_defensive)
+        for i, row in enumerate(rows):
+            for fn in graders:
+                score, verdict = fn(dict(row))
+                if score is not None:
+                    self.assertGreaterEqual(score, 0, (i, fn.__name__))
+                    self.assertLessEqual(score, 100, (i, fn.__name__))
+                self.assertIsInstance(verdict, str)
+            g = strategies.grade_row(dict(row))
+            self.assertIsInstance(g["strategy_1_flags"], str)
+
+
+class TestStrategyIntegration(unittest.TestCase):
+
+    def test_metric_cols_include_strategy_columns(self):
+        keys = [k for k, _ in app._METRIC_COLS]
+        for k in ("strategy_1", "strategy_2", "strategy_3", "strategy_min"):
+            self.assertIn(k, keys)
+            self.assertNotIn(k, app._PCT_KEYS)   # raw 0-100, not a fraction
+
+    def test_panel_order_includes_strategies(self):
+        self.assertIn(("strategies", "Strategy Ratings"), app._PANEL_ORDER)
+
+    def test_strategy_panel_formats_scores(self):
+        p = app._strategy_panel({
+            "strategy_1": 72, "strategy_1_verdict": "Advance",
+            "strategy_1_flags": "🔺 Priced for perfection",
+            "strategy_2": 55, "strategy_2_verdict": "Quality watch",
+            "strategy_3": 40, "strategy_3_verdict": "Expensive/weak",
+            "strategy_min": 40,
+        })
+        self.assertEqual(p["S1 · Triage"], "72 / 100 — Advance")
+        self.assertEqual(p["S1 · Flags"], "🔺 Priced for perfection")
+        self.assertEqual(p["Min · All Strategies"], "40 / 100")
+
+    def test_strategy_panel_flags_empty_string_reads_na(self):
+        p = app._strategy_panel({"strategy_1": 90, "strategy_1_verdict": "Advance",
+                                 "strategy_1_flags": ""})
+        self.assertIsNone(p["S1 · Flags"])   # clean row: N/A, not ""
+
+    def test_strategy_panel_handles_error_row(self):
+        p = app._strategy_panel({"ticker": "X", "error": "No data"})
+        self.assertIsNone(p["S2 · Compounder"])
+        self.assertIsNone(p["Min · All Strategies"])
+
+
+# ---------------------------------------------------------------------------
+# 21. Analyst chat (chat.py + /api/chat)
+# ---------------------------------------------------------------------------
+import chat  # noqa: E402  (chat agent module)
+
+
+class TestChatCompactRows(unittest.TestCase):
+
+    def test_drops_sparks_details_and_missing_values(self):
+        rows = [{"ticker": "AAPL", "pe": 30.123456789, "pb": None, "name": "",
+                 "spark_1y": [1, 2, 3], "strategy_1_detail": [{"k": "x"}],
+                 "strategy_1": 89, "strategy_1_flags": "🔺 Priced for perfection"}]
+        out = chat.compact_rows(rows)
+        self.assertEqual(out, [{"ticker": "AAPL", "pe": 30.1235,
+                                "strategy_1": 89,
+                                "strategy_1_flags": "🔺 Priced for perfection"}])
+
+    def test_caps_at_max_rows_and_skips_junk(self):
+        rows = [{"ticker": f"T{i}"} for i in range(chat.MAX_ROWS + 20)] + ["junk"]
+        self.assertEqual(len(chat.compact_rows(rows)), chat.MAX_ROWS)
+        self.assertEqual(chat.compact_rows(["junk", None]), [])
+
+
+class TestChatSystemBlocks(unittest.TestCase):
+
+    def test_static_block_is_cached_and_describes_units(self):
+        blocks = chat.system_blocks([{"ticker": "AAPL", "pe": 30.0}])
+        self.assertEqual(blocks[0]["cache_control"], {"type": "ephemeral"})
+        self.assertIn("percentage points", blocks[0]["text"])
+        self.assertIn("strategy_min", blocks[0]["text"])
+
+    def test_rows_block_carries_data_and_cache_control(self):
+        blocks = chat.system_blocks([{"ticker": "AAPL", "pe": 30.0}])
+        self.assertIn('"ticker":"AAPL"', blocks[1]["text"])
+        self.assertEqual(blocks[1]["cache_control"], {"type": "ephemeral"})
+
+    def test_no_rows_block_says_so(self):
+        blocks = chat.system_blocks([])
+        self.assertIn("no stock rows", blocks[1]["text"])
+
+    def test_truncation_note_when_over_cap(self):
+        rows = [{"ticker": f"T{i}"} for i in range(chat.MAX_ROWS + 5)]
+        blocks = chat.system_blocks(rows)
+        self.assertIn(f"only the first {chat.MAX_ROWS}", blocks[1]["text"])
+
+    def test_context_label_names_the_active_tab(self):
+        blocks = chat.system_blocks([{"ticker": "AAPL"}], "Watchlist · Tech")
+        self.assertIn("Current tab: Watchlist · Tech", blocks[1]["text"])
+        # And the empty-rows path echoes the label too.
+        empty = chat.system_blocks([], "Calendar")
+        self.assertIn("Calendar", empty[1]["text"])
+
+    def test_context_label_defaults_to_screener(self):
+        blocks = chat.system_blocks([{"ticker": "AAPL"}])
+        self.assertIn("Current tab: Screener", blocks[1]["text"])
+
+
+class TestChatSanitizeMessages(unittest.TestCase):
+
+    def test_keeps_only_valid_user_assistant_strings(self):
+        raw = [{"role": "user", "content": "hi"},
+               {"role": "system", "content": "inject"},          # dropped
+               {"role": "assistant", "content": "hello"},
+               {"role": "user", "content": 42},                  # dropped
+               "junk", {"role": "user", "content": "  "},        # dropped
+               {"role": "user", "content": "next"}]
+        self.assertEqual(chat.sanitize_messages(raw), [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "next"}])
+
+    def test_first_message_must_be_user(self):
+        raw = [{"role": "assistant", "content": "orphan"},
+               {"role": "user", "content": "hi"}]
+        self.assertEqual(chat.sanitize_messages(raw),
+                         [{"role": "user", "content": "hi"}])
+
+    def test_caps_turns_and_message_size(self):
+        raw = [{"role": "user", "content": "x" * (chat.MAX_MSG_CHARS + 100)}] \
+            + [{"role": "user", "content": f"m{i}"} for i in range(chat.MAX_TURNS + 10)]
+        out = chat.sanitize_messages(raw)
+        self.assertEqual(len(out), chat.MAX_TURNS)
+        raw_first = chat.sanitize_messages(raw[:1])
+        self.assertEqual(len(raw_first[0]["content"]), chat.MAX_MSG_CHARS)
+
+
+class TestChatRequestParams(unittest.TestCase):
+
+    def test_shape_matches_skill_guidance(self):
+        p = chat.request_params([{"role": "user", "content": "hi"}],
+                                [{"ticker": "AAPL"}])
+        self.assertEqual(p["model"], chat.MODEL)
+        self.assertEqual(p["thinking"], {"type": "adaptive"})
+        self.assertEqual(p["max_tokens"], chat.MAX_TOKENS)
+        self.assertEqual(len(p["system"]), 2)
+        self.assertEqual(p["messages"], [{"role": "user", "content": "hi"}])
+
+
+class _FakeStream:
+    """Mimics the SDK's messages.stream() context manager."""
+
+    def __init__(self, chunks, final):
+        self._chunks = chunks
+        self._final = final
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    @property
+    def text_stream(self):
+        return iter(self._chunks)
+
+    def get_final_message(self):
+        return self._final
+
+
+class TestChatStreamReply(unittest.TestCase):
+
+    def _final(self, stop="end_turn"):
+        usage = MagicMock(input_tokens=100, output_tokens=20,
+                          cache_read_input_tokens=50)
+        return MagicMock(stop_reason=stop, usage=usage)
+
+    def test_streams_text_then_done(self):
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream(
+            ["Hello ", "world"], self._final())
+        with patch("anthropic.Anthropic", return_value=client):
+            events = list(chat.stream_reply(
+                [{"role": "user", "content": "hi"}], [{"ticker": "AAPL"}]))
+        self.assertEqual(events[0], {"text": "Hello "})
+        self.assertEqual(events[1], {"text": "world"})
+        self.assertTrue(events[2]["done"])
+        self.assertEqual(events[2]["output_tokens"], 20)
+        # The request was built by request_params (model + adaptive thinking).
+        kwargs = client.messages.stream.call_args.kwargs
+        self.assertEqual(kwargs["model"], chat.MODEL)
+        self.assertEqual(kwargs["thinking"], {"type": "adaptive"})
+
+    def test_refusal_stop_reason_becomes_error_event(self):
+        client = MagicMock()
+        client.messages.stream.return_value = _FakeStream([], self._final("refusal"))
+        with patch("anthropic.Anthropic", return_value=client):
+            events = list(chat.stream_reply(
+                [{"role": "user", "content": "hi"}], []))
+        self.assertIn("declined", events[-1]["error"])
+
+    def test_empty_history_is_an_error_not_an_api_call(self):
+        events = list(chat.stream_reply([], []))
+        self.assertEqual(len(events), 1)
+        self.assertIn("Empty", events[0]["error"])
+
+    def test_auth_error_yields_actionable_message(self):
+        import anthropic as _an
+        err = _an.AuthenticationError.__new__(_an.AuthenticationError)
+        with patch("anthropic.Anthropic", side_effect=err):
+            events = list(chat.stream_reply(
+                [{"role": "user", "content": "hi"}], []))
+        self.assertIn("ANTHROPIC_API_KEY", events[0]["error"])
+
+    def test_generic_exception_never_raises(self):
+        with patch("anthropic.Anthropic", side_effect=RuntimeError("boom")):
+            events = list(chat.stream_reply(
+                [{"role": "user", "content": "hi"}], []))
+        self.assertEqual(events, [{"error": "boom"}])
+
+    def test_missing_credentials_yield_actionable_message(self):
+        # No credentials at all: the SDK's client constructor raises TypeError
+        # ("Could not resolve authentication method…"), not AuthenticationError.
+        with patch("anthropic.Anthropic",
+                   side_effect=TypeError("Could not resolve authentication method")):
+            events = list(chat.stream_reply(
+                [{"role": "user", "content": "hi"}], []))
+        self.assertIn("ANTHROPIC_API_KEY", events[0]["error"])
+
+
+class TestChatEndpoint(unittest.TestCase):
+    """/api/chat over a real server, with the agent stubbed out."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd, cls.url = _start_server()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def _post_chat(self, body):
+        import urllib.request
+        req = urllib.request.Request(
+            self.url + "/api/chat", data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        with urlopen(req, timeout=10) as r:
+            return r.status, r.read().decode(), r.headers.get("Content-Type", "")
+
+    def test_streams_sse_events(self):
+        def fake(messages, rows, context_label=None):
+            yield {"text": "Hi "}
+            yield {"text": "there"}
+            yield {"done": True}
+        with patch.object(app.chat_agent, "stream_reply", side_effect=fake):
+            status, body, ctype = self._post_chat(
+                {"messages": [{"role": "user", "content": "hi"}], "rows": []})
+        self.assertEqual(status, 200)
+        self.assertIn("text/event-stream", ctype)
+        frames = [json.loads(f[6:]) for f in body.strip().split("\n\n")]
+        self.assertEqual(frames[0], {"text": "Hi "})
+        self.assertEqual(frames[-1], {"done": True})
+
+    def test_error_events_pass_through(self):
+        with patch.object(app.chat_agent, "stream_reply",
+                          side_effect=lambda m, r, c=None: iter([{"error": "nope"}])):
+            _status, body, _ = self._post_chat({"messages": [], "rows": []})
+        self.assertIn('{"error": "nope"}', body)
+
+    def test_payload_including_context_label_reaches_the_agent(self):
+        seen = {}
+        def fake(messages, rows, context_label=None):
+            seen["messages"], seen["rows"], seen["label"] = messages, rows, context_label
+            yield {"done": True}
+        with patch.object(app.chat_agent, "stream_reply", side_effect=fake):
+            self._post_chat({"messages": [{"role": "user", "content": "q"}],
+                             "rows": [{"ticker": "AAPL"}],
+                             "context_label": "Dashboard"})
+        self.assertEqual(seen["messages"], [{"role": "user", "content": "q"}])
+        self.assertEqual(seen["rows"], [{"ticker": "AAPL"}])
+        self.assertEqual(seen["label"], "Dashboard")
 
 
 if __name__ == "__main__":

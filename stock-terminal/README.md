@@ -16,14 +16,41 @@ to build a side-by-side comparison grid:
 | Category | Metrics |
 |---|---|
 | **Price charts** | Inline 6-month, 1-year, and 5-year price sparklines (green = up over the window, red = down) |
+| **Strategy grades** | S1 Triage, S2 Compounder, S3 Defensive, Strat Min — each stock scored 0–100 against the three long-term strategy docs (see below), color-coded by decision band — plus S1 Flags, the triage context warnings (🔺 priced for perfection, 💰 payout stress, 📉 crowded short, …) |
 | **Valuation** | P/E, Forward P/E, PEG, P/B, P/S, P/C, P/FCF, EV/EBITDA, Diluted EPS, Basic EPS |
 | **Profitability** | Net Income, Profit Margin, Gross Margin, Operating Margin, EBITDA Margin, FCF, ROA, ROE, ROIC, ROCE, WACC, Revenue/Share |
-| **Financial Health** | Total Cash, Total Debt, Total Equity, Debt/Equity, Debt/EBITDA, LT Debt/Equity, Current Ratio, Quick Ratio, EBITDA/FCF |
+| **Financial Health** | Total Cash, Total Debt, Total Equity, Debt/Equity, Debt/EBITDA, LT Debt/Equity, Current Ratio, Quick Ratio, EBITDA, EBITDA/FCF |
 | **Dividend** | Yield, 5Y Avg Yield, Div Estimate, Div TTM, Payout Ratio, FCF Coverage, Div Growth 3Y/5Y CAGR, Years of consecutive increases, Ex-Dividend Date |
 | **Risk** | Beta, Short Interest %, Days to Cover, Altman Z-Score, Piotroski F-Score |
 | **Performance** | Price-only return (excl. dividends): YTD, 1Y, 3Y, 5Y, 10Y |
 
 FCF Coverage is color-coded: green ≥ 1.2× · yellow 0.8–1.2× · red < 0.8×.
+
+**Strategy grades.** Every row is graded (0–100, server-side) against three
+long-term investing strategies, each documented in this directory:
+
+1. **S1 Triage** — [stock-triage-strategy.md](stock-triage-strategy.md): data
+   hygiene → hard kill-switches → quality score. ≥65 Advance · 45–64 Watchlist
+   · <45 Discard. N/A = quarantined (missing critical data).
+2. **S2 Compounder** — [strategy-2-quality-compounder.md](strategy-2-quality-compounder.md):
+   returns on capital, margin moat, discipline, compounding track record.
+   ≥70 Compounder · 50–69 Quality watch · <50 Pass.
+3. **S3 Defensive** — [strategy-3-defensive-value.md](strategy-3-defensive-value.md):
+   Graham-style margin of safety. ≥70 Value candidate · 50–69 Fair · <50 Expensive/weak.
+
+**Strat Min** is the minimum of the three — sort it descending to find the
+stocks rated best under *every* strategy at once. **S1 Flags** carries the
+triage framework's never-disqualifying context flags (priced for perfection,
+suspiciously cheap, divergent multiples, payout stress, crowded short, high
+beta, plus data-sanity warnings) so the deep dive starts with eyes open. The
+grades and flags also appear in both Excel exports and as a **Strategy
+Ratings** panel in the deep dive.
+
+**Hover any grade to see how it was derived** — the tooltip shows a per-pillar
+breakdown (points earned / available, and the metric values behind each), so
+a 48 or an N/A is never a black box. The breakdown is computed alongside the
+score itself, so it can never disagree with the number. Hovering the S1 Flags
+cell lists every flag in full when the cell is too narrow to show them all.
 
 Sticky headers and first column, click-to-sort on every column, live text
 filter, and spinners while data loads.
@@ -41,15 +68,23 @@ ticker-set** in the browser, so switching tabs or closing a deep-dive reuses
 them — only pressing **Analyze** re-fetches. Batch size, batch interval, and
 how many sets to cache are all configurable in **Settings**.
 
+**Cache-first loading.** The Dashboard and Watchlists render every ticker with
+cached data instantly and automatically fetch only the missing ones, with a
+live "N cached · loading x/y more…" status. The row cache is persisted to
+`localStorage` (survives page reloads) and rows are reused per ticker across
+sets, so already-seen tickers are never re-downloaded just by navigating.
+**↻ Refresh** is the only thing that re-fetches data you already have; the
+Screener fetches only on **Analyze** or **↻ Refresh**.
+
 **Failure isolation.** A ticker that errors (delisted, no Yahoo data, rate
 limited) renders as an inline error row — it never blocks the rest. If a whole
 batch fails (e.g. Yahoo throttling a very large set), its tickers show as
 error rows and the remaining batches keep loading; the status line reports the
-failed batches and **⟳ Refresh** retries them. Partial results are never
+failed batches and **↻ Refresh** retries them. Partial results are never
 cached, so a retry always re-fetches.
 
-**⟳ Refresh.** Every data view — Dashboard, Screener, a loaded watchlist,
-Calendar, and the deep-dive — has a **⟳ Refresh** button that bypasses both the
+**↻ Refresh.** Every data view — Dashboard, Screener, a loaded watchlist,
+Calendar, and the deep-dive — has a **↻ Refresh** button that bypasses both the
 browser cache and the server's Yahoo cache, re-pulling fresh data in place (no
 need to go back and re-Analyze). A deep-dive refresh touches **only that
 ticker**: it reloads the panels, charts, statements, and calendar, and syncs
@@ -59,7 +94,7 @@ the set is untouched, so returning to a large table is instant.
 ### Deep dive
 Click any ticker row to open a full analysis page:
 
-- **Metric panels** — Valuation, Dividend (incl. 3Y/5Y growth CAGR and ex-date), Profitability, Financial Health, Risk.
+- **Metric panels** — Valuation, Dividend (incl. 3Y/5Y growth CAGR and ex-date), Profitability, Financial Health, Risk, and **Strategy Ratings** (the three strategy grades + min, with verdicts and the S1 context flags).
 - **Revenue · Profit · Net Income · FCF** — 5-year bar chart with margin % on hover.
 - **Growth YoY** — Revenue, EPS, and EBITDA growth bars plus an EBITDA Margin line.
 - **Share Dilution** — shares outstanding/float/treasury bars with yield and payout-ratio lines.
@@ -78,6 +113,38 @@ Click any row to open the deep dive.
 
 ### Watchlist
 Saved to `localStorage`; auto-saved on every add/remove and hydrated on load.
+Selecting a list is **cache-first**: every ticker with data anywhere in the
+cache renders instantly, and only the missing ones are fetched (with a live
+"N cached · loading x/y more…" status). **↻ Refresh** is only needed for
+up-to-date data — it re-fetches the whole list fresh from Yahoo.
+The header also has an inline editor: type one or more tickers (comma or
+space separated) and hit **+ Add** or **− Remove** to bulk-edit the list in
+place — Enter adds. Works for named lists and the ★ Starred list alike;
+newly added tickers are fetched automatically.
+
+### Analyst Chat
+A chat agent (Claude, via the official `anthropic` SDK) that analyses **your**
+data, available as a **floating ✦ bubble on every tab** (bottom-right) rather
+than a page of its own. Whatever tab you're on — Screener, a Watchlist, the
+Dashboard — the rows currently shown there are attached to the conversation as
+context (toggleable), so you can ask things like *"rank these by
+quality-at-a-reasonable-price and flag the risks"* and get answers grounded in
+the exact rows on screen, strategy grades and flags included. Replies stream in
+live, with markdown (tables, bold, code) rendered in the bubble.
+
+- **Follows you across tabs.** The bubble is mounted once and the conversation
+  persists as you navigate; each message is answered against the *current*
+  tab's snapshot (the agent is told which tab it's looking at, so it handles a
+  mid-conversation context switch cleanly). History is saved to `localStorage`,
+  so it also survives a reload — **🗑 Clear** starts fresh.
+- Needs credentials on the **server**: set the `ANTHROPIC_API_KEY` environment
+  variable before starting `app.py`. Without it the chat shows a clear error
+  and everything else keeps working.
+- Model: `claude-opus-4-8` by default; override with the
+  `STOCK_TERMINAL_CHAT_MODEL` environment variable.
+- Context is capped at 100 stocks per turn (the largest sets get expensive);
+  the agent is told when rows were truncated. Static instructions and the row
+  snapshot are prompt-cached, so follow-up turns on the same tab are cheap.
 
 ### Excel export (screener)
 Export any set of tickers to `.xlsx` with three sheets:
@@ -138,9 +205,14 @@ python stock-terminal/app.py
 ```
 stock-terminal/
 ├── app.py                  # stdlib HTTP server: JSON API + static serving + xlsx export
+├── strategies.py           # strategy graders (pure functions over screener rows)
+├── chat.py                 # Analyst Chat agent (/api/chat, anthropic SDK)
 ├── requirements.txt
 ├── METRICS.md              # plain-language guide to every metric and how to read it
 ├── SCREENER_COLUMNS.md     # column reference for the screener table
+├── stock-triage-strategy.md          # Strategy 1 — Triage
+├── strategy-2-quality-compounder.md  # Strategy 2 — Quality Compounder
+├── strategy-3-defensive-value.md     # Strategy 3 — Defensive Value
 └── static/
     ├── index.html          # app shell (sidebar + topbar + view root)
     ├── css/
@@ -170,6 +242,7 @@ All endpoints are served by `app.py` on the same port as the frontend.
 | `POST` | `/api/export` `{"tickers": [...]}` | Streams a multi-ticker `.xlsx` workbook |
 | `POST` | `/api/export_deepdive` `{"ticker": "AAPL"}` | Streams a single-company `.xlsx` workbook |
 | `POST` | `/api/cache/clear` | Clears the server-side TTL cache |
+| `POST` | `/api/chat` `{"messages": [...], "rows": [...], "context_label": "Screener"}` | Analyst Chat — streams the agent's reply as Server-Sent Events (`{"text": …}` chunks, then `{"done": …}` or `{"error": …}`); `rows`/`context_label` are the current tab's snapshot |
 
 Responses are cached in memory (screener rows: 30 min; deep-dive: 10 min;
 price history: 10 min; financials: 30 min; dividends: 30 min) to avoid
@@ -185,6 +258,7 @@ hammering Yahoo Finance on every request.
 | `pandas` | Data manipulation (pulled in by yfinance) |
 | `openpyxl >= 3.1.0` | Excel `.xlsx` export |
 | `lxml >= 4.9.0` | Parses the per-ticker earnings-history table (Calendar tab) |
+| `anthropic >= 0.116.0` | Analyst Chat (`/api/chat`); needs `ANTHROPIC_API_KEY` at runtime |
 
 The frontend has **zero JavaScript dependencies** — no npm, no build step.
 
