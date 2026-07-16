@@ -520,6 +520,13 @@ def _screener_row(ticker):
                     _stmt_val(inc, "Interest Expense", "Interest Expense Non Operating", col=1))
     wacc = _compute_wacc(_num(info.get("beta")), market_cap_native, total_debt,
                          interest_exp, tax_rate, get_risk_free_rate())
+    # Times the coupon is covered by operating earnings — the question a
+    # balance-sheet snapshot never asks, and the one that decides whether a
+    # levered company actually survives (S3 Pillar C). abs() because the sign
+    # convention on the interest line varies by filer. Negative EBIT yields a
+    # negative ratio, which fails every band on its own — no guard needed.
+    interest_coverage = ((ebit / abs(interest_exp))
+                         if (ebit is not None and interest_exp) else None)
 
     # --- DCF fair value (10y two-stage FCFF; see _dcf_equity_value) --------
     # Blanked for balance-sheet archetypes: FCFF is meaningless for banks
@@ -618,6 +625,8 @@ def _screener_row(ticker):
         "total_equity": _num(equity),
         "ebitda": _num(ebitda),
         "ebitda_fcf": _num(ebitda_fcf),
+        "interest_expense": _num(interest_exp),
+        "interest_coverage": _num(interest_coverage),
         # Equity-REIT-only (None everywhere else, mortgage REITs included):
         # approximate NAREIT FFO (see comment above), P/FFO, FFO payout
         # (fraction paid out, mirrors payout_ratio) and FFO coverage (multiple,
@@ -644,6 +653,9 @@ def _screener_row(ticker):
         "short_interest": _num(info.get("shortPercentOfFloat")),
         "days_to_cover": _num(info.get("shortRatio")),
         "altman_z": altman_z(inc, bal, market_cap_native),
+        # The price-free variant, on its own bands (2.9 / 1.23). S3 grades on
+        # this one; S1's kill-switch stays on the classic Z. See altman_z_prime.
+        "altman_z_prime": altman_z_prime(inc, bal),
         "piotroski_f": piotroski_f(inc, bal, cf),
         # performance (price only, excludes dividends), %
         "perf_ytd": perf["ytd"],
@@ -888,11 +900,10 @@ def _yoy(series):
     return out
 
 
-def altman_z(income, balance, market_cap):
-    """Altman Z-Score (public-company form). Higher = safer: >2.99 'safe',
-    1.81-2.99 'grey', <1.81 'distress'. None when inputs are unavailable.
-        Z = 1.2*WC/TA + 1.4*RE/TA + 3.3*EBIT/TA + 0.6*MktCap/TL + 1.0*Sales/TA
-    """
+def _altman_ratios(income, balance):
+    """(X1 working-capital/TA, X2 retained-earnings/TA, X3 EBIT/TA, X5
+    sales/TA, total liabilities) — the four terms both Altman variants share,
+    plus the denominator each one's X4 needs. None when any input is missing."""
     ta = _stmt_val(balance, "Total Assets")
     ca = _stmt_val(balance, "Current Assets", "Total Current Assets")
     cl = _stmt_val(balance, "Current Liabilities", "Total Current Liabilities")
@@ -900,12 +911,47 @@ def altman_z(income, balance, market_cap):
     re = _stmt_val(balance, "Retained Earnings")
     rev = _stmt_val(income, "Total Revenue")
     ebit = _stmt_val(income, "EBIT", "Operating Income", "Operating Income Or Loss")
-    if not ta or not tl or not market_cap or None in (ca, cl, re, rev, ebit):
+    if not ta or not tl or None in (ca, cl, re, rev, ebit):
         return None
-    wc = ca - cl
-    z = (1.2 * wc / ta + 1.4 * re / ta + 3.3 * ebit / ta
-         + 0.6 * market_cap / tl + 1.0 * rev / ta)
-    return _num(z)
+    return (ca - cl) / ta, re / ta, ebit / ta, rev / ta, tl
+
+
+def altman_z(income, balance, market_cap):
+    """Altman Z-Score (public-company form). Higher = safer: >2.99 'safe',
+    1.81-2.99 'grey', <1.81 'distress'. None when inputs are unavailable.
+        Z = 1.2*WC/TA + 1.4*RE/TA + 3.3*EBIT/TA + 0.6*MktCap/TL + 1.0*Sales/TA
+    """
+    r = _altman_ratios(income, balance)
+    if r is None or not market_cap:
+        return None
+    x1, x2, x3, x5, tl = r
+    return _num(1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * market_cap / tl + 1.0 * x5)
+
+
+def altman_z_prime(income, balance):
+    """Altman Z'-Score (private-firm form): book equity replaces market cap in
+    the X4 term and every weight is refitted. Higher = safer, on its own bands
+    (they are not Z's): >2.9 'safe', 1.23-2.9 'grey', <1.23 'distress'.
+        Z' = 0.717*WC/TA + 0.847*RE/TA + 3.107*EBIT/TA + 0.420*Equity/TL
+             + 0.998*Sales/TA
+
+    Carries no price term, so unlike altman_z it cannot fall merely because the
+    stock got cheaper. That is why S3 grades on this variant: it is a value
+    strategy, and the classic Z would take points back in Pillar C for exactly
+    the discount Pillars A and B award. S1 keeps the classic Z on purpose — for
+    a health screen a collapsing market cap is real distress information rather
+    than circular reasoning.
+
+    Negative equity flows straight through as a negative X4 term, which is the
+    intended reading: it is the most levered state a balance sheet can be in.
+    """
+    r = _altman_ratios(income, balance)
+    eq = _stmt_val(balance, "Stockholders Equity", "Total Stockholder Equity",
+                   "Common Stock Equity")
+    if r is None or eq is None:
+        return None
+    x1, x2, x3, x5, tl = r
+    return _num(0.717 * x1 + 0.847 * x2 + 3.107 * x3 + 0.420 * eq / tl + 0.998 * x5)
 
 
 def piotroski_f(income, balance, cashflow):

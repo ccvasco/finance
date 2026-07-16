@@ -53,14 +53,47 @@ that can wait out a bad decade.
 
 | Metric | Full points | Half points | Zero |
 |---|---|---|---|
-| **Current Ratio** (8 pts) | ≥ 2.0 | 1.5–2.0 | < 1.5 |
-| **Debt/Equity** (9 pts) | < 0.5 (or debt-free) | 0.5–1.0 | > 1.0 |
-| **Altman Z-Score** (8 pts) | ≥ 3.0 | 1.81–3.0 | < 1.81 |
+| **Interest coverage** — EBIT ÷ interest (8 pts) | > 8× (or debt-free) | 4–8× | < 4×, or unavailable while carrying debt |
+| **FCF ÷ net debt** (7 pts) | net cash, or > 0.25× | 0.10–0.25× | < 0.10×, or negative FCF |
+| **Current Ratio** (5 pts) | > 2.0 | 1.5–2.0 | < 1.5 |
+| **Altman Z′** (5 pts) | ≥ 2.9 | 1.23–2.9 | < 1.23 |
 
-A company with no debt at all takes full Debt/Equity points. A company with
-**negative equity** takes zero: the sign-flipped D/E would otherwise read as
-"low leverage" when it is in fact the most levered state a balance sheet can
-be in — the opposite of the resilience this pillar is buying.
+**Interest coverage leads** because it is the question the rest of a balance
+sheet never asks. Companies do not fail because a ratio crossed a threshold;
+they fail on a coupon they cannot pay or a maturity they cannot roll. A stock
+measure — how much is owed — cannot answer that. A flow measure can. A
+debt-free company takes the points: there is no coupon to fail.
+
+**FCF ÷ net debt replaces Debt/Equity**, and does three things D/E could not. It
+nets off the cash pile, so a company with $50bn of debt against $60bn of cash no
+longer reads like one with no cash at all. It stands on cash rather than book
+equity — the denominator a bad decade writes down and buybacks distort, which is
+precisely the wrong thing to lean on in a strategy underwriting bad decades. And
+it is sign-safe: the inverse (net debt ÷ FCF) would flip a cash-burner's ratio
+negative and score it as though it were unlevered, the same pathology that makes
+a negative D/E read as low leverage.
+
+That sign-safety is why **negative equity no longer needs a carve-out**. Nothing
+in this pillar divides by book equity any more. Negative equity is instead priced
+through Z′, whose X4 term is equity ÷ liabilities and goes negative with it —
+continuously, in proportion, rather than as a flat strike. This matters: a
+buyback-driven negative book value on a net-cash balance sheet covering its
+interest 15× is not fragile, and the old rule could not tell it apart from a
+genuinely distressed one.
+
+**Z′ rather than Z**, and demoted from 8 points to 5. Two reasons. The classic
+Z's X4 term is *market cap* ÷ liabilities, so the score falls as the stock gets
+cheaper — meaning Pillar C took points back for exactly the discount Pillars A
+and B award. Z′ substitutes book equity and refits every weight, carrying no
+price term at all. (S1 keeps the classic Z deliberately: in a health screen a
+collapsing market cap is real distress information, not circular reasoning.) The
+demotion is because this strategy already scores most of what Z contains —
+working capital in the current-ratio leg, profitability in Pillar D — while its
+X5 term is asset turnover, an efficiency measure with no business in a solvency
+pillar. Z′ is kept as a validated cross-check, not as a co-equal leg.
+
+Note the bands are **Z′'s own** (2.9 / 1.23), not Z's (3.0 / 1.81). The two
+scores are not interchangeable and must never be read on each other's bands.
 
 *Financials* score this pillar on ROA alone (25 pts). *REITs* replace it too:
 Current Ratio and Altman-Z don't apply to a property business and its leverage

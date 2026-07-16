@@ -902,6 +902,72 @@ class TestAltmanZ(unittest.TestCase):
         self.assertIsNone(app.altman_z(self._income(), bal, 2000.0))
 
 
+class TestAltmanZPrime(unittest.TestCase):
+    """Z' — the private-firm variant S3 grades on. Book equity replaces market
+    cap in X4, so the score carries no price term."""
+
+    def _income(self):
+        return _make_df(["Total Revenue", "EBIT"], ["2024-12-31"],
+                        {"Total Revenue": [1200.0], "EBIT": [150.0]})
+
+    def _balance(self, **overrides):
+        base = {
+            "Total Assets": [1000.0], "Current Assets": [400.0],
+            "Current Liabilities": [200.0],
+            "Total Liabilities Net Minority Interest": [500.0],
+            "Retained Earnings": [300.0], "Stockholders Equity": [500.0],
+        }
+        base.update(overrides)
+        return _make_df(list(base), ["2024-12-31"], base)
+
+    def test_known_value(self):
+        # X1=.2 X2=.3 X3=.15 X4=500/500=1.0 X5=1.2
+        # Z' = 0.717*.2 + 0.847*.3 + 3.107*.15 + 0.420*1.0 + 0.998*1.2 = 2.48115
+        zp = app.altman_z_prime(self._income(), self._balance())
+        self.assertAlmostEqual(zp, 2.48115, places=5)
+
+    def test_carries_no_price_term(self):
+        # The property the whole S3 Pillar C change rests on. The classic Z
+        # drops 1.2 points when the stock halves (0.6 * 1000/500) — in a value
+        # strategy that means Pillar C takes back what Pillars A/B award for
+        # the discount. Z' does not move at all.
+        inc, bal = self._income(), self._balance()
+        z_rich, z_cheap = app.altman_z(inc, bal, 2000.0), app.altman_z(inc, bal, 1000.0)
+        self.assertAlmostEqual(z_rich - z_cheap, 1.2, places=6)
+        self.assertAlmostEqual(app.altman_z_prime(inc, bal), 2.48115, places=5)
+
+    def test_negative_equity_drags_score_down(self):
+        pos = app.altman_z_prime(self._income(), self._balance())
+        neg = app.altman_z_prime(
+            self._income(), self._balance(**{"Stockholders Equity": [-500.0]}))
+        self.assertLess(neg, pos)
+        # X4 swings 1.0 -> -1.0, weighted 0.420
+        self.assertAlmostEqual(pos - neg, 0.840, places=6)
+
+    def test_none_without_equity(self):
+        bal = self._balance()
+        bal = bal.drop(index="Stockholders Equity")
+        self.assertIsNone(app.altman_z_prime(self._income(), bal))
+
+    def test_none_when_balance_missing_total_assets(self):
+        bal = _make_df(["Current Assets"], ["2024-12-31"], {"Current Assets": [400.0]})
+        self.assertIsNone(app.altman_z_prime(self._income(), bal))
+
+    def test_equity_label_fallback(self):
+        # Yahoo's label varies by filer; all three spellings must resolve.
+        for label in ("Total Stockholder Equity", "Common Stock Equity"):
+            base = {
+                "Total Assets": [1000.0], "Current Assets": [400.0],
+                "Current Liabilities": [200.0],
+                "Total Liabilities Net Minority Interest": [500.0],
+                "Retained Earnings": [300.0], label: [500.0],
+            }
+            bal = _make_df(list(base), ["2024-12-31"], base)
+            self.assertAlmostEqual(
+                app.altman_z_prime(self._income(), bal), 2.48115, places=5,
+                msg=f"equity label {label!r} did not resolve")
+
+
 class TestPiotroskiF(unittest.TestCase):
 
     # Two-year fixtures engineered so all 9 criteria pass -> score 9.
@@ -3309,12 +3375,17 @@ def _strategy_row(**over):
         "lt_debt_to_equity": 30.0, "current_ratio": 2.0, "quick_ratio": 1.5,
         "total_cash": 20e9, "total_debt": 10e9, "total_equity": 50e9,
         "ebitda": 15e9, "ebitda_fcf": 1.67,
+        # total_cash > total_debt, so this row is net cash — S3 Pillar C's
+        # FCF/net-debt leg takes its full points without touching fcf.
+        "interest_expense": 0.5e9, "interest_coverage": 15.0,
         "div_yield": 2.0, "five_year_avg_yield": 2.0, "payout_ratio": 0.35,
         "div_growth_3y": 8.0, "div_growth_5y": 8.0, "dividend_estimate": 2.0,
         "dividend_ttm": 2.0, "fcf_coverage": 3.0, "years_div_increase": 12,
         "ex_dividend_date": "2026-05-11",
         "beta": 1.0, "short_interest": 0.02, "days_to_cover": 2.0,
-        "altman_z": 5.0, "piotroski_f": 8,
+        # altman_z carries a market-cap term, altman_z_prime doesn't, and they
+        # sit on different bands (3.0/1.81 vs 2.9/1.23) — both healthy here.
+        "altman_z": 5.0, "altman_z_prime": 3.5, "piotroski_f": 8,
         "perf_ytd": 5.0, "perf_1y": 15.0, "perf_3y": 60.0,
         "perf_5y": 120.0, "perf_10y": 300.0,
     }
@@ -4042,12 +4113,87 @@ class TestStrategyDefensive(unittest.TestCase):
         # lack the line) still score exactly as the sign test scored them.
         self.assertEqual(strategies.grade_defensive(self._value_row())[0], 100)
 
-    def test_negative_equity_loses_debt_equity_points(self):
-        # Negative equity -> negative D/E must not read as "low leverage":
-        # the 9 Pillar-C D/E points are lost vs the base value row.
-        score, _ = strategies.grade_defensive(
-            self._value_row() | {"total_equity": -5e9, "debt_to_equity": -20.0})
-        self.assertEqual(score, 91)
+    def test_s3_pillar_c_legs_and_weights(self):
+        _s, _v, pillars = strategies._grade_defensive(self._value_row())
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertEqual(c["p"], 25.0)          # 8 cover + 7 net cash + 5 CR + 5 Z'
+        for frag in ("int cover", "FCF/net debt", "CR", "Altman Z′"):
+            self.assertIn(frag, c["d"])
+
+    def test_s3_interest_coverage_bands(self):
+        def cov_pts(ic):
+            _s, _v, pillars = strategies._grade_defensive(
+                self._value_row() | {"interest_coverage": ic})
+            return next(p for p in pillars if p["k"] == "Financial strength")["p"]
+        self.assertEqual(cov_pts(12.0), 25.0)   # > 8x  -> full 8
+        self.assertEqual(cov_pts(5.0), 21.0)    # > 4x  -> half 4
+        self.assertEqual(cov_pts(1.5), 17.0)    # thin  -> 0
+        self.assertEqual(cov_pts(None), 17.0)   # missing earns 0, per the doc
+
+    def test_s3_debt_free_takes_full_coverage_points(self):
+        # Nothing to cover -> the leg cannot be failed for a blank coupon.
+        row = self._value_row() | {"total_debt": 0.0, "interest_coverage": None}
+        _s, _v, pillars = strategies._grade_defensive(row)
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertEqual(c["p"], 25.0)
+        self.assertIn("debt-free", c["d"])
+
+    def test_s3_fcf_net_debt_is_sign_safe(self):
+        # The trap this leg is shaped to avoid: net-debt/FCF would flip a
+        # cash-burner's ratio negative and read it as unlevered. FCF/net debt
+        # fails it instead. (Net debt 30bn against negative FCF.)
+        row = self._value_row() | {"total_debt": 50e9, "total_cash": 20e9,
+                                   "fcf": -5e9}
+        _s, _v, pillars = strategies._grade_defensive(row)
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertEqual(c["p"], 18.0)          # 8 + 0 + 5 + 5, the leg zeroed
+
+    def test_s3_net_cash_takes_full_repayment_points(self):
+        rich = self._value_row() | {"total_debt": 10e9, "total_cash": 20e9}
+        poor = self._value_row() | {"total_debt": 50e9, "total_cash": 1e9,
+                                    "fcf": 2e9}     # 2/49 = 0.04x -> 0
+        r = strategies._grade_defensive(rich)[2]
+        p = strategies._grade_defensive(poor)[2]
+        self.assertIn("net cash",
+                      next(x for x in r if x["k"] == "Financial strength")["d"])
+        self.assertEqual(
+            next(x for x in r if x["k"] == "Financial strength")["p"]
+            - next(x for x in p if x["k"] == "Financial strength")["p"], 7.0)
+
+    def test_s3_strength_no_longer_penalises_cheapness(self):
+        # The bug that motivated Z': under the classic Z a cheaper stock scored
+        # *lower* financial strength, because Z's X4 is market-cap/liabilities.
+        # Pillar C must now be identical for two rows differing only on price.
+        cheap = self._value_row() | {"pe": 8.0, "pb": 0.8}
+        rich = self._value_row() | {"pe": 24.0, "pb": 2.4}
+        c_cheap = next(p for p in strategies._grade_defensive(cheap)[2]
+                       if p["k"] == "Financial strength")
+        c_rich = next(p for p in strategies._grade_defensive(rich)[2]
+                      if p["k"] == "Financial strength")
+        self.assertEqual(c_cheap["p"], c_rich["p"])
+
+    def test_negative_equity_priced_through_altman_z_prime(self):
+        # Pillar C no longer carries a D/E leg, so the sign-flip carve-out that
+        # guarded it is gone too — nothing here divides by book equity any more.
+        # Negative equity is priced through Altman Z' instead, whose X4 term is
+        # equity/liabilities and goes negative with it (see TestAltmanZPrime,
+        # which covers the computation this leg reads).
+        strong = strategies.grade_defensive(self._value_row())[0]
+        weak = strategies.grade_defensive(
+            self._value_row() | {"total_equity": -5e9, "debt_to_equity": -20.0,
+                                 "altman_z_prime": -0.4})[0]
+        self.assertEqual(strong - weak, 5)      # the Z' leg, in full
+
+    def test_buyback_negative_equity_still_scores_if_cash_generative(self):
+        # The reason to price negative equity continuously rather than with a
+        # carve-out: a buyback-driven negative book value on a net-cash balance
+        # sheet with 15x interest cover is not fragile, and the old rubric's
+        # flat 9-point strike could not tell it from a distressed one.
+        row = self._value_row() | {"total_equity": -5e9, "debt_to_equity": -20.0,
+                                   "altman_z_prime": 1.4}
+        _s, _v, pillars = strategies._grade_defensive(row)
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertEqual(c["p"], 22.5)          # 8 cover + 7 net cash + 5 CR + 2.5 Z'
 
     def test_non_payer_capped_at_85(self):
         row = self._value_row() | {"div_yield": None, "years_div_increase": None,

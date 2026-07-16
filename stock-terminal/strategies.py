@@ -23,7 +23,11 @@ Unit conventions of screener_row (see SCREENER_COLUMNS.md):
                      payout_ratio, ffo_payout
   percentage points  roic, roce, wacc, div_yield, debt_to_equity, perf_*
   plain ratios       pe, pb, peg, p_fcf, ev_ebitda, debt_ebitda, current_ratio,
-                     quick_ratio, fcf_coverage, ebitda_fcf, p_ffo, ffo_coverage
+                     quick_ratio, fcf_coverage, ebitda_fcf, p_ffo, ffo_coverage,
+                     interest_coverage
+  scores             altman_z (classic, carries a market-cap term),
+                     altman_z_prime (price-free, its own 2.9/1.23 bands —
+                     never read one on the other's bands), piotroski_f
   absolute currency  ffo (Net Income + D&A − property-sale gains + impairments
                      — equity-REIT-only; see _grade_triage's reit branch)
   period counts      ni_positive_years / ni_years, fcf_positive_years /
@@ -1134,18 +1138,47 @@ def _grade_defensive(row):
                        f"(REIT bands), {'FFO' if has_ffo else 'FCF'} cover "
                        f"{_r(cov, 2, '×')}"))
     else:
-        cr = row.get("current_ratio")
-        c = _band(cr, 2.0, 1.5, 8)
         debt_free = debt == 0
-        d_eq = row.get("debt_to_equity")            # pct points
-        c += 0.0 if neg_eq else (9 if debt_free else _band(d_eq, 50, 100, 9, reverse=True))
-        z = row.get("altman_z")
-        if z is not None:
-            c += 8 if z >= 3.0 else (4 if z >= 1.81 else 0)
-        deq_txt = ("neg equity → 0" if neg_eq
-                   else ("0 (debt-free)" if debt_free else _pct(d_eq)))
+        # Interest coverage (8) — can it pay the coupon out of operating
+        # earnings? Nothing else in this pillar asks, and a missed coupon is
+        # what actually ends a company; a high D/E on its own never did.
+        ic = row.get("interest_coverage")
+        c = 8.0 if debt_free else _band(ic, 8.0, 4.0, 8)
+        ic_txt = "n/a (debt-free)" if debt_free else _r(ic, 1, "×")
+        # FCF / net debt (7) — how fast could it repay out of the cash it
+        # actually keeps? Replaces D/E: it nets off the cash pile, it stands on
+        # cash rather than the book equity a bad decade writes down (and that
+        # buybacks distort), and it is sign-safe where net-debt/FCF would not
+        # be — negative FCF gives a negative ratio that fails every band rather
+        # than flipping a cash-burner into looking unlevered.
+        cash = row.get("total_cash") or 0
+        fcf_v = row.get("fcf")
+        if debt is None or (fcf_v is None and debt - cash > 0):
+            nd, nd_txt = 0.0, "—"
+        elif debt - cash <= 0:
+            nd, nd_txt = 7.0, "net cash"
+        else:
+            ratio = fcf_v / (debt - cash)
+            nd = 7.0 if ratio > 0.25 else (3.5 if ratio > 0.10 else 0.0)
+            nd_txt = _r(ratio, 2, "×")
+        c += nd
+        # Near-term liquidity (5) — Graham's own test, kept but demoted: it
+        # catches what a cash-flow ratio misses, though a high current ratio is
+        # also bloated inventory, so it no longer anchors the pillar.
+        cr = row.get("current_ratio")
+        c += _band(cr, 2.0, 1.5, 5)
+        # Altman Z' (5) — a validated composite, demoted to a cross-check
+        # because this strategy already scores most of what goes into it:
+        # working capital right here, profitability in Pillar D, and its X5 is
+        # asset turnover, which is not a solvency measure at all. Z' rather than
+        # Z so the pillar carries no price term (see app.altman_z_prime), and on
+        # Z's own bands the reading would be wrong — Z' has its own (2.9/1.23).
+        zp = row.get("altman_z_prime")
+        if zp is not None:
+            c += 5 if zp >= 2.9 else (2.5 if zp >= 1.23 else 0)
         P.append(_pill("Financial strength", c, 25,
-                       f"CR {_r(cr, 1)}, D/E {deq_txt}, Altman Z {_r(z, 1)}"))
+                       f"int cover {ic_txt}, FCF/net debt {nd_txt}, "
+                       f"CR {_r(cr, 1)}, Altman Z′ {_r(zp, 2)}"))
 
     # Pillar D — earnings quality (20)
     ni, fcf = row.get("income"), row.get("fcf")
