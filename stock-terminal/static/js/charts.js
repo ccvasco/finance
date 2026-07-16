@@ -98,6 +98,106 @@ const Charts = (() => {
     svg.addEventListener("mouseleave", () => { vline.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
   }
 
+  /* Candlestick chart with optional SMA overlays.
+     points: [{date, open, high, low, close, volume, sma20, sma50, sma200}]
+     opts.smas: [{key, label, color}] — overlay lines read per-point from `key`.
+     Falls back to the line chart when OHLC data isn't available. */
+  function candles(container, points, opts = {}) {
+    const pts = (points || []).filter((p) => p.open != null && p.high != null && p.low != null && p.close != null);
+    if (pts.length < 2) return line(container, points || [], opts);
+    container.innerHTML = "";
+    const smas = opts.smas || [];
+    const W = container.clientWidth || 760, H = opts.height || 260;
+    const m = { t: 14, r: 14, b: 24, l: 52 };
+    // scale over highs/lows AND the visible overlay values, so an SMA that
+    // wanders outside the candle range never clips off the chart
+    const extra = pts.flatMap((p) => smas.map((s) => p[s.key])).filter((v) => v != null);
+    let lo = Math.min(...pts.map((p) => p.low), ...extra);
+    let hi = Math.max(...pts.map((p) => p.high), ...extra);
+    const pad = (hi - lo) * 0.08 || hi * 0.05; lo -= pad; hi += pad;
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const slot = iw / pts.length;
+    const X = (i) => m.l + (i + 0.5) * slot;
+    const Y = (v) => m.t + ih - ((v - lo) / (hi - lo)) * ih;
+    const css = getComputedStyle(document.documentElement);
+    const up = css.getPropertyValue("--up").trim() || "#26d07c";
+    const down = css.getPropertyValue("--down").trim() || "#ff5c6c";
+
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", height: H });
+    for (let g = 0; g <= 4; g++) {
+      const yv = lo + (g / 4) * (hi - lo), y = Y(yv);
+      svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: "#1a232e", "stroke-width": 1 }));
+      const tx = el("text", { x: m.l - 8, y: y + 3, fill: "#566272", "text-anchor": "end", "font-size": 10, "font-family": "monospace" });
+      tx.textContent = fmtAxis(yv); svg.appendChild(tx);
+    }
+    [0, Math.floor(pts.length / 2), pts.length - 1].forEach((i) => {
+      const t = el("text", { x: X(i), y: H - 6, fill: "#566272", "text-anchor": "middle", "font-size": 10, "font-family": "monospace" });
+      t.textContent = pts[i].date.slice(0, 7); svg.appendChild(t);
+    });
+
+    // candles: wick line + body rect per bar (min 1px body so dojis show)
+    const bw = Math.max(Math.min(slot * 0.7, 11), 1.4);
+    pts.forEach((p, i) => {
+      const col = p.close >= p.open ? up : down;
+      const x = X(i);
+      svg.appendChild(el("line", { x1: x, x2: x, y1: Y(p.high), y2: Y(p.low), stroke: col, "stroke-width": Math.min(1, bw / 2) }));
+      const yTop = Y(Math.max(p.open, p.close));
+      svg.appendChild(el("rect", {
+        x: x - bw / 2, y: yTop, width: bw,
+        height: Math.max(Math.abs(Y(p.open) - Y(p.close)), 1), fill: col, rx: bw > 3 ? 1 : 0,
+      }));
+    });
+
+    // SMA overlays (drawn over the candles); gaps where the value is null
+    smas.forEach((s) => {
+      let d = "", pen = false;
+      pts.forEach((p, i) => {
+        const v = p[s.key];
+        if (v == null) { pen = false; return; }
+        d += `${pen ? "L" : "M"} ${X(i)} ${Y(v)} `; pen = true;
+      });
+      if (d) svg.appendChild(el("path", { d: d.trim(), fill: "none", stroke: s.color, "stroke-width": 1.4, opacity: 0.9 }));
+    });
+    container.appendChild(svg);
+
+    // hover crosshair + OHLC tooltip (same CTM mapping as line(), which stays
+    // exact under the app's CSS `zoom` UI scaling)
+    const tip = document.createElement("div");
+    tip.style.cssText = "position:absolute;pointer-events:none;background:#0d141c;border:1px solid #28333f;border-radius:6px;padding:6px 9px;font:11px monospace;color:#d7e0ea;display:none;z-index:9;white-space:nowrap";
+    container.style.position = "relative"; container.appendChild(tip);
+    const vline = el("line", { y1: m.t, y2: m.t + ih, stroke: "#3a4756", "stroke-width": 1, visibility: "hidden" });
+    svg.appendChild(vline);
+    const fmtV = (v) => (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "K" : "" + Math.round(v));
+    svg.addEventListener("mousemove", (e) => {
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      let pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      pt = pt.matrixTransform(ctm.inverse());
+      let i = Math.round((pt.x - m.l) / slot - 0.5);
+      i = Math.max(0, Math.min(pts.length - 1, i));
+      const p = pts[i], x = X(i);
+      vline.setAttribute("x1", x); vline.setAttribute("x2", x); vline.setAttribute("visibility", "visible");
+      const col = p.close >= p.open ? up : down;
+      let html = `${p.date}<br>` +
+        `O <b>${p.open.toFixed(2)}</b> H <b>${p.high.toFixed(2)}</b><br>` +
+        `L <b>${p.low.toFixed(2)}</b> C <b style="color:${col}">${p.close.toFixed(2)}</b>`;
+      if (p.volume != null) html += `<br>Vol <b>${fmtV(p.volume)}</b>`;
+      smas.forEach((s) => {
+        if (p[s.key] != null) html += `<br><span style="color:${s.color}">${s.label}</span> <b>${p[s.key].toFixed(2)}</b>`;
+      });
+      tip.style.display = "block"; tip.innerHTML = html;
+      let tipPt = svg.createSVGPoint();
+      tipPt.x = x; tipPt.y = Y(p.close);
+      tipPt = tipPt.matrixTransform(ctm);
+      const r = container.getBoundingClientRect();
+      const left = Math.min(tipPt.x - r.left + 12, container.clientWidth - 150);
+      tip.style.left = Math.max(4, left) + "px";
+      tip.style.top = Math.max(4, tipPt.y - r.top - 10) + "px";
+    });
+    svg.addEventListener("mouseleave", () => { vline.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+  }
+
   /* Grouped bars over N series, with optional line series on a 2nd (right) axis.
      data:   [{period, <key>: value, ...}]
      series: [{key, label, color}]  (color "accent" -> theme accent)
@@ -260,5 +360,5 @@ const Charts = (() => {
     container.appendChild(svg);
   }
 
-  return { line, bars };
+  return { line, candles, bars };
 })();

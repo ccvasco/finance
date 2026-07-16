@@ -1471,20 +1471,49 @@ def deepdive(ticker):
     return cached(f"deepdive:{ticker}", 600, produce)
 
 
+# Price-chart range -> (fetch period, bar interval, visible window in days).
+# The fetch period is deliberately longer than the visible window so the
+# SMA-200 has enough lookback to be drawn from the very first visible bar
+# (200 trading days ≈ 10 calendar months; 200 weeks ≈ 3.8 years). Longer
+# ranges switch to weekly/monthly bars so a candle stays readable — a 5y
+# range at daily bars would be ~1,250 sub-pixel candles.
+_HIST_CFG = {
+    "1mo": ("2y", "1d", 31),
+    "6mo": ("2y", "1d", 183),
+    "1y": ("2y", "1d", 366),
+    "2y": ("10y", "1wk", 731),
+    "5y": ("max", "1wk", 1827),
+    "max": ("max", "1mo", None),
+}
+_SMA_WINDOWS = (20, 50, 200)
+
+
 def history(ticker, rng="1y"):
     def produce():
+        period, interval, window = _HIST_CFG.get(rng, (rng, "1d", None))
         try:
-            df = yf.Ticker(ticker).history(period=rng, auto_adjust=True)
+            df = yf.Ticker(ticker).history(period=period, interval=interval,
+                                           auto_adjust=True)
         except Exception:
             return {"ticker": ticker, "points": []}
         if df is None or df.empty:
             return {"ticker": ticker, "points": []}
+        # SMAs over the bar interval's closes (i.e. SMA-50 on a weekly chart
+        # is a 50-week average), computed on the full fetch before trimming
+        # so they are complete across the visible window.
+        for w in _SMA_WINDOWS:
+            df[f"sma{w}"] = df["Close"].rolling(w).mean()
+        if window is not None:
+            df = df[df.index >= df.index[-1] - pd.Timedelta(days=window)]
         pts = [
-            {"date": idx.strftime("%Y-%m-%d"), "close": _num(row["Close"]),
-             "volume": _num(row.get("Volume"))}
+            {"date": idx.strftime("%Y-%m-%d"),
+             "open": _num(row.get("Open")), "high": _num(row.get("High")),
+             "low": _num(row.get("Low")), "close": _num(row.get("Close")),
+             "volume": _num(row.get("Volume")),
+             **{f"sma{w}": _num(row.get(f"sma{w}")) for w in _SMA_WINDOWS}}
             for idx, row in df.iterrows()
         ]
-        return {"ticker": ticker, "range": rng, "points": pts}
+        return {"ticker": ticker, "range": rng, "interval": interval, "points": pts}
 
     return cached(f"hist:{ticker}:{rng}", 600, produce)
 

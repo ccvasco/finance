@@ -2001,7 +2001,8 @@ const DeepDive = (() => {
 
         <div class="col-6"><div class="panel">
           <div class="panel-head"><span class="dot"></span>Price
-            <div class="range-tabs" id="dd-ranges" style="margin-left:auto"></div></div>
+            <div class="range-tabs" id="dd-smas" style="margin-left:auto"></div>
+            <div class="range-tabs" id="dd-ranges"></div></div>
           <div class="chart-box" id="dd-price"><div class="loading-box"><span class="spinner"></span></div></div>
         </div></div>
 
@@ -2080,23 +2081,52 @@ const DeepDive = (() => {
     Charts.bars(document.getElementById("dd-roic-wacc"), d.roic_history || [],
       ROIC_WACC_BARS, { height: 230, yFmt: pctAxis, lines: ROIC_WACC_LINES, y2Fmt: pctAxis, sharedAxis: true });
 
-    // price chart with range tabs — mirrors the Settings range options, and
-    // always includes the configured default so it renders as an active tab.
+    // price chart (candlesticks) with range tabs — mirrors the Settings range
+    // options, and always includes the configured default so it renders as an
+    // active tab. SMA overlay chips re-render from the already-fetched points
+    // (the backend sends sma20/50/200 with every history response); the
+    // active set persists in Settings across stocks and reloads.
     const RANGES = ["1mo", "6mo", "1y", "2y", "5y", "max"];
+    const SMA_DEFS = [
+      { key: "sma20", label: "SMA 20", color: "#f5a623" },
+      { key: "sma50", label: "SMA 50", color: "#2f81f7" },
+      { key: "sma200", label: "SMA 200", color: "#a371f7" },
+    ];
     const def = Store.getSettings().range || "1y";
     const ranges = RANGES.includes(def) ? RANGES : [...RANGES, def];
     const rt = document.getElementById("dd-ranges");
     rt.innerHTML = ranges.map((r) => `<span class="chip ${r === def ? "active" : ""}" data-r="${r}">${r}</span>`).join("");
+    let lastHist = null;
+    function renderPrice() {
+      if (!lastHist) return;
+      const active = Store.getSettings().smas || [];
+      Charts.candles(document.getElementById("dd-price"), lastHist.points,
+        { height: 260, smas: SMA_DEFS.filter((s) => active.includes(s.key)) });
+    }
     async function loadPrice(r) {
       const box = document.getElementById("dd-price");
       box.innerHTML = `<div class="loading-box"><span class="spinner"></span></div>`;
-      try { const h = await API.history(ticker, r); Charts.line(box, h.points, { height: 260 }); }
-      catch (e) { box.innerHTML = `<div class="empty">${e.message}</div>`; }
+      try { lastHist = await API.history(ticker, r); renderPrice(); }
+      catch (e) { lastHist = null; box.innerHTML = `<div class="empty">${e.message}</div>`; }
     }
     rt.querySelectorAll("[data-r]").forEach((c) => c.addEventListener("click", () => {
       rt.querySelectorAll(".chip").forEach((x) => x.classList.remove("active"));
       c.classList.add("active"); loadPrice(c.dataset.r);
     }));
+    const st = document.getElementById("dd-smas");
+    function renderSmaChips() {
+      const active = Store.getSettings().smas || [];
+      st.innerHTML = SMA_DEFS.map((s) =>
+        `<span class="chip ${active.includes(s.key) ? "active" : ""}" data-s="${s.key}">` +
+        `<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${s.color};margin-right:5px;vertical-align:baseline"></i>${s.label}</span>`).join("");
+      st.querySelectorAll("[data-s]").forEach((c) => c.addEventListener("click", () => {
+        const cur = new Set(Store.getSettings().smas || []);
+        cur.has(c.dataset.s) ? cur.delete(c.dataset.s) : cur.add(c.dataset.s);
+        Store.setSetting("smas", SMA_DEFS.map((s) => s.key).filter((k) => cur.has(k)));
+        renderSmaChips(); renderPrice();
+      }));
+    }
+    renderSmaChips();
     loadPrice(def);
 
     // statements

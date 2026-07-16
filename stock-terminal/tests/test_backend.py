@@ -1853,6 +1853,89 @@ class TestFiveYearScope(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# 8b. history() — OHLC candles, per-range intervals, server-side SMAs
+# ---------------------------------------------------------------------------
+class TestHistory(unittest.TestCase):
+
+    def setUp(self):
+        app.clear_cache()
+
+    @staticmethod
+    def _ohlc_df(periods, freq="B", end="2026-07-15"):
+        idx = pd.bdate_range(end=end, periods=periods) if freq == "B" \
+            else pd.date_range(end=end, periods=periods, freq=freq)
+        close = pd.Series(np.linspace(100, 150, periods), index=idx)
+        return pd.DataFrame({
+            "Open": close - 0.5, "High": close + 1.0,
+            "Low": close - 1.0, "Close": close,
+            "Volume": np.full(periods, 1e6),
+        })
+
+    def _run(self, rng, df, ticker="HTST"):
+        with patch("app.yf.Ticker") as T:
+            T.return_value.history.return_value = df
+            out = app.history(ticker, rng)
+            call = T.return_value.history.call_args
+        return out, call.kwargs
+
+    def test_daily_range_fetches_lookback_and_trims(self):
+        # 1y visible window: fetched at 2y daily so the SMA-200 is complete
+        # from the first visible bar, then trimmed back to ~1y of points.
+        df = self._ohlc_df(504)  # ~2 trading years
+        out, kw = self._run("1y", df, "HT1")
+        self.assertEqual(kw["period"], "2y")
+        self.assertEqual(kw["interval"], "1d")
+        self.assertEqual(out["interval"], "1d")
+        pts = out["points"]
+        self.assertLess(len(pts), 504)
+        first = datetime.date.fromisoformat(pts[0]["date"])
+        last = datetime.date.fromisoformat(pts[-1]["date"])
+        self.assertLessEqual((last - first).days, 366)
+        # SMA-200 already defined on the very first visible bar
+        self.assertIsNotNone(pts[0]["sma200"])
+
+    def test_sma_matches_rolling_mean(self):
+        df = self._ohlc_df(504)
+        out, _ = self._run("1y", df, "HT2")
+        expected = df["Close"].tail(20).mean()
+        self.assertAlmostEqual(out["points"][-1]["sma20"], expected, places=6)
+
+    def test_2y_uses_weekly_bars(self):
+        df = self._ohlc_df(520, freq="W-FRI")
+        out, kw = self._run("2y", df, "HT3")
+        self.assertEqual(kw["period"], "10y")
+        self.assertEqual(kw["interval"], "1wk")
+        self.assertEqual(out["interval"], "1wk")
+
+    def test_max_uses_monthly_bars_untrimmed(self):
+        df = self._ohlc_df(240, freq="ME")
+        out, kw = self._run("max", df, "HT4")
+        self.assertEqual(kw["period"], "max")
+        self.assertEqual(kw["interval"], "1mo")
+        self.assertEqual(len(out["points"]), 240)
+
+    def test_short_history_smas_none_not_crash(self):
+        df = self._ohlc_df(10)
+        out, _ = self._run("1mo", df, "HT5")
+        self.assertEqual(len(out["points"]), 10)
+        self.assertIsNone(out["points"][0]["sma20"])
+        self.assertIsNone(out["points"][-1]["sma200"])
+
+    def test_close_only_frame_keeps_close_and_none_ohlc(self):
+        # Callers that only read `close` (screener correlation, exports) must
+        # keep working even if a data source lacks OHLC columns.
+        idx = pd.bdate_range(end="2026-07-15", periods=5)
+        df = pd.DataFrame({"Close": np.arange(5, dtype=float) + 100,
+                           "Volume": np.full(5, 1e6)}, index=idx)
+        out, _ = self._run("1mo", df, "HT6")
+        p = out["points"][0]
+        self.assertEqual(p["close"], 100.0)
+        self.assertIsNone(p["open"])
+        self.assertIsNone(p["high"])
+        self.assertIsNone(p["low"])
+
+
+# ---------------------------------------------------------------------------
 # 9. financials()
 # ---------------------------------------------------------------------------
 class TestFinancials(unittest.TestCase):
@@ -2129,7 +2212,9 @@ class TestHTTPServer(unittest.TestCase):
         mock_tk.cash_flow = _CF_DF
         mock_tk.balance_sheet = _BAL_DF
         hist_df = pd.DataFrame(
-            {"Close": [100.0, 101.0, 102.0], "Volume": [1e6, 1e6, 1e6]},
+            {"Open": [99.5, 100.5, 101.5], "High": [100.5, 101.5, 102.5],
+             "Low": [99.0, 100.0, 101.0], "Close": [100.0, 101.0, 102.0],
+             "Volume": [1e6, 1e6, 1e6]},
             index=pd.DatetimeIndex(["2025-06-01", "2025-06-02", "2025-06-03"]),
         )
         mock_tk.history.return_value = hist_df
@@ -2358,10 +2443,16 @@ class TestHTTPServer(unittest.TestCase):
 
     def test_history_point_schema(self):
         _, body, _ = _get(f"{self.base}/api/history?ticker=TST&range=1mo")
-        point = json.loads(body)["points"][0]
-        self.assertIn("date", point)
-        self.assertIn("close", point)
-        self.assertIn("volume", point)
+        d = json.loads(body)
+        self.assertEqual(d["interval"], "1d")
+        point = d["points"][0]
+        for k in ("date", "open", "high", "low", "close", "volume",
+                  "sma20", "sma50", "sma200"):
+            self.assertIn(k, point)
+        self.assertEqual(point["open"], 99.5)
+        self.assertEqual(point["high"], 100.5)
+        self.assertEqual(point["low"], 99.0)
+        self.assertEqual(point["close"], 100.0)
 
     # -- financials ---------------------------------------------------
     def test_financials_income_200(self):
