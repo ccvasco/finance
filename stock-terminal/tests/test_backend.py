@@ -3642,6 +3642,36 @@ class TestBusinessTypeGrading(unittest.TestCase):
         self.assertGreater(cheap[0], rich[0])
         self.assertGreaterEqual(cheap[0], 60)
 
+    def test_s3_reit_strength_scores_coverage_on_ffo_not_fcf(self):
+        # Pillar C must judge the distribution on FFO like S1/S2 do, not on the
+        # GAAP FCF the rest of the REIT rubric deliberately avoids. fcf_coverage
+        # is set far above every band, so a pillar reading it would score full.
+        _s, _v, pillars = strategies._grade_defensive(
+            self._reit(ffo_coverage=1.3, fcf_coverage=99.0))
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertIn("FFO cover", c["d"])
+        self.assertNotIn("FCF cover", c["d"])
+        self.assertEqual(c["p"], 21.0)          # 12 D/E + 4 half-band + 5 FFO>0
+
+    def test_s3_reit_in_development_not_punished_for_negative_gaap_fcf(self):
+        # The bug this guards: a REIT building properties has deeply negative
+        # GAAP FCF (development capex is indistinguishable from maintenance) and
+        # was losing all 13 FCF-driven points of Pillar C while healthy on FFO.
+        dev = self._reit(fcf=-2e9, fcf_coverage=-0.5, ffo_coverage=1.8)
+        _s, _v, pillars = strategies._grade_defensive(dev)
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertEqual(c["p"], 25.0)          # 12 D/E + 8 cover + 5 FFO>0
+
+    def test_s3_reit_without_ffo_falls_back_to_fcf_bands(self):
+        # No D&A line -> no FFO -> the lenient GAAP-FCF bands still apply, so a
+        # REIT is never left unscored on strength.
+        row = self._reit()
+        del row["ffo"], row["ffo_coverage"]
+        _s, _v, pillars = strategies._grade_defensive(row)
+        c = next(p for p in pillars if p["k"] == "Financial strength")
+        self.assertIn("FCF cover", c["d"])
+        self.assertEqual(c["p"], 25.0)          # 12 D/E + 8 (fcf_cov 3.0) + 5 FCF>0
+
     def test_reit_pillars_resum_across_all_three_strategies(self):
         for fn in (strategies._grade_triage, strategies._grade_compounder,
                    strategies._grade_defensive):

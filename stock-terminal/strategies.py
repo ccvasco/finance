@@ -1076,7 +1076,8 @@ def _grade_defensive(row):
     elif reit:
         # REITs carry high leverage by design and Altman-Z / current ratio don't
         # apply, so strength is judged on REIT-appropriate D/E bands plus how
-        # well free cash flow covers the (mandatory, high) distribution.
+        # well the REIT's cash generation covers the (mandatory, high)
+        # distribution.
         d_eq = row.get("debt_to_equity")            # pct points
         if neg_eq:
             c = 0.0
@@ -1084,12 +1085,27 @@ def _grade_defensive(row):
             c = 6.0
         else:
             c = 12 if d_eq <= 100 else (6 if d_eq <= 200 else 0)
-        cov = row.get("fcf_coverage")
-        c += 8 if _gt(cov, 1.2) else (4 if _gt(cov, 0.8) else 0)
-        c += 5 if (row.get("fcf") or 0) > 0 else 0
+        # Coverage is judged on FFO where available, matching S1/S2 — GAAP FCF
+        # understates a REIT's distributable cash (capex isn't split into
+        # maintenance vs. growth), so a REIT in a development phase reads as
+        # cash-negative while perfectly healthy. The FFO bands are tighter than
+        # the FCF fallback's on purpose: FFO adds back all D&A and never
+        # subtracts capex, so it runs structurally above FCF and is not AFFO —
+        # the same coverage multiple represents less real cash.
+        ffo = row.get("ffo")
+        has_ffo = ffo is not None
+        if has_ffo:
+            cov = row.get("ffo_coverage")
+            c += 8 if _gt(cov, 1.5) else (4 if _gt(cov, 1.2) else 0)
+            c += 5 if ffo > 0 else 0
+        else:
+            cov = row.get("fcf_coverage")
+            c += 8 if _gt(cov, 1.2) else (4 if _gt(cov, 0.8) else 0)
+            c += 5 if (row.get("fcf") or 0) > 0 else 0
         P.append(_pill("Financial strength", c, 25,
                        f"D/E {('neg equity → 0' if neg_eq else _pct(d_eq))} "
-                       f"(REIT bands), FCF cover {_r(cov, 2, '×')}"))
+                       f"(REIT bands), {'FFO' if has_ffo else 'FCF'} cover "
+                       f"{_r(cov, 2, '×')}"))
     else:
         cr = row.get("current_ratio")
         c = _band(cr, 2.0, 1.5, 8)

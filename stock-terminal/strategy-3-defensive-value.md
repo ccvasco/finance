@@ -62,8 +62,10 @@ be in — the opposite of the resilience this pillar is buying.
 *Financials* score this pillar on ROA alone (25 pts). *REITs* replace it too:
 Current Ratio and Altman-Z don't apply to a property business and its leverage
 is high by design, so strength is judged on REIT-appropriate D/E bands (≤100%
-conservative, ≤200% typical) plus how well free cash flow covers the mandatory,
-high distribution. See the archetypes section in stock-triage-strategy.md.
+conservative, ≤200% typical) plus how well **FFO** covers the mandatory, high
+distribution — GAAP FCF understates a REIT's distributable cash, so it is only
+the fallback when no FFO is available (and is banded more leniently to match).
+See the archetypes section in stock-triage-strategy.md.
 
 ## Pillar D — Earnings quality (20 points)
 
@@ -131,8 +133,12 @@ depreciation-distorted for property, so four of the five pillars are rebuilt on
 - **Pillar B — asset backing (15):** P/B (real estate has genuine book value —
   a rough NAV proxy), banded < 1.0 → 15 / < 1.5 → 10 / ≤ 2.5 → 5. The Graham
   P/E × P/B test is dropped (it uses the distorted P/E).
-- **Pillar C — financial strength (25):** REIT D/E bands + FFO coverage of the
-  distribution (already documented above under Pillar C).
+- **Pillar C — financial strength (25):** REIT D/E bands (≤100% → 12, ≤200% → 6)
+  + FFO coverage of the distribution (> 1.5× → 8, > 1.2× → 4) + FFO positive (5).
+  The coverage bands sit above Pillar D's because this pillar is buying
+  resilience, not just sustainability — and FFO is not AFFO, so it overstates
+  distributable cash by the maintenance capex it never subtracts. Without FFO,
+  the GAAP-FCF fallback bands at > 1.2× / > 0.8×.
 - **Pillar D — earnings quality (20):** FFO positive (8) + FFO coverage
   ≥ 1.0× (7) + payout within FFO (≤ 90% → 5). Net-income sign and Piotroski
   are dropped — both mislead for REITs.
