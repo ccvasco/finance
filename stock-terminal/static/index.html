@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bibes Terminal</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>📈</text></svg>" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <button id="sidebar-collapse" class="brand" aria-label="Collapse sidebar">
+        <span class="brand-mark">▚</span>
+        <div class="brand-text">
+          <div class="brand-name">BIBES<span>TERMINAL</span></div>
+          <div class="brand-sub">yfinance edition</div>
+        </div>
+        <span class="brand-chevron">‹</span>
+      </button>
+      <nav class="nav">
+        <a class="nav-item" data-view="dashboard"><span class="nav-ico">◧</span><span class="nav-label">Dashboard</span></a>
+        <a class="nav-item" data-view="screener"><span class="nav-ico">▦</span><span class="nav-label">Screener</span></a>
+        <a class="nav-item" data-view="calendar"><span class="nav-ico">▤</span><span class="nav-label">Calendar</span></a>
+        <a class="nav-item" data-view="watchlist"><span class="nav-ico">★</span><span class="nav-label">Watchlists</span> <span id="wl-count" class="badge"></span></a>
+        <a class="nav-item" data-view="settings"><span class="nav-ico">⚙</span><span class="nav-label">Settings</span></a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="status-dot" id="conn-dot"></div>
+        <span id="conn-text">connecting…</span>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="topbar">
+        <div class="search-wrap">
+          <span class="search-ico">⌕</span>
+          <input id="ticker-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Enter tickers — e.g. AAPL, MSFT, NVDA, GOOGL" />
+          <button id="analyze-btn" class="btn btn-primary">Analyze</button>
+        </div>
+        <div class="topbar-actions">
+          <div class="zoom-ctl" title="Zoom the interface — Ctrl/⌘ and +/−, Ctrl/⌘ 0 to reset">
+            <button id="zoom-out" class="zoom-btn" aria-label="Zoom out">−</button>
+            <button id="zoom-level" class="zoom-lvl" aria-label="Reset zoom to 100%">100%</button>
+            <button id="zoom-in" class="zoom-btn" aria-label="Zoom in">+</button>
+          </div>
+          <button id="export-btn" class="btn" title="Export current table to .xlsx">⭳ Export .xlsx</button>
+        </div>
+      </header>
+
+      <section id="view-root" class="view-root"><!-- views render here --></section>
+    </main>
+  </div>
+
+  <!-- Deep-dive overlay -->
+  <div id="deepdive" class="deepdive hidden"></div>
+  <!-- Modal root (naming prompts) -->
+  <div id="modal-root" class="hidden"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/views.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

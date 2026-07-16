@@ -827,6 +827,53 @@ test("chat history tolerates junk / empty", () => {
   assert.deepEqual(Store.getChatHistory(), []);
 });
 
+section("Store — column widths");
+
+test("column widths start empty and round-trip through localStorage", () => {
+  localStorage.removeItem("st.colWidths");
+  Store.resetColWidths();
+  assert.deepEqual(Store.getColWidths(), {});
+  Store.setColWidths({ pe: 90, price: 120 });
+  assert.deepEqual(Store.getColWidths(), { pe: 90, price: 120 });
+  assert.deepEqual(JSON.parse(localStorage.getItem("st.colWidths")), { pe: 90, price: 120 });
+});
+
+test("column widths merge rather than replace, and round to whole px", () => {
+  Store.resetColWidths();
+  Store.setColWidths({ pe: 90, price: 120 });
+  Store.setColWidths({ price: 133.7 });
+  assert.deepEqual(Store.getColWidths(), { pe: 90, price: 134 });
+});
+
+test("a null width drops the column back to auto", () => {
+  Store.resetColWidths();
+  Store.setColWidths({ pe: 90, price: 120 });
+  Store.setColWidths({ pe: null });
+  assert.deepEqual(Store.getColWidths(), { price: 120 });
+});
+
+test("getColWidths hands back a copy — mutating it can't corrupt the store", () => {
+  Store.resetColWidths();
+  Store.setColWidths({ pe: 90 });
+  const got = Store.getColWidths();
+  got.pe = 999;
+  delete got.pe;
+  assert.deepEqual(Store.getColWidths(), { pe: 90 });
+});
+
+test("resetColWidths clears everything", () => {
+  Store.setColWidths({ pe: 90, price: 120 });
+  Store.resetColWidths();
+  assert.deepEqual(Store.getColWidths(), {});
+  assert.deepEqual(JSON.parse(localStorage.getItem("st.colWidths")), {});
+});
+
+test("column widths tolerate junk in localStorage", () => {
+  localStorage.setItem("st.colWidths", "{not json");
+  loadJS("store.js");   // Store hydrates on load — re-run that read path
+  assert.deepEqual(Store.getColWidths(), {});
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

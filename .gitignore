@@ -24,3 +24,5 @@ ENV/
 /doc/source/reference/api
 !yfinance.css
 !/doc/source/development/assets/branches.png
+!/stock-terminal/static/index.html
+!/stock-terminal/static/css/styles.css

@@ -4,6 +4,7 @@ const Store = (() => {
   const KEYS = {
     wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
     lists: "st.lists", rows: "st.rowsCache", chat: "st.chatHistory",
+    colw: "st.colWidths",
   };
   const CHAT_MAX = 60;   // keep the last N messages (agent context is capped too)
 
@@ -33,6 +34,10 @@ const Store = (() => {
     read(KEYS.settings, {})
   );
   let lastTickers = read(KEYS.last, []);
+  // Screener/watchlist column widths in px, keyed by COLS key: { pe: 90, ... }.
+  // Empty until the user first drags a header edge, which freezes every
+  // column's then-current width at once (see Views' column-resize wiring).
+  let colWidths = read(KEYS.colw, {});
   // Named watchlists: [{ id, name, tickers:[...], createdAt, updatedAt }]
   let lists = read(KEYS.lists, []);
 
@@ -149,6 +154,20 @@ const Store = (() => {
       try { localStorage.setItem(KEYS.chat, JSON.stringify(trimmed)); }
       catch { try { localStorage.removeItem(KEYS.chat); } catch {} }
     },
+
+    // -- column widths -----------------------------------------------------
+    getColWidths: () => Object.assign({}, colWidths),
+    // Merge `widths` ({key: px}) over the stored map. Callers pass only what
+    // changed; a null value drops a column back to auto sizing.
+    setColWidths(widths) {
+      Object.entries(widths).forEach(([k, v]) => {
+        if (v == null) delete colWidths[k];
+        else colWidths[k] = Math.round(v);
+      });
+      write(KEYS.colw, colWidths);
+      notify();
+    },
+    resetColWidths() { colWidths = {}; write(KEYS.colw, colWidths); notify(); },
 
     // -- settings ----------------------------------------------------------
     getSettings: () => Object.assign({}, settings),
