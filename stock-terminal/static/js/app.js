@@ -129,6 +129,29 @@ const App = (() => {
     document.documentElement.setAttribute("data-accent", Store.getSettings().accent || "green");
   }
 
+  // ---- sidebar collapse (toggled by clicking the logo, persisted) --------
+  function applySidebarCollapse() {
+    const collapsed = !!Store.getSettings().sidebarCollapsed;
+    document.getElementById("app").classList.toggle("sidebar-collapsed", collapsed);
+    const brand = document.getElementById("sidebar-collapse");
+    if (brand) {
+      // data-tip (the app's own styled bubble), not `title` — avoids
+      // stacking the browser's native tooltip on top of ours.
+      const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
+      brand.setAttribute("data-tip", label);
+      brand.setAttribute("aria-label", label);
+    }
+    // labels are hidden when collapsed, so surface them as hover tooltips
+    document.querySelectorAll(".nav-item").forEach((n) => {
+      if (collapsed) n.setAttribute("data-tip", n.querySelector(".nav-label").textContent);
+      else n.removeAttribute("data-tip");
+    });
+  }
+  function toggleSidebar() {
+    Store.setSetting("sidebarCollapsed", !Store.getSettings().sidebarCollapsed);
+    applySidebarCollapse();
+  }
+
   // ---- whole-app UI zoom (browser-style, persisted) ---------------------
   const ZOOM_MIN = 50, ZOOM_MAX = 200, ZOOM_STEP = 10;
   function currentZoom() {
@@ -224,6 +247,8 @@ const App = (() => {
   function init() {
     applyAccent();
     applyZoom();
+    applySidebarCollapse();
+    document.getElementById("sidebar-collapse").addEventListener("click", toggleSidebar);
     // hydrate input from settings/last session
     const last = Store.getLastTickers();
     document.getElementById("ticker-input").value =

@@ -1741,14 +1741,28 @@ const DeepDive = (() => {
       desc: "EBITDA ÷ revenue for each fiscal year (right axis). Statement-derived, so it can differ from the TTM EBITDA Margin % in the Profitability panel (Yahoo derives that one itself)." },
   ];
   // Share Dilution panel: share counts ($-axis bars) + yield/payout (% lines).
-  const SHARE_BARS = [
-    { key: "shares_outstanding", label: "Shares Outstanding", color: "accent", swatch: "var(--accent)",
-      desc: "Total shares issued. Falling = buybacks (each share owns more); rising = dilution." },
-    { key: "float_shares", label: "Float Shares", color: "#2f81f7", swatch: "#2f81f7",
-      desc: "Shares freely tradable by the public. Only the latest year is available, so it appears on the most recent bar only." },
+  // The share bar is built per-render by shareBars() below, since its label
+  // depends on which balance-sheet row the backend found.
+  const SHARE_BARS_TAIL = [
     { key: "treasury_shares", label: "Treasury Shares", color: "#5b6f86", swatch: "#5b6f86",
       desc: "Repurchased shares held by the company (often ~0 when bought-back shares are retired)." },
   ];
+  // The share bars are outstanding shares, except for the rare ticker where
+  // Yahoo has neither an outstanding row nor a treasury row to reconstruct one
+  // from — there the bars are issued shares (treasury included, so the level
+  // runs high) and say so. basis "derived" needs no caveat: it is outstanding
+  // shares, reconstructed exactly. See _shares_outstanding_series in app.py.
+  function shareBars(basis) {
+    const issued = basis === "issued";
+    return [{
+      key: "shares_outstanding",
+      label: issued ? "Shares Issued" : "Shares Outstanding",
+      color: "accent", swatch: "var(--accent)",
+      desc: issued
+        ? "Shares ISSUED — Yahoo has no shares-outstanding row for this ticker and no treasury row to net off, so these bars count any shares the company holds in treasury and the level may overstate the true outstanding count. The trend still reads normally: falling = buybacks, rising = dilution."
+        : "Shares outstanding. Falling = buybacks (each share owns more); rising = dilution.",
+    }, ...SHARE_BARS_TAIL];
+  }
   const SHARE_LINES = [
     // EPS ($/share) rides its own private scale (indep) so it can sit among the
     // % lines without distorting their right axis; its $ value shows on hover.
@@ -2004,8 +2018,11 @@ const DeepDive = (() => {
         </div></div>
 
         <div class="col-6"><div class="panel">
-          <div class="panel-head"><span class="dot"></span>Share Dilution · last 5Y<span class="hint" style="margin-left:auto;font-weight:400">bars: shares · lines: % (right) · float = latest only</span></div>
-          <div class="chart-legend">${legendItems(SHARE_BARS) + legendItems(SHARE_LINES, true)}</div>
+          <div class="panel-head"><span class="dot"></span>Share Dilution · last 5Y<span class="hint" style="margin-left:auto;font-weight:400">${
+            d.share_dilution_basis === "issued"
+              ? `<span style="color:#e3b341">⚠ bars are issued shares — may include treasury</span>`
+              : "bars: shares · lines: % (right)"}</span></div>
+          <div class="chart-legend">${legendItems(shareBars(d.share_dilution_basis)) + legendItems(SHARE_LINES, true)}</div>
           <div class="chart-box" id="dd-dilution"></div>
         </div></div>
 
@@ -2054,7 +2071,7 @@ const DeepDive = (() => {
     const shareLines = SHARE_LINES.map((s) =>
       s.key === "eps" ? { ...s, fmt: (v) => Fmt.price(v, finCur) } : s);
     Charts.bars(document.getElementById("dd-dilution"), d.share_dilution || [],
-      SHARE_BARS, { height: 230, lines: shareLines, y2Fmt: pct1Axis });
+      shareBars(d.share_dilution_basis), { height: 230, lines: shareLines, y2Fmt: pct1Axis });
 
     // historical ROIC bars against the per-year cost-of-capital line, both on
     // the same %-axis (sharedAxis). Each roic_history row now carries its own

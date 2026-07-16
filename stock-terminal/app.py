@@ -49,8 +49,9 @@ import yfinance as yf  # noqa: E402
 import pandas as pd  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
-from strategies import grade_row, flag_legend  # noqa: E402  (strategy graders, same dir)
+from strategies import grade_row, flag_legend, _business_type  # noqa: E402  (strategy graders, same dir)
 import chat as chat_agent  # noqa: E402  (chat agent for /api/chat, same dir)
+import wiki  # noqa: E402  (Wikipedia company context, same dir)
 
 try:
     from openpyxl import Workbook
@@ -130,6 +131,22 @@ def get_info(ticker):
     return cached(f"info:{ticker}", 300, lambda: yf.Ticker(ticker).info or {})
 
 
+def _brief_summary(text, limit=320):
+    """First sentence(s) of a business summary, cut at a sentence boundary
+    under `limit` chars — the screener's hover blurb for a ticker."""
+    if not text:
+        return None
+    text = str(text).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    # prefer ending on a sentence; fall back to a word boundary + ellipsis
+    dot = cut.rfind(". ")
+    if dot > limit // 3:
+        return cut[:dot + 1]
+    return cut.rsplit(" ", 1)[0] + "…"
+
+
 _ERP = 5.5  # Equity risk premium %, Damodaran US estimate
 
 def get_risk_free_rate():
@@ -143,9 +160,72 @@ def get_risk_free_rate():
     return cached("rfr:^TNX", 3600, produce)
 
 
-def _compute_wacc(beta, market_cap, total_debt, interest_exp, tax_rate, rfr):
-    """WACC in %. Cost of equity via CAPM; cost of debt from interest expense / total debt
-    (falls back to rfr when interest expense is unavailable)."""
+def get_risk_free_history():
+    """10-year US Treasury yield (%) daily-close series (^TNX), cached 1 hour.
+    Used to look up the risk-free rate as of each historical fiscal year-end
+    for the per-period WACC line (see _period_wacc in deepdive)."""
+    def produce():
+        try:
+            df = yf.Ticker("^TNX").history(period="10y", auto_adjust=False)
+        except Exception:
+            return None
+        if df is None or df.empty or "Close" not in df:
+            return None
+        return df["Close"].dropna()
+    return cached("rfrhist:^TNX", 3600, produce)
+
+
+def _series_asof(series, date_str):
+    """Most-recent value in a (tz-aware) price/yield series at or before
+    `date_str` (an 'YYYY-MM-DD' fiscal period end). None if unavailable or the
+    date predates the series. Reconciles the naive fiscal date with the
+    series' timezone so pandas' asof doesn't raise on the mismatch."""
+    if series is None or getattr(series, "empty", True):
+        return None
+    try:
+        ts = pd.Timestamp(date_str)
+        tz = getattr(series.index, "tz", None)
+        if tz is not None and ts.tz is None:
+            ts = ts.tz_localize(tz)
+        return _num(series.asof(ts))
+    except Exception:
+        return None
+
+
+def _fx_rate(base, quote):
+    """1 unit of `base` currency in `quote` currency, cached 1 hour.
+    Used only for foreign-reporting tickers (ADRs etc.) whose financial
+    statements come back in a different currency than the one they trade in
+    — e.g. WIT trades in USD but reports in INR (financialCurrency)."""
+    if not base or not quote or base == quote:
+        return 1.0
+    def produce():
+        try:
+            info = yf.Ticker(f"{base}{quote}=X").info
+            return _num(info.get("regularMarketPrice") or info.get("previousClose"))
+        except Exception:
+            return None
+    return cached(f"fx:{base}{quote}", 3600, produce)
+
+
+def _native_market_cap(market_cap, mkt_ccy, fin_ccy):
+    """Market cap (trading currency) converted into the company's reporting
+    currency, so it can be combined with statement figures (debt, cash,
+    revenue, EBITDA — all in `fin_ccy`) without a currency mismatch. Returns
+    the original market_cap unchanged when the two currencies already match,
+    or None if a conversion is needed but the FX rate isn't available."""
+    if market_cap is None:
+        return None
+    if not fin_ccy or not mkt_ccy or fin_ccy == mkt_ccy:
+        return market_cap
+    fx = _fx_rate(mkt_ccy, fin_ccy)
+    return market_cap * fx if fx else None
+
+
+def _wacc_detail(beta, market_cap, total_debt, interest_exp, tax_rate, rfr):
+    """WACC plus every intermediate component (capital weights, CAPM cost of
+    equity, cost of debt, tax rate) as a dict — the DCF export's discount-rate
+    breakdown. None under the same conditions _compute_wacc returns None."""
     if beta is None or market_cap is None or rfr is None:
         return None
     total_debt = total_debt or 0
@@ -159,7 +239,19 @@ def _compute_wacc(beta, market_cap, total_debt, interest_exp, tax_rate, rfr):
         cost_of_debt = abs(interest_exp) / total_debt * 100
     else:
         cost_of_debt = rfr  # fallback: riskless floor when no interest data
-    return w_e * cost_of_equity + w_d * cost_of_debt * (1 - tax_rate)
+    return {
+        "beta": beta, "rfr": rfr, "erp": _ERP,
+        "w_e": w_e, "w_d": w_d, "tax_rate": tax_rate,
+        "cost_of_equity": cost_of_equity, "cost_of_debt": cost_of_debt,
+        "wacc": w_e * cost_of_equity + w_d * cost_of_debt * (1 - tax_rate),
+    }
+
+
+def _compute_wacc(beta, market_cap, total_debt, interest_exp, tax_rate, rfr):
+    """WACC in %. Cost of equity via CAPM; cost of debt from interest expense / total debt
+    (falls back to rfr when interest expense is unavailable)."""
+    d = _wacc_detail(beta, market_cap, total_debt, interest_exp, tax_rate, rfr)
+    return None if d is None else d["wacc"]
 
 
 def _get_stmt(ticker, attr):
@@ -316,6 +408,17 @@ def _screener_row(ticker):
     div_rate = _num(info.get("dividendRate"))            # forward annual estimate
     div_yield = (div_rate / price * 100) if (div_rate and price) else None
 
+    # Foreign-reporting tickers (ADRs etc.) trade in one currency but file
+    # statements in another — e.g. WIT trades in USD, reports in INR. Yahoo's
+    # own cross-currency fields (enterpriseValue, priceToSalesTrailing12Months,
+    # enterpriseToEbitda) get this wrong, so those three are recomputed below
+    # from a market cap converted into the statement (financial) currency.
+    mkt_ccy = info.get("currency")
+    fin_ccy = info.get("financialCurrency")
+    market_cap_native = _native_market_cap(market_cap, mkt_ccy, fin_ccy)
+    fx_mismatch = bool(fin_ccy and mkt_ccy and fin_ccy != mkt_ccy)
+    total_revenue = _num(info.get("totalRevenue"))
+
     # Heavier pulls (cached): statements, dividends, raw price history.
     inc = _get_stmt(ticker, "income_stmt")
     q_inc = _get_stmt(ticker, "quarterly_income_stmt")
@@ -334,10 +437,37 @@ def _screener_row(ticker):
     net_income = _num(info.get("netIncomeToCommon")) or _stmt_val(inc, "Net Income", "Net Income Common Stockholders")
     fcf = _stmt_val(cf, "Free Cash Flow") or _num(info.get("freeCashflow"))
     div_paid = _stmt_val(cf, "Cash Dividends Paid", "Common Stock Dividend Paid", "Common Stock Dividends Paid")
+    bt = _business_type({"sector": info.get("sector"), "industry": info.get("industry")})
+    # Approximate NAREIT FFO (Net Income + D&A − property-sale gains + impairments)
+    # — equity REITs only. The two adjustments matter: without them a REIT flatters
+    # its payout by selling buildings (the gain lands in net income) and overstates
+    # stress in an impairment year. Both come off the cash flow statement's
+    # operating reconciliation, where they are already signed to add — a backed-out
+    # gain is negative, an added-back loss or impairment positive — so the line is
+    # summed as reported. Absent lines are 0: the adjustment is optional, the D&A
+    # add-back is not. Still an approximation, not filed NAREIT FFO — "Operating
+    # Gains Losses" can carry non-property items, and NAREIT adds back only real
+    # estate depreciation where D&A also covers intangibles. Treat as directional.
+    # Mortgage REITs are excluded by type, not by absence of a D&A line: FFO's
+    # whole purpose is the depreciation add-back, and they own securities rather
+    # than depreciable buildings, so it degenerates to net income while the gain
+    # backout would strip the securities gains that *are* their business. They're
+    # graded on book value instead, and the whole FFO family stays None (REITs.md).
+    d_and_a = _stmt_val(cf, "Depreciation And Amortization", "Depreciation Amortization Depletion")
+    ffo_gains = _stmt_val(cf, "Operating Gains Losses") or 0.0
+    ffo_impair = _stmt_val(cf, "Asset Impairment Charge") or 0.0
+    ffo = ((net_income + d_and_a + ffo_gains + ffo_impair)
+           if (bt == "reit" and net_income is not None and d_and_a is not None) else None)
+    # Book value per share trend — the mortgage-REIT quality signal (see grader).
+    bvps_growth = _bvps_growth(bal)
 
     # Derived ratios -----------------------------------------------------
-    p_c = (market_cap / total_cash) if (market_cap and total_cash) else None
-    p_fcf = (market_cap / fcf) if (market_cap and fcf and fcf > 0) else None
+    # Uses market_cap_native (not market_cap) so a mismatched-currency ticker
+    # (WIT: USD price, INR statements) doesn't divide a USD numerator by an
+    # INR denominator — market_cap_native equals market_cap unchanged for the
+    # (overwhelmingly common) case where the two currencies already match.
+    p_c = (market_cap_native / total_cash) if (market_cap_native and total_cash) else None
+    p_fcf = (market_cap_native / fcf) if (market_cap_native and fcf and fcf > 0) else None
     # Debt/Equity computed from the same Total Debt and Total Equity shown in the
     # row, so the three figures reconcile. Yahoo's own debtToEquity (most-recent
     # quarter) is surfaced separately as debt_to_equity_mrq.
@@ -347,6 +477,18 @@ def _screener_row(ticker):
     ebitda = _num(info.get("ebitda"))
     debt_ebitda = (total_debt / ebitda) if (total_debt and ebitda and ebitda > 0) else None
     ebitda_fcf = (ebitda / fcf) if (ebitda and fcf) else None
+    # Enterprise Value, EV/EBITDA and Price/Sales all combine market cap with
+    # statement figures — Yahoo's own passthrough fields for these get the
+    # arithmetic wrong for a mismatched-currency ticker, so recompute them
+    # from market_cap_native instead of trusting info.get(...) in that case.
+    if fx_mismatch and market_cap_native is not None:
+        enterprise_value = market_cap_native + (total_debt or 0) - (total_cash or 0)
+        ev_ebitda = (enterprise_value / ebitda) if ebitda else None
+        ps = (market_cap_native / total_revenue) if total_revenue else None
+    else:
+        enterprise_value = _num(info.get("enterpriseValue"))
+        ev_ebitda = _num(info.get("enterpriseToEbitda"))
+        ps = _num(info.get("priceToSalesTrailing12Months"))
 
     _q_basic = _series_from_stmt(q_inc, "Basic EPS")
     _q_basic_vals = [x["value"] for x in _q_basic[-4:] if x.get("value") is not None]
@@ -370,8 +512,28 @@ def _screener_row(ticker):
 
     interest_exp = (_stmt_val(inc, "Interest Expense", "Interest Expense Non Operating") or
                     _stmt_val(inc, "Interest Expense", "Interest Expense Non Operating", col=1))
-    wacc = _compute_wacc(_num(info.get("beta")), market_cap, total_debt,
+    wacc = _compute_wacc(_num(info.get("beta")), market_cap_native, total_debt,
                          interest_exp, tax_rate, get_risk_free_rate())
+
+    # --- DCF fair value (10y two-stage FCFF; see _dcf_equity_value) --------
+    # Blanked for balance-sheet archetypes: FCFF is meaningless for banks
+    # (financial) and depreciation/capex-distorted for property businesses
+    # (reit, mreit — FFO/book value are their metrics, not FCF).
+    shares = _num(info.get("sharesOutstanding"))
+    if not shares and market_cap and price:
+        shares = market_cap / price      # both trading-ccy -> currency cancels
+    dcf_value = dcf_upside = None
+    if bt not in ("financial", "reit", "mreit") and shares:
+        dcf_equity = _dcf_equity_value(fcf, _fcf_cagr(cf), wacc, total_debt, total_cash)
+        if dcf_equity is not None:
+            # equity value is in the reporting currency; convert the per-share
+            # figure into the trading currency so it compares against Price
+            # (fx = 1.0 when the currencies match — the common case).
+            fx = _fx_rate(fin_ccy, mkt_ccy) if fx_mismatch else 1.0
+            if fx:
+                dcf_value = dcf_equity / shares * fx
+                if price:
+                    dcf_upside = (dcf_value / price - 1) * 100
 
     dg = dividend_growth(ticker)
     perf = performance(ticker)
@@ -380,6 +542,8 @@ def _screener_row(ticker):
     row = {
         "ticker": ticker,
         "name": info.get("shortName") or info.get("longName") or ticker,
+        # short business description, shown as the ticker cell's hover tooltip
+        "summary": _brief_summary(info.get("longBusinessSummary")),
         # mini price-chart series (dividend-unadjusted close), for the screener
         "spark_6mo": spark["6mo"],
         "spark_1y": spark["1y"],
@@ -387,18 +551,30 @@ def _screener_row(ticker):
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "currency": info.get("currency"),
+        # currency the financial statements (revenue, cash, debt, EBITDA, net
+        # income, FCF, book value, etc.) are actually reported in — usually
+        # the same as `currency`, but foreign-reporting tickers like ADRs
+        # (e.g. WIT trades in USD, reports in INR) diverge. Falls back to
+        # `currency` on the frontend when absent.
+        "financial_currency": fin_ccy,
         "price": price,
         "market_cap": market_cap,
-        "enterprise_value": _num(info.get("enterpriseValue")),
+        "enterprise_value": _num(enterprise_value),
         # valuation
         "pe": _num(info.get("trailingPE")),
         "forward_pe": _num(info.get("forwardPE")),
         "peg": _num(info.get("trailingPegRatio")) or _num(info.get("pegRatio")),
         "pb": _num(info.get("priceToBook")),
-        "ps": _num(info.get("priceToSalesTrailing12Months")),
+        "ps": _num(ps),
         "pc": _num(p_c),
         "p_fcf": _num(p_fcf),
-        "ev_ebitda": _num(info.get("enterpriseToEbitda")),
+        "ev_ebitda": _num(ev_ebitda),
+        # DCF fair value per share (trading currency, comparable to price) and
+        # its premium/discount to the current price in signed percentage
+        # points. None for financials and REITs (FCFF doesn't fit), FCF <= 0,
+        # or when WACC is unavailable / too close to the terminal growth rate.
+        "dcf_value": _num(dcf_value),
+        "dcf_upside": _num(dcf_upside),
         "eps": _num(info.get("trailingEps")),       # diluted EPS TTM
         "eps_basic": _num(basic_eps),               # basic EPS TTM
         # profitability / income
@@ -413,6 +589,9 @@ def _screener_row(ticker):
         "roic": _num(roic),
         "roce": _num(roce),
         "wacc": _num(wacc),
+        # Excess return over cost of capital: > 0 means the business earns more
+        # than it pays for capital (value creation), < 0 means value destruction.
+        "roic_wacc": _num(roic - wacc) if (roic is not None and wacc is not None) else None,
         "revenue_per_share": _num(info.get("revenuePerShare")),
         # financial health
         "debt_to_equity": _num(debt_eq),
@@ -426,6 +605,16 @@ def _screener_row(ticker):
         "total_equity": _num(equity),
         "ebitda": _num(ebitda),
         "ebitda_fcf": _num(ebitda_fcf),
+        # Equity-REIT-only (None everywhere else, mortgage REITs included):
+        # approximate NAREIT FFO (see comment above), P/FFO, FFO payout
+        # (fraction paid out, mirrors payout_ratio) and FFO coverage (multiple,
+        # mirrors fcf_coverage).
+        "ffo": _num(ffo),
+        "p_ffo": _num(market_cap_native / ffo) if (market_cap_native and ffo and ffo > 0) else None,
+        "ffo_payout": _num(abs(div_paid) / ffo) if (ffo and ffo > 0 and div_paid) else None,
+        "ffo_coverage": _num(ffo / abs(div_paid)) if (ffo is not None and div_paid) else None,
+        # book value per share trend (annualized %), the mortgage-REIT signal
+        "bvps_growth": _num(bvps_growth),
         # dividend
         "div_yield": _num(div_yield),
         "five_year_avg_yield": _num(info.get("fiveYearAvgDividendYield")),
@@ -441,7 +630,7 @@ def _screener_row(ticker):
         "beta": _num(info.get("beta")),
         "short_interest": _num(info.get("shortPercentOfFloat")),
         "days_to_cover": _num(info.get("shortRatio")),
-        "altman_z": altman_z(inc, bal, market_cap),
+        "altman_z": altman_z(inc, bal, market_cap_native),
         "piotroski_f": piotroski_f(inc, bal, cf),
         # performance (price only, excludes dividends), %
         "perf_ytd": perf["ytd"],
@@ -484,6 +673,27 @@ def dividend_growth(ticker):
     return cached(f"divgrowth:{ticker}", 1800, produce)
 
 
+# Yahoo's two share-count rows, preferred first. They are NOT synonyms:
+# "Share Issued" includes treasury shares, "Ordinary Shares Number" does not
+# (for KO the two differ by 64%, for XOM by 92%).
+_SHARES_LABELS = ("Ordinary Shares Number", "Share Issued")
+
+
+def _stmt_label(df, *labels):
+    """Which of `labels` _series_from_stmt would actually match (None if none).
+
+    For fallback chains whose labels mean *different* things — "Ordinary Shares
+    Number" is shares outstanding, "Share Issued" is outstanding + treasury —
+    the caller has to know which one it got, or it will silently report one as
+    the other."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    for label in labels:
+        if label in df.index:
+            return label
+    return None
+
+
 def _series_from_stmt(df, *labels):
     """Pull the first matching row from a statement df -> oldest->newest series."""
     if df is None or getattr(df, "empty", True):
@@ -497,6 +707,146 @@ def _series_from_stmt(df, *labels):
                 for c in cols
             ]
     return []
+
+
+def _shares_outstanding_series(bal):
+    """Shares outstanding per period (oldest->newest) + the basis it came from.
+
+    Every caller that wants a share count should come through here rather than
+    falling back across _SHARES_LABELS itself: "Share Issued" counts treasury
+    shares that "Ordinary Shares Number" excludes, so treating them as synonyms
+    silently overstates the count (KO: 7.04B vs 4.30B).
+
+    basis is one of:
+      "outstanding" — Yahoo's own outstanding row.
+      "derived"     — no outstanding row, so reconstructed as issued − treasury.
+                      Exact, not an estimate: the identity holds to the share
+                      across Yahoo's data, so callers can treat it as they would
+                      "outstanding".
+      "issued"      — only issued shares, with no treasury row to net off. The
+                      count may include treasury shares; callers that surface it
+                      should say so.
+      None          — no share data at all.
+    """
+    label = _stmt_label(bal, *_SHARES_LABELS)
+    if label is None:
+        return [], None
+    series = _series_from_stmt(bal, label)
+    if label == "Ordinary Shares Number":
+        return series, "outstanding"
+    treasury = {t["period"]: t["value"] for t in _series_from_stmt(bal, "Treasury Shares Number")}
+    if not treasury:
+        # Can't verify what's in the issued count. Usually treasury is simply nil
+        # (issued == outstanding for AAPL/MSFT/WMT), but "usually" isn't a basis
+        # for silently relabelling — hand it back as issued and let the caller warn.
+        return series, "issued"
+    return [{"period": s["period"],
+             "value": (None if s["value"] is None
+                       else s["value"] - (treasury.get(s["period"]) or 0.0))}
+            for s in series], "derived"
+
+
+def _bvps_growth(bal):
+    """Annualized growth (%) of book value per share across the balance-sheet
+    history (BVPS = shareholders' equity ÷ shares outstanding, per period).
+
+    The headline quality signal for a mortgage REIT: a mREIT that grows or holds
+    book value while paying its dividend is compounding; one that erodes book
+    value to fund the payout is destroying capital, however high the yield.
+    None when fewer than two comparable years exist or book value is/was
+    non-positive (a ratio then has no meaningful sign)."""
+    eq = {s["period"]: s["value"] for s in _series_from_stmt(
+        bal, "Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity")
+        if s["value"]}
+    # Book value *per share* needs the outstanding count — issued shares would
+    # divide equity across treasury stock the company holds itself, understating
+    # BVPS and hiding the accretion from buybacks (issued stays flat while
+    # outstanding falls), which is exactly the signal this metric exists to catch.
+    sh = {s["period"]: s["value"] for s in _shares_outstanding_series(bal)[0] if s["value"]}
+    periods = sorted(p for p in eq if p in sh)
+    if len(periods) < 2:
+        return None
+    first, last = eq[periods[0]] / sh[periods[0]], eq[periods[-1]] / sh[periods[-1]]
+    if first <= 0 or last <= 0:
+        return None
+    n = len(periods) - 1          # annual statements ≈ one year apart
+    return ((last / first) ** (1 / n) - 1) * 100
+
+
+# --- DCF fair value ---------------------------------------------------------
+_DCF_YEARS = 10          # explicit-forecast horizon (years)
+_DCF_TERMINAL_G = 2.5    # % — Gordon terminal growth (~long-run nominal GDP)
+_DCF_G_MIN = 0.0         # % — stage-1 growth clamp floor
+_DCF_G_MAX = 20.0        # % — stage-1 growth clamp ceiling
+_DCF_WACC_MARGIN = 0.5   # pct-points WACC must exceed terminal growth by
+
+
+def _fcf_cagr(cf):
+    """Annualized Free Cash Flow growth (%) across the cash-flow statement
+    history (~4 annual periods on Yahoo's free feed). None when fewer than two
+    usable periods exist or either endpoint is non-positive (a growth rate then
+    has no meaningful sign) — mirrors _bvps_growth."""
+    series = [s for s in _series_from_stmt(cf, "Free Cash Flow") if s["value"]]
+    if len(series) < 2:
+        return None
+    first, last = series[0]["value"], series[-1]["value"]
+    if first <= 0 or last <= 0:
+        return None
+    n = len(series) - 1              # annual statements ≈ one year apart
+    return ((last / first) ** (1 / n) - 1) * 100
+
+
+def _dcf_detail(fcf, g0, wacc, total_debt, total_cash):
+    """Two-stage FCFF DCF with the full year-by-year breakdown, in the
+    statement (reporting) currency. Stage 1: `fcf` grown for _DCF_YEARS years
+    with the growth rate fading linearly from g0 (clamped to [_DCF_G_MIN,
+    _DCF_G_MAX]; g0=None falls back to the terminal rate — a flat conservative
+    projection) down to _DCF_TERMINAL_G, each year discounted at `wacc`. Then
+    a Gordon terminal value. Fading (rather than holding g0 then cliffing to
+    terminal) reflects growth mean-reversion and keeps the result from hinging
+    on the terminal value. g0/wacc in percentage points.
+
+    Returns a dict carrying every intermediate step (per-year growth/flow/
+    discount factor/PV, terminal value, EV -> equity bridge) so the DCF Excel
+    export can show its work; _dcf_equity_value wraps this for callers that
+    only want the final number.
+
+    None when fcf is missing/non-positive, wacc is missing, or wacc doesn't
+    clear the terminal rate by _DCF_WACC_MARGIN (the Gordon denominator
+    would be ~0 and the output absurd rather than merely rough)."""
+    if fcf is None or fcf <= 0 or wacc is None:
+        return None
+    if wacc <= _DCF_TERMINAL_G + _DCF_WACC_MARGIN:
+        return None
+    g0 = _DCF_TERMINAL_G if g0 is None else min(max(g0, _DCF_G_MIN), _DCF_G_MAX)
+    w, gt, g0f = wacc / 100.0, _DCF_TERMINAL_G / 100.0, g0 / 100.0
+    years, pv, flow = [], 0.0, fcf
+    for t in range(1, _DCF_YEARS + 1):
+        g = g0f + (gt - g0f) * (t - 1) / (_DCF_YEARS - 1)  # year 1 = g0 … year N = gt
+        flow *= 1 + g
+        df = 1 / (1 + w) ** t
+        years.append({"year": t, "growth": g * 100, "fcf": flow,
+                      "discount_factor": df, "pv": flow * df})
+        pv += flow * df
+    tv = flow * (1 + gt) / (w - gt)
+    tv_df = 1 / (1 + w) ** _DCF_YEARS
+    ev = pv + tv * tv_df
+    return {
+        "g0_used": g0,                 # % — after clamping / fallback
+        "years": years,
+        "stage1_pv": pv,
+        "terminal_value": tv, "terminal_df": tv_df, "terminal_pv": tv * tv_df,
+        "enterprise_value": ev,
+        "equity_value": ev - (total_debt or 0) + (total_cash or 0),
+    }
+
+
+def _dcf_equity_value(fcf, g0, wacc, total_debt, total_cash):
+    """Two-stage FCFF DCF -> equity value, in the statement (reporting)
+    currency. Thin wrapper over _dcf_detail — see there for the methodology
+    and the None conditions."""
+    d = _dcf_detail(fcf, g0, wacc, total_debt, total_cash)
+    return None if d is None else d["equity_value"]
 
 
 def _yoy(series):
@@ -563,8 +913,13 @@ def piotroski_f(income, balance, cashflow):
     sh = cur(income, "Diluted Average Shares", "Basic Average Shares")
     sh_p = prev(income, "Diluted Average Shares", "Basic Average Shares")
     if sh is None:
-        sh = cur(balance, "Ordinary Shares Number", "Share Issued")
-        sh_p = prev(balance, "Ordinary Shares Number", "Share Issued")
+        # No average-share row: fall back to the balance-sheet count. Outstanding
+        # only — issued shares would hold flat through a buyback and mask the
+        # very share-count drop this test is looking for.
+        bal_sh = {s["period"]: s["value"] for s in _shares_outstanding_series(balance)[0]}
+        bal_periods = sorted(p for p, v in bal_sh.items() if v is not None)
+        sh = bal_sh[bal_periods[-1]] if bal_periods else None
+        sh_p = bal_sh[bal_periods[-2]] if len(bal_periods) > 1 else None
 
     score = 0
     # Profitability
@@ -610,26 +965,29 @@ def _dividend_yields(divs, prices):
     return out
 
 
-def share_dilution(income, balance, cashflow, ticker, info):
-    """Last-5y share-count breakdown (outstanding / float / treasury) plus the
-    dividend-yield and payout-ratio lines. Float shares are only available as a
-    current snapshot, so they populate the latest year only."""
-    shares = [s for s in _series_from_stmt(balance, "Ordinary Shares Number", "Share Issued")
-              if s["value"] is not None]
+def share_dilution(income, balance, cashflow, ticker):
+    """Last-5y share-count breakdown (outstanding / treasury) plus the per-year
+    EPS, dividend-yield and payout-ratio lines.
+
+    Returns (rows, basis) — see _shares_outstanding_series. Only basis "issued"
+    is a caveat worth showing the user; "derived" is an exact reconstruction and
+    reads as ordinary outstanding shares."""
+    series, basis = _shares_outstanding_series(balance)
+    shares = [s for s in series if s["value"] is not None]
     if not shares:
-        return []
+        return [], basis
     treasury = {t["period"]: t["value"]
                 for t in _series_from_stmt(balance, "Treasury Shares Number")}
     ni = {n["period"]: n["value"]
           for n in _series_from_stmt(income, "Net Income", "Net Income Common Stockholders")}
+    eps = {e["period"]: e["value"]
+           for e in _series_from_stmt(income, "Diluted EPS", "Basic EPS")}
     dp = {d["period"]: d["value"]
           for d in _series_from_stmt(cashflow, "Cash Dividends Paid",
                                      "Common Stock Dividend Paid", "Common Stock Dividends Paid")}
     yields = _dividend_yields(get_dividends(ticker), get_raw_close(ticker))
-    float_shares = _num(info.get("floatShares"))
 
     sel = shares[-5:]
-    last_period = sel[-1]["period"] if sel else None
     rows = []
     for s in sel:
         p = s["period"]
@@ -639,12 +997,12 @@ def share_dilution(income, balance, cashflow, ticker, info):
         rows.append({
             "period": p[:4],
             "shares_outstanding": _num(s["value"]),
-            "float_shares": float_shares if p == last_period else None,
             "treasury_shares": _num(treasury.get(p)),
+            "eps": _num(eps.get(p)),
             "div_yield": _num(yields.get(yr)) if yr is not None else None,
             "payout_ratio": _num(payout),
         })
-    return rows
+    return rows, basis
 
 
 def _strategy_panel(srow):
@@ -666,29 +1024,30 @@ def _strategy_panel(srow):
 
 def deepdive(ticker):
     def produce():
-        tk = yf.Ticker(ticker)
         info = get_info(ticker)
-        try:
-            income = tk.income_stmt
-        except Exception:
-            income = None
-        try:
-            q_income = tk.quarterly_income_stmt
-        except Exception:
-            q_income = None
-        try:
-            cashflow = tk.cash_flow
-        except Exception:
-            cashflow = None
-        try:
-            balance = tk.balance_sheet
-        except Exception:
-            balance = None
+        # Routed through the shared statement cache (_get_stmt), the same one
+        # screener_row and financials() use for the same ticker — so a prior
+        # Screener/Watchlist view (or a subsequent Excel export, which builds
+        # its statement sheets from financials() right after this function
+        # returns) reuses this fetch instead of hitting Yahoo again for
+        # data already in hand.
+        income = _get_stmt(ticker, "income_stmt")
+        q_income = _get_stmt(ticker, "quarterly_income_stmt")
+        cashflow = _get_stmt(ticker, "cash_flow")
+        balance = _get_stmt(ticker, "balance_sheet")
 
         price = _num(info.get("currentPrice")) or _num(info.get("regularMarketPrice"))
         div_rate = _num(info.get("dividendRate"))
         div_yield = (div_rate / price * 100) if (div_rate and price) else None
         growth = dividend_growth(ticker)
+
+        # See the matching comment in _screener_row: foreign-reporting tickers
+        # (ADRs etc.) trade in one currency but file statements in another.
+        mkt_ccy = info.get("currency")
+        fin_ccy = info.get("financialCurrency")
+        market_cap = _num(info.get("marketCap"))
+        market_cap_native = _native_market_cap(market_cap, mkt_ccy, fin_ccy)
+        fx_mismatch = bool(fin_ccy and mkt_ccy and fin_ccy != mkt_ccy)
 
         revenue = _series_from_stmt(income, "Total Revenue", "TotalRevenue")
         gross = _series_from_stmt(income, "Gross Profit", "GrossProfit")
@@ -706,14 +1065,25 @@ def deepdive(ticker):
         oi_map = {o["period"]: o["value"] for o in op_income}
         ni_map = {n["period"]: n["value"] for n in net_income}
         fcf_map = {f["period"]: f["value"] for f in fcf}
+        # Fiscal-year share counts, to derive per-year Revenue/Share (revenue ÷
+        # shares) — the line overlaid on the revenue chart. Outstanding only: a
+        # per-share figure divided by issued shares understates itself by the
+        # treasury holding.
+        shares_map = {s["period"]: s["value"]
+                      for s in _shares_outstanding_series(balance)[0] if s["value"]}
 
         def _margin(num, den):
             return (num / den * 100) if (num is not None and den) else None
+
+        def _rev_per_share(p):
+            rev, sh = rev_map.get(p), shares_map.get(p)
+            return (rev / sh) if (rev is not None and sh) else None
 
         rev_ni = [
             {"period": p[:4], "revenue": rev_map.get(p), "gross_profit": gp_map.get(p),
              "operating_income": oi_map.get(p),
              "net_income": ni_map.get(p), "fcf": fcf_map.get(p),
+             "revenue_per_share": _rev_per_share(p),
              "gross_margin": _margin(gp_map.get(p), rev_map.get(p)),
              "operating_margin": _margin(oi_map.get(p), rev_map.get(p)),
              "net_margin": _margin(ni_map.get(p), rev_map.get(p))}
@@ -722,6 +1092,14 @@ def deepdive(ticker):
 
         # FCF dividend coverage = free cash flow / dividends paid (latest year)
         fcf_latest = _stmt_val(cashflow, "Free Cash Flow") or _num(info.get("freeCashflow"))
+        ocf_latest = _stmt_val(cashflow, "Operating Cash Flow") or _num(info.get("operatingCashflow"))
+        # Capital Expenditure is reported as a negative (a cash outflow); Yahoo's
+        # own `capitalExpenditures` info field is unreliable (frequently absent),
+        # so fall back to deriving it from the two figures already computed
+        # above: FCF = OCF + Capex (capex negative) => Capex = FCF − OCF.
+        capex_latest = _stmt_val(cashflow, "Capital Expenditure")
+        if capex_latest is None and ocf_latest is not None and fcf_latest is not None:
+            capex_latest = fcf_latest - ocf_latest
         div_paid = _stmt_val(cashflow, "Cash Dividends Paid", "Common Stock Dividend Paid",
                              "Common Stock Dividends Paid")
         fcf_coverage = (fcf_latest / abs(div_paid)) if (fcf_latest is not None and div_paid) else None
@@ -756,8 +1134,7 @@ def deepdive(ticker):
             _stmt_val(income, "Interest Expense", "Interest Expense Non Operating") or
             _stmt_val(income, "Interest Expense", "Interest Expense Non Operating", col=1)
         )
-        market_cap = _num(info.get("marketCap"))
-        wacc = _compute_wacc(_num(info.get("beta")), market_cap, total_debt,
+        wacc = _compute_wacc(_num(info.get("beta")), market_cap_native, total_debt,
                              interest_exp, tax_rate, get_risk_free_rate())
 
         # Debt/Equity from the same Total Debt and Total Equity shown in the
@@ -767,6 +1144,16 @@ def deepdive(ticker):
             if (total_debt and total_equity) else None
 
         ebitda_margin = _num(info.get("ebitdaMargins") and info["ebitdaMargins"] * 100)
+        # Revenue and Operating Income, trailing-twelve-month — matching the
+        # rest of the Profitability panel (margins, Net Income, Revenue/Share
+        # are all Yahoo TTM figures). Yahoo doesn't expose a plain "operating
+        # income TTM" field, so it's derived from the same revenue and
+        # operatingMargins already backing the "Operating Margin %" row above,
+        # keeping the two internally consistent (margin × revenue = income).
+        revenue_ttm = _num(info.get("totalRevenue"))
+        op_margin_frac = info.get("operatingMargins")
+        operating_income_ttm = (_num(revenue_ttm * op_margin_frac)
+                                if (revenue_ttm is not None and op_margin_frac is not None) else None)
 
         # Leverage / cash-conversion ratios built on EBITDA.
         ebitda = _num(info.get("ebitda"))
@@ -774,12 +1161,25 @@ def deepdive(ticker):
         ebitda_fcf = (ebitda / fcf_latest) if (ebitda and fcf_latest) else None
 
         # Valuation / leverage / dividend metrics also shown in the screener (market_cap already set above).
+        # market_cap_native (not market_cap) — see the matching comment in
+        # _screener_row on why a mismatched-currency ticker needs this.
         total_cash = _num(info.get("totalCash"))
-        p_c = (market_cap / total_cash) if (market_cap and total_cash) else None
-        p_fcf = (market_cap / fcf_latest) if (market_cap and fcf_latest and fcf_latest > 0) else None
+        p_c = (market_cap_native / total_cash) if (market_cap_native and total_cash) else None
+        p_fcf = (market_cap_native / fcf_latest) if (market_cap_native and fcf_latest and fcf_latest > 0) else None
         lt_debt = _stmt_val(balance, "Long Term Debt",
                             "Long Term Debt And Capital Lease Obligation")
         lt_debt_eq = (lt_debt / total_equity * 100) if (lt_debt and total_equity) else None
+        # Enterprise Value, EV/EBITDA and Price/Sales all combine market cap
+        # with statement figures — Yahoo's own passthrough fields for these
+        # get the arithmetic wrong for a mismatched-currency ticker.
+        if fx_mismatch and market_cap_native is not None:
+            enterprise_value = market_cap_native + (total_debt or 0) - (total_cash or 0)
+            ev_ebitda = (enterprise_value / ebitda) if ebitda else None
+            ps = (market_cap_native / revenue_ttm) if revenue_ttm else None
+        else:
+            enterprise_value = _num(info.get("enterpriseValue"))
+            ev_ebitda = _num(info.get("enterpriseToEbitda"))
+            ps = _num(info.get("priceToSalesTrailing12Months"))
         years_div_inc = consecutive_div_increases(get_dividends(ticker))
 
         # Year-over-year growth per period (bars for the last 5 years) --------
@@ -800,12 +1200,151 @@ def deepdive(ticker):
             for p in growth_periods[-5:]
         ]
 
-        dilution_rows = share_dilution(income, balance, cashflow, ticker, info)
+        dilution_rows, shares_basis = share_dilution(income, balance, cashflow, ticker)
+
+        # Historical ROIC and cost of capital (last 5 fiscal years) — for the
+        # "ROIC vs Cost of Capital" chart. Both are reconstructed per fiscal
+        # year from that year's own statement figures. For WACC, every input
+        # except beta is genuinely historical: the risk-free rate is read from
+        # the 10Y Treasury as of each year-end, the capital-structure weights
+        # from that year's market cap (period-end price × shares) and total
+        # debt, the cost of debt from that year's interest expense ÷ debt, and
+        # the tax rate from that year's pretax/tax. Beta is the one input Yahoo
+        # exposes only as a single current value (a true historical beta would
+        # need a per-period market regression), so it is held constant — it is
+        # the least time-variable WACC input, and freezing it still lets the
+        # line track the drivers that actually move (rates, leverage).
+        ebit_series = _series_from_stmt(income, "EBIT", "Operating Income", "Operating Income Or Loss")
+        pretax_series = _series_from_stmt(income, "Pretax Income", "Income Before Tax")
+        taxprov_series = _series_from_stmt(income, "Tax Provision", "Income Tax Expense")
+        tdebt_series = _series_from_stmt(balance, "Total Debt")
+        tequity_series = _series_from_stmt(balance, "Stockholders Equity",
+                                           "Total Stockholder Equity", "Common Stock Equity")
+        intexp_series = _series_from_stmt(income, "Interest Expense",
+                                          "Interest Expense Non Operating")
+        ebit_map = {s["period"]: s["value"] for s in ebit_series}
+        pretax_map = {s["period"]: s["value"] for s in pretax_series}
+        taxprov_map = {s["period"]: s["value"] for s in taxprov_series}
+        tdebt_map = {s["period"]: s["value"] for s in tdebt_series}
+        tequity_map = {s["period"]: s["value"] for s in tequity_series}
+        intexp_map = {s["period"]: s["value"] for s in intexp_series}
+        # The "current" ROIC above prefers info.totalDebt (Yahoo's freshest
+        # figure, often a more recent quarter) over the fiscal-year statement
+        # value; override just the latest period here too, so the chart's
+        # rightmost bar reconciles exactly with the ROIC % shown in this panel
+        # instead of silently disagreeing on debt vintage.
+        if periods:
+            tdebt_map[periods[-1]] = total_debt
+
+        def _period_tax_rate(p):
+            pretax_p, tax_p = pretax_map.get(p), taxprov_map.get(p)
+            if pretax_p and tax_p and pretax_p > 0:
+                return min(max(tax_p / pretax_p, 0.0), 0.5)
+            return 0.21
+
+        def _period_roic(p):
+            ebit_p, equity_p = ebit_map.get(p), tequity_map.get(p)
+            if ebit_p is None or not equity_p:
+                return None
+            invested_p = (tdebt_map.get(p) or 0) + equity_p
+            if not invested_p:
+                return None
+            return ebit_p * (1 - _period_tax_rate(p)) / invested_p * 100
+
+        rfr_hist = get_risk_free_history()
+        raw_close = get_raw_close(ticker)
+        cur_beta = _num(info.get("beta"))
+
+        def _period_wacc(p):
+            """Per-fiscal-year WACC (%), beta held at today's value; see the
+            block comment above. Mirrors _compute_wacc's structure so the
+            latest year lines up with the panel's current WACC."""
+            rfr_p = _series_asof(rfr_hist, p)
+            if cur_beta is None or rfr_p is None:
+                return None
+            debt_p = tdebt_map.get(p) or 0
+            # Historical market cap = period-end price × shares, converted into
+            # the statement currency (via the current FX rate) so it weighs
+            # against same-currency debt — matters only for mismatched-currency
+            # tickers (ADRs), a no-op otherwise. See _native_market_cap.
+            price_p = _series_asof(raw_close, p)
+            shares_p = shares_map.get(p)
+            mc_p = (price_p * shares_p) if (price_p and shares_p) else None
+            mc_p = _native_market_cap(mc_p, mkt_ccy, fin_ccy)
+            if mc_p is None:
+                return None
+            total_cap = mc_p + debt_p
+            if total_cap <= 0:
+                return None
+            w_e, w_d = mc_p / total_cap, debt_p / total_cap
+            cost_e = rfr_p + cur_beta * _ERP
+            ie_p = intexp_map.get(p)
+            cost_d = (abs(ie_p) / debt_p * 100) if (ie_p and debt_p > 0) else rfr_p
+            return w_e * cost_e + w_d * cost_d * (1 - _period_tax_rate(p))
+
+        sel_periods = periods[-5:]
+        wacc_by_period = {p: _period_wacc(p) for p in sel_periods}
+        # Reconcile the rightmost point with the panel's current WACC (which
+        # uses Yahoo's freshest market cap / rates), mirroring the latest-debt
+        # override applied to ROIC just above.
+        if sel_periods and wacc is not None:
+            wacc_by_period[sel_periods[-1]] = wacc
+
+        roic_history = [{"period": p[:4], "roic": _num(_period_roic(p)),
+                         "wacc": _num(wacc_by_period.get(p))} for p in sel_periods]
 
         # Basic EPS TTM = sum of last 4 quarters; Diluted EPS TTM from yfinance info
         _q_basic = _series_from_stmt(q_income, "Basic EPS")
         _q_basic_vals = [x["value"] for x in _q_basic[-4:] if x.get("value") is not None]
         basic_eps = sum(_q_basic_vals) if len(_q_basic_vals) == 4 else None
+
+        # Cached (screener_row has its own TTL caches on every field it pulls),
+        # so computing it here doesn't add a second round-trip to Yahoo.
+        srow = screener_row(ticker)
+
+        # REIT-specific metrics panel — only for REITs (industry names them
+        # "REIT — …"). Equity REITs own buildings, so FFO (Net Income + property
+        # depreciation, less sale gains) is their headline metric and P/FFO their
+        # P/E; the panel shows the FFO family. Mortgage REITs own securities, not
+        # buildings — FFO adds nothing for them (screener_row leaves it None by
+        # type), so the panel shows what actually matters instead: book value per
+        # share, P/B, and how well net income covers the (typically over-100%)
+        # dividend. Routed on the business type rather than on whether FFO came
+        # out non-None, so an mREIT that happens to report a D&A line can't land
+        # on the equity branch. See REITs.md.
+        reit_panel = reit_kind = None
+        if "reit" in (info.get("industry") or "").lower():
+            ffo = srow.get("ffo")
+            shares = _num(info.get("sharesOutstanding"))
+            book_ps = _num(info.get("bookValue"))
+            pb = _num(info.get("priceToBook"))
+            # Named for the frontend so the panel can say *which* REIT rubric it
+            # is showing — the FFO family's absence is a deliberate answer for a
+            # mortgage REIT, not missing data, and the title is where a reader
+            # finds that out.
+            reit_kind = "equity" if (_business_type(info) == "reit"
+                                     and ffo is not None) else "mortgage"
+            if reit_kind == "equity":
+                payout = srow.get("ffo_payout")
+                reit_panel = {
+                    "FFO": _num(ffo),
+                    "FFO/Share": _num(ffo / shares) if (ffo and shares) else None,
+                    "P/FFO": srow.get("p_ffo"),
+                    "FFO Payout %": _num(payout * 100) if payout is not None else None,
+                    "FFO Coverage": srow.get("ffo_coverage"),
+                    "Book Value/Share": book_ps,
+                    "Price/Book": pb,
+                }
+            else:                                     # mortgage REIT — book value
+                ni = _num(info.get("netIncomeToCommon"))
+                reit_panel = {
+                    "Book Value/Share": book_ps,
+                    "Book Value Trend %": srow.get("bvps_growth"),
+                    "Price/Book": pb,
+                    "Net Income": ni,
+                    "Div Coverage (NI)": _num(ni / abs(div_paid))
+                    if (ni is not None and div_paid) else None,
+                }
 
         return {
             "ticker": ticker,
@@ -813,23 +1352,41 @@ def deepdive(ticker):
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "currency": info.get("currency"),
+            # currency the financial statements are actually reported in — see
+            # the matching comment in _screener_row.
+            "financial_currency": fin_ccy,
             "exchange": info.get("fullExchangeName") or info.get("exchange"),
             "summary": info.get("longBusinessSummary"),
             "website": info.get("website"),
+            # company profile (rendered in the deep view's Company Profile panel)
+            "hq": ", ".join(x for x in (info.get("city"), info.get("state"),
+                                        info.get("country")) if x) or None,
+            "country": info.get("country"),
+            "employees": _num(info.get("fullTimeEmployees")),
             "price": price,
             "change_pct": _num(info.get("regularMarketChangePercent")),
+            # DCF fair value from the graded screener row — the frontend shows
+            # the "⭳ DCF" export button only when this is non-null (financials
+            # and REITs are blanked by design; see _screener_row).
+            "dcf_value": srow.get("dcf_value"),
+            # "equity" | "mortgage" | None — which REIT rubric panels.reit holds.
+            "reit_kind": reit_kind,
             "panels": {
                 "valuation": {
-                    "Market Cap": _num(info.get("marketCap")),
-                    "Enterprise Value": _num(info.get("enterpriseValue")),
+                    "Market Cap": _num(market_cap),
+                    "Enterprise Value": _num(enterprise_value),
                     "Trailing P/E": _num(info.get("trailingPE")),
                     "Forward P/E": _num(info.get("forwardPE")),
                     "PEG Ratio": _num(info.get("trailingPegRatio")) or _num(info.get("pegRatio")),
                     "Price/Book": _num(info.get("priceToBook")),
-                    "Price/Sales": _num(info.get("priceToSalesTrailing12Months")),
+                    "Price/Sales": _num(ps),
                     "Price/Cash": _num(p_c),
                     "Price/FCF": _num(p_fcf),
-                    "EV/EBITDA": _num(info.get("enterpriseToEbitda")),
+                    "EV/EBITDA": _num(ev_ebitda),
+                    # DCF fair value + its premium/discount to price, from the
+                    # graded row. N/A for financials/REITs (blanked by design).
+                    "DCF Value": srow.get("dcf_value"),
+                    "DCF Upside %": srow.get("dcf_upside"),
                     "Diluted EPS": _num(info.get("trailingEps")),
                     "Basic EPS": _num(basic_eps),
                 },
@@ -846,6 +1403,7 @@ def deepdive(ticker):
                     "Years ▲ Dividend": years_div_inc,
                 },
                 "profitability": {
+                    "Revenue": _num(revenue_ttm),
                     "Gross Margin %": _num(info.get("grossMargins") and info["grossMargins"] * 100),
                     "Operating Margin %": _num(info.get("operatingMargins") and info["operatingMargins"] * 100),
                     "EBITDA Margin %": ebitda_margin,
@@ -855,7 +1413,9 @@ def deepdive(ticker):
                     "ROIC %": _num(roic),
                     "ROCE %": _num(roce),
                     "WACC %": _num(wacc),
+                    "ROIC − WACC %": _num(roic - wacc) if (roic is not None and wacc is not None) else None,
                     "Revenue/Share": _num(info.get("revenuePerShare")),
+                    "Operating Income": _num(operating_income_ttm),
                     "Net Income": _num(info.get("netIncomeToCommon")),
                 },
                 "health": {
@@ -868,10 +1428,13 @@ def deepdive(ticker):
                     "LT Debt/Equity": _num(lt_debt_eq),
                     "Current Ratio": _num(info.get("currentRatio")),
                     "Quick Ratio": _num(info.get("quickRatio")),
+                    "Operating Cash Flow": _num(ocf_latest),
+                    "Capital Expenditure": _num(capex_latest),
                     "Free Cash Flow": _num(fcf_latest),
                     "EBITDA": _num(ebitda),
                     "EBITDA/FCF": _num(ebitda_fcf),
                 },
+                **({"reit": reit_panel} if reit_panel else {}),
                 "risk": {
                     "Beta": _num(info.get("beta")),
                     "Short Interest %": _num(info.get("shortPercentOfFloat")
@@ -882,12 +1445,27 @@ def deepdive(ticker):
                 },
                 # Strategy grades come off the (cached) screener row so the
                 # deep-dive and screener always show identical scores.
-                "strategies": _strategy_panel(screener_row(ticker)),
+                "strategies": _strategy_panel(srow),
             },
             "dividend_growth": growth,
             "revenue_net_income": rev_ni,
             "growth": growth_rows,
             "share_dilution": dilution_rows,
+            # "outstanding" | "issued" — which balance-sheet row the share bars
+            # came from, so the chart and export can name what they're showing.
+            "share_dilution_basis": shares_basis,
+            "roic_history": roic_history,
+            "wacc_current": _num(wacc),
+            # Raw grade fields (same shape as a screener row) so the frontend
+            # can drive the Strategy Ratings panel's hover with the identical
+            # per-pillar derivation tooltip shown on the Screener/Watchlist
+            # grade cells, instead of duplicating that logic server-side.
+            "strategy_raw": {k: srow.get(k) for k in (
+                "strategy_1", "strategy_1_verdict", "strategy_1_detail",
+                "strategy_2", "strategy_2_verdict", "strategy_2_detail",
+                "strategy_3", "strategy_3_verdict", "strategy_3_detail",
+                "strategy_min",
+            )},
         }
 
     return cached(f"deepdive:{ticker}", 600, produce)
@@ -935,10 +1513,13 @@ def _ttm_column(ticker, stmt, labels):
     Returns (column_label, {row_label: value}); ("", {}) when unavailable.
     """
     attr = _QSTMT_ATTR.get(stmt, "quarterly_income_stmt")
-    try:
-        q = getattr(yf.Ticker(ticker), attr)
-    except Exception:
-        return "", {}
+    # Routed through the shared statement cache (_get_stmt) rather than a
+    # direct yf.Ticker fetch: screener_row/deepdive already pull this same
+    # quarterly statement for the same ticker, so this is a cache hit far
+    # more often than not (notably during Excel export, which otherwise
+    # re-fetched every statement from scratch right after screener_row/
+    # deepdive had just fetched the identical data moments earlier).
+    q = _get_stmt(ticker, attr)
     if q is None or getattr(q, "empty", True):
         return "", {}
     cols = sorted(q.columns, reverse=True)  # newest first
@@ -964,11 +1545,13 @@ def financials(ticker, stmt="income", freq="annual"):
     def produce():
         attr_annual, attr_quarter = _STMT_ATTR.get(stmt, _STMT_ATTR["income"])
         attr = attr_annual if freq == "annual" else attr_quarter
-        try:
-            df = getattr(yf.Ticker(ticker), attr)
-        except Exception as e:
-            return {"ticker": ticker, "stmt": stmt, "freq": freq, "periods": [],
-                    "rows": [], "error": str(e)}
+        # Routed through the shared statement cache (_get_stmt) rather than a
+        # direct yf.Ticker fetch: screener_row/deepdive already pull this same
+        # statement for the same ticker, so this is usually a cache hit — most
+        # visibly during Excel export, which previously re-fetched every
+        # statement from scratch right after screener_row/deepdive had just
+        # fetched the identical data moments earlier in the same request.
+        df = _get_stmt(ticker, attr)
         if df is None or df.empty:
             return {"ticker": ticker, "stmt": stmt, "freq": freq, "periods": [], "rows": []}
         cols = sorted(df.columns, reverse=True)  # newest first
@@ -1130,6 +1713,20 @@ def stock_calendar(ticker):
     return cached(f"stockcal:{ticker}", 600, produce)
 
 
+def company_profile(ticker):
+    """Wikipedia ethics/controversy context for a ticker, cached for a day —
+    the article changes rarely and the lookup costs several API round-trips.
+    The cache key embeds the ticker, so ↻ Refresh (clear_ticker_cache) evicts
+    it along with everything else for the symbol."""
+    def produce():
+        info = get_info(ticker)
+        name = (info.get("shortName") or info.get("longName") or ticker)
+        out = wiki.company_context(name)
+        out["ticker"] = ticker
+        return out
+    return cached(f"wiki:{ticker}", 86400, produce)
+
+
 # --------------------------------------------------------------------------- #
 # Excel export                                                                 #
 # --------------------------------------------------------------------------- #
@@ -1149,11 +1746,14 @@ _METRIC_COLS = [
     # valuation
     ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
     ("ps", "P/S"), ("pb", "P/B"), ("ev_ebitda", "EV/EBITDA"),
-    ("p_fcf", "P/FCF"), ("pc", "P/C"), ("eps", "Diluted EPS"), ("eps_basic", "Basic EPS"),
+    ("p_fcf", "P/FCF"), ("pc", "P/C"),
+    ("dcf_value", "DCF Value"), ("dcf_upside", "DCF Upside"),
+    ("eps", "Diluted EPS"), ("eps_basic", "Basic EPS"),
     # profitability
     ("profit_margin", "Net Margin"), ("gross_margin", "Gross Margin"),
     ("operating_margin", "Operating Margin"), ("ebitda_margin", "EBITDA Margin"),
     ("roe", "ROE"), ("roa", "ROA"), ("roic", "ROIC"), ("roce", "ROCE"), ("wacc", "WACC"),
+    ("roic_wacc", "ROIC−WACC"),
     ("revenue_per_share", "Revenue/Share"), ("income", "Net Income"), ("fcf", "FCF"),
     # financial health
     ("debt_to_equity", "Debt/Eq"), ("debt_to_equity_mrq", "Debt/Eq (MRQ)"),
@@ -1179,7 +1779,8 @@ _METRIC_COLS = [
 # convention holds across both workbooks; the already-fraction keys (margins,
 # ROE/ROA, payout ratio, short interest) pass through unchanged.
 _PCT_KEYS = {
-    "roic", "roce", "wacc", "div_yield", "five_year_avg_yield",
+    "roic", "roce", "wacc", "roic_wacc", "dcf_upside", "div_yield",
+    "five_year_avg_yield",
     "div_growth_3y", "div_growth_5y", "debt_to_equity", "debt_to_equity_mrq",
     "lt_debt_to_equity", "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
 }
@@ -1266,9 +1867,11 @@ def build_workbook(tickers):
 
 
 # Panels rendered on the deep-dive view, in display order, for the export.
+# "reit" is present only for REITs (build_deepdive_workbook skips empty panels).
 _PANEL_ORDER = [
     ("valuation", "Valuation"), ("profitability", "Profitability"),
-    ("health", "Financial Health"), ("dividend", "Dividend"), ("risk", "Risk"),
+    ("health", "Financial Health"), ("dividend", "Dividend"),
+    ("reit", "REIT Metrics"), ("risk", "Risk"),
     ("strategies", "Strategy Ratings"),
 ]
 
@@ -1312,21 +1915,32 @@ def build_deepdive_workbook(ticker):
         Font(bold=True, size=13)
     chg = d.get("change_pct")
     r = 2
-    for k, v in [("Sector", d.get("sector")), ("Industry", d.get("industry")),
-                 ("Exchange", d.get("exchange")), ("Currency", d.get("currency")),
-                 ("Price", d.get("price")),
-                 ("Change", chg / 100.0 if isinstance(chg, (int, float)) else chg)]:
+    fin_ccy = d.get("financial_currency")
+    overview_rows = [("Sector", d.get("sector")), ("Industry", d.get("industry")),
+                      ("Exchange", d.get("exchange")), ("Currency", d.get("currency")),
+                      ("Price", d.get("price")),
+                      ("Change", chg / 100.0 if isinstance(chg, (int, float)) else chg)]
+    if fin_ccy and fin_ccy != d.get("currency"):
+        # Foreign-reporting ticker (ADR etc.): price/market cap trade in
+        # `Currency`, but revenue, cash, debt, EBITDA, net income, FCF, book
+        # value and similar Overview/statement figures are all reported in
+        # this currency instead — see the matching comment in _screener_row.
+        overview_rows.insert(4, ("Financial Statement Currency", fin_ccy))
+    for k, v in overview_rows:
         ws.cell(row=r, column=1, value=k).font = bold
         ws.cell(row=r, column=2, value=v)
         r += 1
     r += 1
     for key, label in _PANEL_ORDER:
+        metrics = d["panels"].get(key) or {}
+        if not metrics:                     # e.g. "reit" on a non-REIT — no header
+            continue
         sc = ws.cell(row=r, column=1, value=label)
         sc.font = header_font
         sc.fill = section_fill
         ws.cell(row=r, column=2).fill = section_fill
         r += 1
-        for metric, value in (d["panels"].get(key) or {}).items():
+        for metric, value in metrics.items():
             out_label, out_value = _dd_metric(metric, value)
             ws.cell(row=r, column=1, value=out_label)
             ws.cell(row=r, column=2, value=out_value)
@@ -1365,9 +1979,14 @@ def build_deepdive_workbook(ticker):
         ("eps_growth", "EPS Growth"), ("ebitda_growth", "EBITDA Growth"),
         ("ebitda_margin", "EBITDA Margin")],
         pct={"revenue_growth", "eps_growth", "ebitda_growth", "ebitda_margin"})
+    # Name the share column for the basis Yahoo actually gave us — "Shares
+    # Issued" counts treasury shares, so calling it "Outstanding" would overstate
+    # the count (see share_dilution).
+    shares_col = ("Shares Issued (incl. treasury)"
+                  if d.get("share_dilution_basis") == "issued" else "Shares Outstanding")
     write_table("Share Dilution", d.get("share_dilution", []), [
-        ("period", "Year"), ("shares_outstanding", "Shares Outstanding"),
-        ("float_shares", "Float Shares"), ("treasury_shares", "Treasury Shares"),
+        ("period", "Year"), ("shares_outstanding", shares_col),
+        ("treasury_shares", "Treasury Shares"), ("eps", "Diluted EPS"),
         ("div_yield", "Dividend Yield"), ("payout_ratio", "Payout Ratio")],
         pct={"div_yield", "payout_ratio"})
     ws2.column_dimensions["A"].width = 30
@@ -1387,6 +2006,350 @@ def build_deepdive_workbook(ticker):
             rr += 1
         wss.freeze_panes = "B2"
         wss.column_dimensions["A"].width = 34
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_dcf_workbook(ticker):
+    """Single-sheet workbook showing every input and intermediate step behind
+    the screener's DCF Value for one ticker: the inputs (base FCF, growth,
+    WACC and its full CAPM breakdown, debt/cash/shares, currencies), the
+    historical FCF the growth rate came from, the 10-year projection table
+    (per-year growth, flow, discount factor, PV), the terminal value, and the
+    enterprise -> equity -> per-share bridge. When the DCF is N/A for this
+    ticker the sheet says why instead. Methodology: METRICS.md §2.
+
+    Raises ValueError with a reason when the row itself can't be built."""
+    row = screener_row(ticker)
+    if row.get("error"):
+        raise ValueError(row["error"])
+    info = get_info(ticker)
+    cf = _get_stmt(ticker, "cash_flow")
+    inc = _get_stmt(ticker, "income_stmt")
+
+    # Reconstruct the same DCF inputs _screener_row used (all fetches cached,
+    # so this adds no network round-trips and cannot drift from the row).
+    price, market_cap = row.get("price"), row.get("market_cap")
+    fcf, wacc = row.get("fcf"), row.get("wacc")
+    total_debt, total_cash = row.get("total_debt"), row.get("total_cash")
+    mkt_ccy, fin_ccy = row.get("currency"), row.get("financial_currency")
+    fx_mismatch = bool(fin_ccy and mkt_ccy and fin_ccy != mkt_ccy)
+    fx = _fx_rate(fin_ccy, mkt_ccy) if fx_mismatch else 1.0
+    shares = _num(info.get("sharesOutstanding"))
+    shares_derived = False
+    if not shares and market_cap and price:
+        shares, shares_derived = market_cap / price, True
+    fcf_hist = [s for s in _series_from_stmt(cf, "Free Cash Flow")
+                if s["value"] is not None]
+    cagr_raw = _fcf_cagr(cf)
+    bt = _business_type({"sector": row.get("sector"), "industry": row.get("industry")})
+    detail = (_dcf_detail(fcf, cagr_raw, wacc, total_debt, total_cash)
+              if bt not in ("financial", "reit", "mreit") else None)
+
+    # WACC breakdown — same inputs _screener_row feeds _compute_wacc.
+    pretax = _stmt_val(inc, "Pretax Income", "Income Before Tax")
+    tax = _stmt_val(inc, "Tax Provision", "Income Tax Expense")
+    tax_rate = 0.21
+    if pretax and tax and pretax > 0:
+        tax_rate = min(max(tax / pretax, 0.0), 0.5)
+    interest_exp = (_stmt_val(inc, "Interest Expense", "Interest Expense Non Operating") or
+                    _stmt_val(inc, "Interest Expense", "Interest Expense Non Operating", col=1))
+    mcap_native = _native_market_cap(market_cap, mkt_ccy, fin_ccy)
+    wd = _wacc_detail(_num(info.get("beta")), mcap_native,
+                      total_debt, interest_exp, tax_rate, get_risk_free_rate())
+
+    # Reason the DCF is N/A (only meaningful when detail is None) — shown in
+    # the Result block so a blank sheet still explains itself.
+    reason = None
+    if row.get("dcf_value") is None:
+        if bt in ("financial", "reit", "mreit"):
+            reason = (f"Not computed for this business type ({bt}): an FCFF DCF is "
+                      "meaningless for balance-sheet businesses and "
+                      "depreciation/capex-distorted for property businesses.")
+        elif fcf is None or fcf <= 0:
+            reason = "Free cash flow is missing or non-positive — no cash stream to discount."
+        elif wacc is None:
+            reason = "WACC unavailable (beta, market cap, or the risk-free rate is missing)."
+        elif wacc <= _DCF_TERMINAL_G + _DCF_WACC_MARGIN:
+            reason = (f"WACC ({wacc:.2f}%) does not clear the terminal growth rate "
+                      f"({_DCF_TERMINAL_G}%) by {_DCF_WACC_MARGIN} pt — the Gordon "
+                      "denominator would be ~0 and the output absurd.")
+        elif not shares:
+            reason = "Shares outstanding unavailable (and not derivable from market cap ÷ price)."
+        else:
+            reason = "FX rate unavailable to convert the reporting-currency value."
+
+    wb = Workbook()
+    bold = Font(bold=True)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2933")
+    section_fill = PatternFill("solid", fgColor="3E4C59")
+    ws = wb.active
+    ws.title = "DCF Valuation"
+    ws.cell(row=1, column=1,
+            value=f"{ticker} — {row.get('name') or ''} — DCF Valuation "
+                  f"({_DCF_YEARS}y two-stage FCFF)").font = Font(bold=True, size=13)
+
+    # The whole sheet is a live spreadsheet model: input cells hold values,
+    # everything downstream holds Excel *formulas* referencing those cells, so
+    # the reader can trace every number and even tweak an assumption and watch
+    # the valuation recompute. `A` collects the absolute address ($B$n) of each
+    # cell later formulas point at. Rows 3–7 are reserved for the Result block
+    # (which references the bridge below); the body is written first from row 9
+    # so those addresses exist, then the Result block is back-filled.
+    A = {}
+
+    def absref(coord):
+        col = "".join(ch for ch in coord if ch.isalpha())
+        num = "".join(ch for ch in coord if ch.isdigit())
+        return f"${col}${num}"
+
+    def lbl(s):
+        """Label text safe to write to a cell: openpyxl stores any string
+        starting with '=' as a formula (which then errors), so a leading '='
+        becomes a fullwidth '＝'. Defensive — current labels avoid a leading '='."""
+        return "＝" + s[1:] if isinstance(s, str) and s.startswith("=") else s
+
+    r = 9
+
+    def section(title):
+        nonlocal r
+        sc = ws.cell(row=r, column=1, value=title)
+        sc.font = header_font
+        sc.fill = section_fill
+        for c in range(2, 6):
+            ws.cell(row=r, column=c).fill = section_fill
+        r += 1
+
+    def kv(label, value=None, formula=None, pct=False, num=None, bold_row=False):
+        """One label/value(-or-formula) row. Returns the value cell's absolute
+        address so later formulas can reference it."""
+        nonlocal r
+        ws.cell(row=r, column=1, value=lbl(label)).font = bold
+        c = ws.cell(row=r, column=2)
+        c.value = formula if formula is not None else value
+        if pct:
+            c.number_format = "0.00%"
+        elif num:
+            c.number_format = num
+        if bold_row:
+            c.font = bold
+        coord = absref(c.coordinate)
+        r += 1
+        return coord
+
+    CCY = "#,##0"          # currency amounts
+    PS = "0.00"            # per-share / price
+    FXF = "0.000000"       # fx rate
+
+    # --- Assumptions & inputs (editable values) --------------------------- #
+    section("Assumptions & inputs")
+    kv("Business type (archetype)", value=bt)
+    A["fcf"] = kv(f"Base FCF — latest annual ({fin_ccy or mkt_ccy or 'reporting'})",
+                  value=fcf, num=CCY)
+    A["terminal"] = kv("Terminal growth", value=_DCF_TERMINAL_G / 100.0, pct=True)
+    kv("Projection horizon (years)", value=_DCF_YEARS)
+    A["debt"] = kv(f"Total Debt ({fin_ccy or mkt_ccy or 'reporting'})", value=total_debt, num=CCY)
+    A["cash"] = kv(f"Total Cash ({fin_ccy or mkt_ccy or 'reporting'})", value=total_cash, num=CCY)
+    A["shares"] = kv("Shares Outstanding" + (" (= market cap ÷ price)" if shares_derived else ""),
+                     value=shares, num=CCY)
+    A["price"] = kv(f"Current Price ({mkt_ccy or 'trading'})", value=price, num=PS)
+    # Always present (1.0 when the currencies match) so the bridge's × FX step
+    # is uniform whether or not this is a foreign-reporting ticker.
+    A["fx"] = kv(f"FX rate (1 {fin_ccy or mkt_ccy or 'reporting'} → {mkt_ccy or 'trading'})",
+                 value=fx, num=FXF)
+    kv("Trading currency", value=mkt_ccy)
+    kv("Reporting currency", value=fin_ccy or mkt_ccy)
+    r += 1
+
+    # --- WACC breakdown (the discount rate) ------------------------------- #
+    if wd:
+        section("WACC breakdown (CAPM) — the discount rate")
+        rccy = fin_ccy or mkt_ccy or "reporting"
+        A["beta"] = kv("Beta", value=wd["beta"], num="0.0000")
+        A["rfr"] = kv("Risk-free rate (10Y Treasury)", value=wd["rfr"] / 100.0, pct=True)
+        A["erp"] = kv("Equity risk premium (fixed US estimate)", value=wd["erp"] / 100.0, pct=True)
+        A["coste"] = kv("Cost of equity = rfr + β × ERP",
+                        formula=f"={A['rfr']}+{A['beta']}*{A['erp']}", pct=True)
+        # cost of debt = interest expense ÷ total debt (formula when the
+        # interest-expense line exists; otherwise it falls back to the
+        # risk-free rate, which has no cell to reference, so it's a value).
+        if interest_exp and total_debt and total_debt > 0:
+            A["intexp"] = kv(f"Interest expense ({rccy})", value=abs(interest_exp), num=CCY)
+            A["costd"] = kv("Cost of debt = interest ÷ total debt",
+                            formula=f"={A['intexp']}/{A['debt']}", pct=True)
+        else:
+            A["costd"] = kv("Cost of debt (= risk-free; no interest-expense data)",
+                            value=wd["cost_of_debt"] / 100.0, pct=True)
+        # capital-structure weights from market cap (in the reporting currency,
+        # so it weighs against same-currency debt) and total debt.
+        A["mcap"] = kv(f"Market cap ({rccy}, for weights)", value=mcap_native, num=CCY)
+        A["we"] = kv("Equity weight = mktcap ÷ (mktcap + debt)",
+                     formula=f"={A['mcap']}/({A['mcap']}+{A['debt']})", pct=True)
+        A["wd"] = kv("Debt weight = debt ÷ (mktcap + debt)",
+                     formula=f"={A['debt']}/({A['mcap']}+{A['debt']})", pct=True)
+        # effective tax rate = tax ÷ pretax, capped to [0, 50%] (formula when
+        # both statement lines exist and pretax is positive; else the 21% default).
+        if pretax and tax and pretax > 0:
+            A["pretax"] = kv(f"Pretax income ({rccy})", value=pretax, num=CCY)
+            A["taxprov"] = kv(f"Tax provision ({rccy})", value=tax, num=CCY)
+            A["tax"] = kv("Effective tax = min(max(tax ÷ pretax, 0), 50%)",
+                          formula=f"=MIN(MAX({A['taxprov']}/{A['pretax']},0),0.5)", pct=True)
+        else:
+            A["tax"] = kv("Effective tax rate (default 21%)", value=wd["tax_rate"], pct=True)
+        A["wacc"] = kv("WACC = wE·costE + wD·costD·(1−tax)",
+                       formula=f"={A['we']}*{A['coste']}+{A['wd']}*{A['costd']}*(1-{A['tax']})",
+                       pct=True, bold_row=True)
+        r += 1
+
+    # --- Historical FCF (source of the growth rate) ----------------------- #
+    nz_cells = []            # addresses of non-zero FCF cells (the CAGR endpoints)
+    if fcf_hist:
+        section("Historical FCF (source of the growth rate)")
+        for j, lab in enumerate(("Fiscal year", f"FCF ({fin_ccy or mkt_ccy or ''})",
+                                 "YoY growth"), start=1):
+            c = ws.cell(row=r, column=j, value=lab)
+            c.font = header_font
+            c.fill = header_fill
+        r += 1
+        for i, s in enumerate(fcf_hist):
+            ws.cell(row=r, column=1, value=s["period"][:10])
+            vc = ws.cell(row=r, column=2, value=s["value"])
+            vc.number_format = CCY
+            if s["value"]:
+                nz_cells.append(absref(vc.coordinate))
+            prev = fcf_hist[i - 1]["value"] if i else None
+            if prev and prev > 0 and s["value"] is not None:
+                yc = ws.cell(row=r, column=3, value=f"=B{r}/B{r - 1}-1")
+                yc.number_format = "0.00%"
+            r += 1
+        r += 1
+
+    # --- Growth rate used (formula: CAGR of the history, then clamped) ---- #
+    if detail:
+        section("Growth rate used")
+        if cagr_raw is not None and len(nz_cells) >= 2:
+            n = len(nz_cells) - 1        # compounding periods between endpoints
+            A["cagr"] = kv("Historical FCF CAGR (raw)",
+                           formula=f"=({nz_cells[-1]}/{nz_cells[0]})^(1/{n})-1", pct=True)
+            A["g0"] = kv(f"Stage-1 growth g0 (clamped {_DCF_G_MIN:g}–{_DCF_G_MAX:g}%)",
+                         formula=f"=MEDIAN({_DCF_G_MIN / 100:g},{A['cagr']},{_DCF_G_MAX / 100:g})",
+                         pct=True, bold_row=True)
+        else:
+            kv("Historical FCF CAGR (raw)", value="N/A (insufficient history)")
+            A["g0"] = kv("Stage-1 growth g0 (flat fallback = terminal growth)",
+                         formula=f"={A['terminal']}", pct=True, bold_row=True)
+        r += 1
+
+    # --- Projection (all formulas referencing the cells above) ------------ #
+    if detail:
+        section("Projection (reporting currency)")
+        for j, lab in enumerate(("Year", "Growth", "Projected FCF",
+                                 "Discount factor", "Present value"), start=1):
+            c = ws.cell(row=r, column=j, value=lab)
+            c.font = header_font
+            c.fill = header_fill
+        r += 1
+        first_pv_row = r
+        for t in range(1, _DCF_YEARS + 1):
+            rr = r
+            ws.cell(row=rr, column=1, value=t)
+            # growth fades linearly: year 1 = g0, year N = terminal
+            gc = ws.cell(row=rr, column=2,
+                         value=f"={A['g0']}+({A['terminal']}-{A['g0']})*{t - 1}/{_DCF_YEARS - 1}")
+            gc.number_format = "0.00%"
+            if t == 1:
+                fc = ws.cell(row=rr, column=3, value=f"={A['fcf']}*(1+B{rr})")
+            else:
+                fc = ws.cell(row=rr, column=3, value=f"=C{rr - 1}*(1+B{rr})")
+            fc.number_format = CCY
+            dc = ws.cell(row=rr, column=4, value=f"=1/(1+{A['wacc']})^{t}")
+            dc.number_format = "0.0000"
+            pc = ws.cell(row=rr, column=5, value=f"=C{rr}*D{rr}")
+            pc.number_format = CCY
+            r += 1
+        last_fcf_coord = f"C{r - 1}"
+        last_pv_row = r - 1
+        tr = r
+        ws.cell(row=tr, column=1, value="Terminal").font = bold
+        tg = ws.cell(row=tr, column=2, value=f"={A['terminal']}")
+        tg.number_format = "0.00%"
+        tv = ws.cell(row=tr, column=3,
+                     value=f"={last_fcf_coord}*(1+{A['terminal']})/({A['wacc']}-{A['terminal']})")
+        tv.number_format = CCY
+        td = ws.cell(row=tr, column=4, value=f"=1/(1+{A['wacc']})^{_DCF_YEARS}")
+        td.number_format = "0.0000"
+        tp = ws.cell(row=tr, column=5, value=f"=C{tr}*D{tr}")
+        tp.number_format = CCY
+        A["tvpv"] = absref(tp.coordinate)
+        r += 2
+
+        # --- Valuation bridge --------------------------------------------- #
+        # Subtotal rows are bold nouns (no leading "=" — a cell whose text
+        # starts with "=" is stored as a formula and errors); the operation
+        # rows keep their + − ÷ × prefixes.
+        section("Valuation bridge (reporting currency → trading currency)")
+        stage1 = kv(f"PV of years 1–{_DCF_YEARS}",
+                    formula=f"=SUM(E{first_pv_row}:E{last_pv_row})", num=CCY)
+        kv("+ PV of terminal value", formula=f"={A['tvpv']}", num=CCY)
+        ev = kv("Enterprise value (DCF)", formula=f"={stage1}+{A['tvpv']}", num=CCY, bold_row=True)
+        kv("− Total debt", formula=f"={A['debt']}", num=CCY)
+        kv("+ Total cash", formula=f"={A['cash']}", num=CCY)
+        equity = kv("Equity value", formula=f"={ev}-{A['debt']}+{A['cash']}", num=CCY, bold_row=True)
+        kv("÷ Shares outstanding", formula=f"={A['shares']}", num=CCY)
+        pershare = kv(f"Per share ({fin_ccy or mkt_ccy or 'reporting'})",
+                      formula=f"={equity}/{A['shares']}", num=PS)
+        kv(f"× FX (1 {fin_ccy or mkt_ccy or 'reporting'} → {mkt_ccy or 'trading'})",
+           formula=f"={A['fx']}", num=FXF)
+        A["dcf"] = kv(f"DCF Value ({mkt_ccy or 'trading'})",
+                      formula=f"={pershare}*{A['fx']}", num=PS, bold_row=True)
+        kv("Current price", formula=f"={A['price']}", num=PS)
+        A["upside"] = kv("Upside vs price", formula=f"={A['dcf']}/{A['price']}-1",
+                         pct=True, bold_row=True)
+        r += 1
+
+    ws.cell(row=r, column=1,
+            value="Every downstream cell is a live formula referencing the inputs above — "
+                  "change an assumption and the valuation recomputes. Assumption-heavy by "
+                  "construction: growth is extrapolated from a handful of annual statements "
+                  "and the discount rate hinges on beta and a fixed 5.5% US ERP. Treat as a "
+                  "screen, not a target price. Full methodology: METRICS.md §2.").font = \
+        Font(italic=True)
+
+    # --- Result block (rows 3–7), back-filled now the bridge cells exist -- #
+    rc = ws.cell(row=3, column=1, value="Result")
+    rc.font = header_font
+    rc.fill = section_fill
+    for c in range(2, 6):
+        ws.cell(row=3, column=c).fill = section_fill
+
+    def result_row(rr, label, value=None, formula=None, pct=False, num=None, bold_row=True):
+        ws.cell(row=rr, column=1, value=lbl(label)).font = bold
+        c = ws.cell(row=rr, column=2)
+        c.value = formula if formula is not None else value
+        if pct:
+            c.number_format = "0.00%"
+        elif num:
+            c.number_format = num
+        if bold_row:
+            c.font = bold
+
+    if detail:
+        result_row(4, f"DCF Value ({mkt_ccy or 'trading'} / share)", formula=f"={A['dcf']}", num=PS)
+        result_row(5, f"Current Price ({mkt_ccy or 'trading'})", formula=f"={A['price']}",
+                   num=PS, bold_row=False)
+        result_row(6, "DCF Upside vs Price", formula=f"={A['upside']}", pct=True)
+    else:
+        result_row(4, f"DCF Value ({mkt_ccy or 'trading'} / share)", value=None)
+        result_row(5, f"Current Price ({mkt_ccy or 'trading'})", value=price, num=PS, bold_row=False)
+        result_row(6, "DCF Upside vs Price", value=None)
+        result_row(7, "Why N/A", value=reason, bold_row=False)
+
+    ws.column_dimensions["A"].width = 46
+    for col in ("B", "C", "D", "E"):
+        ws.column_dimensions[col].width = 18
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -1533,6 +2496,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not t:
                     return self._send_json({"error": "ticker required"}, 400)
                 return self._send_json(stock_calendar(t[0]))
+            if path == "/api/company_profile":
+                t = _parse_tickers(qs)
+                if not t:
+                    return self._send_json({"error": "ticker required"}, 400)
+                if refresh:
+                    clear_ticker_cache(t[:1])
+                return self._send_json(company_profile(t[0]))
             return self._serve_static(path)
         except BrokenPipeError:
             pass
@@ -1576,6 +2546,23 @@ class Handler(BaseHTTPRequestHandler):
                     data,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     filename=f"{tk}-{stamp}.xlsx")
+            if path == "/api/export_dcf":
+                if not _HAS_OPENPYXL:
+                    return self._send_json(
+                        {"error": "openpyxl not installed. Run: pip install openpyxl"}, 500)
+                raw_t = payload.get("ticker") or (payload.get("tickers") or [None])[0]
+                tk = (raw_t or "").strip().upper()
+                if not tk:
+                    return self._send_json({"error": "ticker required"}, 400)
+                try:
+                    data = build_dcf_workbook(tk)
+                except ValueError as e:   # error row (bad ticker, Yahoo failure)
+                    return self._send_json({"error": str(e)}, 400)
+                stamp = _dt.date.today().strftime("%Y%m%d")
+                return self._send_bytes(
+                    data,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    filename=f"{tk}-DCF-{stamp}.xlsx")
             if path == "/api/cache/clear":
                 clear_cache()
                 return self._send_json({"ok": True})

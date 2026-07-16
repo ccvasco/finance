@@ -59,6 +59,12 @@ A company with no debt at all takes full Debt/Equity points. A company with
 "low leverage" when it is in fact the most levered state a balance sheet can
 be in — the opposite of the resilience this pillar is buying.
 
+*Financials* score this pillar on ROA alone (25 pts). *REITs* replace it too:
+Current Ratio and Altman-Z don't apply to a property business and its leverage
+is high by design, so strength is judged on REIT-appropriate D/E bands (≤100%
+conservative, ≤200% typical) plus how well free cash flow covers the mandatory,
+high distribution. See the archetypes section in stock-triage-strategy.md.
+
 ## Pillar D — Earnings quality (20 points)
 
 A low multiple on bad earnings is a high multiple in disguise.
@@ -103,6 +109,9 @@ exists to surface.
 
 ## Sector adjustments
 
+Rows are classified into the same [business-type
+archetypes](stock-triage-strategy.md#business-type-archetypes) S1 uses.
+
 **Financials (banks, insurers).** Current ratio, Debt/Equity and Altman Z are
 structurally meaningless for balance-sheet businesses. Classification is by
 *industry* (banks, insurance carriers, capital markets, credit services,
@@ -113,10 +122,38 @@ Pillar C is scored on ROA instead: ≥ 1.5% full (25 pts), 0.8–1.5% half.
 Pillars A, B, D, E apply unchanged — P/E and P/B are, if anything, *more*
 informative for banks than for industrials.
 
-**Cyclicals.** A trough-of-cycle P/E can look expensive (depressed earnings)
-exactly when the stock is cheapest, and vice versa. Pillars B and C carry the
-signal through the cycle; treat a strong B+C with a weak A as a name to
-re-score next quarter, not to discard.
+**REITs (Real Estate).** P/E, EV/EBITDA, net income and Piotroski are all
+depreciation-distorted for property, so four of the five pillars are rebuilt on
+**approximate NAREIT FFO** (see [REITs.md](REITs.md); GAAP-FCF fallback when no D&A):
+
+- **Pillar A — earnings/cash yield (25):** P/FFO (the REIT earnings multiple)
+  instead of P/E + P/FCF + EV/EBITDA — < 12× → 25, ≤ 16× → 15, ≤ 20× → 8.
+- **Pillar B — asset backing (15):** P/B (real estate has genuine book value —
+  a rough NAV proxy), banded < 1.0 → 15 / < 1.5 → 10 / ≤ 2.5 → 5. The Graham
+  P/E × P/B test is dropped (it uses the distorted P/E).
+- **Pillar C — financial strength (25):** REIT D/E bands + FFO coverage of the
+  distribution (already documented above under Pillar C).
+- **Pillar D — earnings quality (20):** FFO positive (8) + FFO coverage
+  ≥ 1.0× (7) + payout within FFO (≤ 90% → 5). Net-income sign and Piotroski
+  are dropped — both mislead for REITs.
+- **Pillar E — dividend record (15):** yield and increase-streak unchanged, but
+  sustainability judged on the FFO payout rather than the earnings payout.
+
+REIT grades remain directional — the FFO here approximates NAREIT FFO but is not exact, and is not AFFO.
+
+**Mortgage REITs (industry "REIT — Mortgage").** A discount to book, backed by a
+covered dividend and non-eroding book value, is genuine defensive value — so the
+rubric is: discount to book (35, P/B < 0.80 → full, ≤ 0.95 → 22, ≤ 1.10 → 11),
+dividend coverage (25, payout ratio), book-value-per-share trend (20), and
+leverage on wide agency-appropriate bands (20, ≤ 800% / ≤ 1000%). See the mREIT
+section in [stock-triage-strategy.md](stock-triage-strategy.md).
+
+**Cyclicals** (and asset-light names) stay on the standard rubric. A
+trough-of-cycle P/E can look expensive (depressed earnings) exactly when the
+stock is cheapest, and vice versa — but Pillars B and C carry the signal
+through the cycle; treat a strong B+C with a weak A as a name to re-score next
+quarter, not to discard. There is no normalized-earnings data available to do
+better, so no bespoke rubric is imposed.
 
 ---
 

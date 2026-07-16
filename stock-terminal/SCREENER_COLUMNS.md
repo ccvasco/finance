@@ -13,8 +13,14 @@ what it means, and the **units of the raw exported value**.
 > price performance are stored as **decimal fractions** — multiply by 100 for a
 > percentage. So `0.478` = 47.8%, `0.0038` = 0.38%, `0.41` = 41%.
 > The other value types are:
-> - **currency** — an absolute amount in the company's reporting currency (USD, EUR, …).
->   Per-share values (Price, EPS, dividends) are per single share.
+> - **currency** — an absolute amount. For most tickers this is simply the
+>   company's one currency. For a foreign-reporting ticker (an ADR like WIT,
+>   which trades in USD but reports in INR), it isn't one currency: Price,
+>   Market Cap, and Diluted EPS are in the trading currency, while Enterprise
+>   Value, Revenue, Cash, Debt, Equity, EBITDA, Net Income, FCF, Basic EPS, and
+>   Dividend TTM are in the reporting currency — see the callout below and
+>   [METRICS.md](METRICS.md) §11. Per-share values (Price, EPS, dividends) are
+>   per single share.
 > - **multiple (×)** — a valuation or coverage ratio (P/E, EV/EBITDA, FCF Coverage).
 > - **ratio** — a plain liquidity ratio (Current, Quick).
 > - **number / integer / date** — as labelled.
@@ -35,13 +41,28 @@ what it means, and the **units of the raw exported value**.
 
 | Excel header | Field key | Meaning | Units |
 | --- | --- | --- | --- |
-| Ticker | `ticker` | Stock symbol. | text |
+| Ticker | `ticker` | Stock symbol. Hovering the cell shows a short description of what the company is and does (from Yahoo's business summary). | text |
 | Name | `name` | Company name. | text |
 | Sector | `sector` | High-level sector classification. | text |
 | Industry | `industry` | Finer industry classification. | text |
 | Price | `price` | Latest traded share price. | currency / share |
 | Market Cap | `market_cap` | Share price × shares outstanding — total equity value. | currency |
 | Enterprise Value | `enterprise_value` | Market cap + total debt − cash. Cost to acquire the whole business, debt included. | currency |
+
+> **No currency column in this export.** Unlike the single-company Excel
+> export ([STOCK_METRICS.md](STOCK_METRICS.md)), this multi-ticker sheet
+> doesn't label which currency each row's dollar figures are in. For the
+> overwhelming majority of rows that's a non-issue — the whole sheet is one
+> currency (USD). But for a foreign-reporting ticker in the batch (an ADR like
+> WIT), Enterprise Value/Revenue/Cash/Debt/Equity/EBITDA/Net Income/FCF/Basic
+> EPS/Dividend TTM are silently in that company's reporting currency (₹ for
+> WIT), while Price/Market Cap/Diluted EPS are in its trading currency (USD) —
+> both stored as plain numbers in the same-looking column as every other
+> ticker's dollar figures. The screener **view** and the single-ticker deep
+> dive both label this correctly (see [METRICS.md](METRICS.md) §11); this
+> batch export currently doesn't carry that label through, so cross-checking a
+> foreign ticker's absolute figures here against a same-currency peer will be
+> misleading — verify in the deep dive instead when a batch includes one.
 
 ## Strategy grades (0–100 integers; higher is better)
 
@@ -56,15 +77,22 @@ never helps a stock).
 | S2 Compounder | `strategy_2` | [Quality Compounder](strategy-2-quality-compounder.md): returns on capital (ROIC/ROCE/ROE), margin moat, capital discipline, 5Y/10Y compounding track record, valuation sanity. Distress or twin-negative earnings caps the score at 35. | ≥70 Compounder · 50–69 Quality watch · <50 Pass |
 | S3 Defensive | `strategy_3` | [Defensive Value](strategy-3-defensive-value.md): Graham-style — earnings/cash yield, asset backing (incl. P/E×P/B ≤ 22.5), financial strength, earnings quality, dividend record. | ≥70 Value candidate · 50–69 Fair · <50 Expensive/weak |
 | Strat Min | `strategy_min` | Minimum of the three grades — the "good under every lens" rank. **Sort this column descending to find the stocks with the best rating across all strategies.** Empty when any strategy could not be graded. | interpret via the per-strategy bands |
-| S1 Flags | `strategy_1_flags` | Triage Stage-0/Stage-3 context flags — never disqualifying, they tell the deep dive where to look first: 🔺 priced for perfection (PEG > 3, P/FCF > 40 or EV/EBITDA > 30) · 🔻 suspiciously cheap (P/E < 8 or EV/EBITDA < 5 with a sub-60 score) · ⚠ divergent multiples / data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress (payout > 70% or FCF coverage < 1.5×) · 📉 crowded short (>15% of float) · 🌀 high beta (>1.7). | empty = no warnings |
+| S1 Flags | `strategy_1_flags` | Triage Stage-0/Stage-3 context flags — never disqualifying, they tell the deep dive where to look first: 🔺 priced for perfection (PEG > 3, P/FCF > 40 or EV/EBITDA > 30) · 🔻 suspiciously cheap (P/E < 8 or EV/EBITDA < 5 with a score ≤ 60) · ⚠ low Altman-Z (< 1.8 for an asset-light or cyclical business — a soft caution, since Altman-Z is a manufacturer model that only *disqualifies* capital-intensive names) · ⚠ low Piotroski F-Score (≤ 3 for a bank, REIT, or mortgage REIT — two of the 9 tests are biased against their intentionally high, stable leverage) · ⚠ divergent multiples / data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress (payout > 60% or FCF coverage < 1.2×; equity REITs judged on FFO payout > 90% instead, mortgage REITs on payout > 100%, and banks and mortgage REITs skip the FCF leg — lending runs through operating cash flow, so GAAP FCF tracks the loan book, not the dividend) · 📉 crowded short (>15% of float) · 🌀 high beta (>1.7). | empty = no warnings |
 
-Financials are scored with each strategy's documented sector substitutions,
-since Altman Z, Debt/EBITDA, current ratio and ROIC are structurally
-meaningless for balance-sheet businesses. Classification is by *industry*
-(banks, insurance carriers, capital markets, credit services, mortgage
-finance, conglomerates) — fee businesses that Yahoo files under the
-"Financial Services" sector (insurance brokers, exchanges/data vendors,
-asset managers) score on the standard rubric instead.
+Every stock is classified into one of six business-type archetypes — see
+[Business-type archetypes](stock-triage-strategy.md#business-type-archetypes)
+for the full table — and each strategy substitutes metrics that don't fit that
+type. **Financials** (banks, insurance carriers, capital markets, credit
+services, mortgage *finance*, conglomerates — classified by *industry*; fee
+businesses Yahoo files under "Financial Services," like insurance brokers,
+exchanges/data vendors and asset managers, score on the standard rubric
+instead) get each strategy's ROE/net-margin/Piotroski substitution, since
+Altman Z, Debt/EBITDA, current ratio and ROIC are structurally meaningless for
+balance-sheet businesses. **Mortgage REITs** (industry "REIT — Mortgage") get
+their own dedicated rubric rather than the bank one — a mREIT's net margin is
+an income-statement artifact, not a quality signal — graded instead on
+dividend coverage, price vs. book value, leverage (wide agency-appropriate
+bands), and book-value-per-share trend, the headline mREIT quality signal.
 
 ## Valuation (lower is usually cheaper; a very low multiple can signal trouble)
 
@@ -78,6 +106,8 @@ asset managers) score on the standard rubric instead.
 | EV/EBITDA | `ev_ebitda` | Enterprise value ÷ EBITDA. Capital-structure-neutral. | multiple (×) | <10 cheap, 10–15 average, >15 expensive. |
 | P/FCF | `p_fcf` | Market cap ÷ free cash flow. | multiple (×) | <15 attractive, >25 expensive. Blank if FCF ≤ 0. |
 | P/C | `pc` | Market cap ÷ total cash. | multiple (×) | Lower = more cash backing the valuation. |
+| DCF Value | `dcf_value` | Inferred fair value per share from a 10-year two-stage FCFF DCF: latest annual FCF grown at the company's historical FCF CAGR (clamped 0–20%; flat 2.5% when no usable history), fading linearly to 2.5% terminal growth, discounted at the row's WACC; Gordon terminal value; minus debt, plus cash, ÷ shares outstanding. In the trading currency, directly comparable to Price. On-screen it sits **next to Price**, colored green when the model reads the stock as below fair value and red when above; hover it for the exact **DCF Upside %**. Sorting this column sorts by that upside — descending surfaces the most-undervalued names first. See [METRICS.md](METRICS.md) §2 for the full methodology, and use the deep-dive **⭳ DCF** button for the complete working. | currency / share | Compare against Price. Blank for financials/REITs (FCFF doesn't fit), FCF ≤ 0, or WACC unavailable/≤ 3%. |
+| DCF Upside | `dcf_upside` | DCF Value ÷ Price − 1. On the screener/watchlist tabs this isn't its own column — it colors the DCF Value cell, shows on hover, and is what the DCF Value column sorts by. It is a full standalone column in the exported workbook. | fraction | >0 = model reads the stock as below fair value; <0 above. Assumption-heavy — a screen for what deserves a closer look, not a target price. |
 | EPS | `eps` | Trailing 12-month earnings per share. | currency / share | Higher and rising is better. |
 
 ## Profitability (higher is better; consistency matters as much as level)
@@ -92,7 +122,7 @@ asset managers) score on the standard rubric instead.
 | ROA | `roa` | Net income ÷ total assets. | fraction | >0.05 decent; banks/utilities lower. |
 | ROIC | `roic` | After-tax operating profit ÷ (debt + equity). | fraction | Creates value only when > cost of capital (~0.08–0.10). >0.15 excellent. |
 | ROCE | `roce` | EBIT ÷ (total assets − current liabilities). Pre-tax sibling of ROIC. | fraction | >0.15 strong. |
-| WACC | `wacc` | Weighted average cost of capital (cost of equity via CAPM + after-tax cost of debt). | fraction | Benchmark for ROIC; typically ~0.06–0.12. Value is created when ROIC > WACC. |
+| WACC | `wacc` | Weighted average cost of capital: cost of equity via CAPM (10Y Treasury + Beta × 5.5% equity risk premium — a fixed US-market estimate, applied to every ticker regardless of domicile; see [METRICS.md](METRICS.md) §3) + after-tax cost of debt. | fraction | Benchmark for ROIC; typically ~0.06–0.12. Value is created when ROIC > WACC. |
 | Revenue/Share | `revenue_per_share` | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising over time is the signal to want. |
 | Net Income | `income` | Net income (trailing 12 months). | currency | Profit attributable to shareholders. |
 | FCF | `fcf` | Free cash flow = operating cash flow − capex. | currency | Positive and growing is the goal. |
@@ -110,7 +140,7 @@ asset managers) score on the standard rubric instead.
 | Total Cash | `total_cash` | Cash + short-term investments. | currency | Dry powder; compare to total debt. |
 | Total Debt | `total_debt` | Short- + long-term borrowings. | currency | Judge against cash, equity, EBITDA. |
 | Total Equity | `total_equity` | Assets − liabilities (book value). | currency | Negative is a red flag. |
-| EBITDA | `ebitda` | Earnings before interest, tax, depreciation & amortization (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
+| EBITDA | `ebitda` | Net Income + Interest + Tax + Depreciation & Amortization — built up from the bottom line, not down from revenue (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | `ebitda_fcf` | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion; high values flag capex/tax/working-capital drag. |
 
 ## Dividends (sustainability matters more than headline yield)
@@ -135,8 +165,8 @@ asset managers) score on the standard rubric instead.
 | Beta | `beta` | Sensitivity vs. the market (S&P 500). | number | 1 = moves with market; >1 amplified; <1 stabler; <0 inverse. |
 | Short Interest | `short_interest` | Shares sold short ÷ public float. | fraction | <0.05 normal, 0.05–0.10 elevated, >0.10–0.20 heavily shorted. |
 | Days to Cover | `days_to_cover` | Short interest ÷ average daily volume. | number (days) | <1 easy to cover; >5–7 crowded short, squeeze potential. |
-| Altman Z-Score | `altman_z` | Bankruptcy-risk gauge (higher = safer). | number | >2.99 safe, 1.81–2.99 grey, <1.81 distress. Unreliable for banks/financials (blank). |
-| Piotroski F-Score | `piotroski_f` | Fundamental strength across 9 tests (1 pt each). | integer 0–9 | 7–9 strong, 4–6 middling, 0–3 weak. |
+| Altman Z-Score | `altman_z` | Bankruptcy-risk gauge (higher = safer). | number | >2.99 safe, 1.81–2.99 grey, <1.81 distress. Ignored for financials/REITs/mortgage REITs; a soft flag (not a kill) for asset-light and cyclical names. |
+| Piotroski F-Score | `piotroski_f` | Fundamental strength across 9 tests (1 pt each). | integer 0–9 | 7–9 strong, 4–6 middling, 0–3 weak. Replaced by ROE/net-margin for financials/REITs, and by book-value-per-share trend for mortgage REITs. |
 
 ## Performance (price return — **excludes dividends**)
 

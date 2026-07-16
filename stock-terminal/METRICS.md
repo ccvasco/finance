@@ -38,8 +38,74 @@ multiple can be justified by fast growth.
 | **P/C (Price/Cash)** | Market cap ÷ total cash | How much cash backs the valuation. | Lower = more cash cushion. |
 | **P/FCF** | Market cap ÷ free cash flow | Price vs. actual cash generated. | <15 attractive, 15–25 fair, >25 expensive. Negative FCF → N/A. |
 | **EV/EBITDA** | Enterprise value ÷ EBITDA | Capital-structure-neutral valuation (ignores debt & tax differences). | <10 cheap, 10–15 average, >15 expensive (sector-dependent). |
-| **Diluted EPS** | (Net Income − Preferred Dividends) ÷ Weighted Average **Diluted** Shares Outstanding (TTM) | Profit per share after accounting for all potentially dilutive securities (options, warrants, convertibles). This is the standard EPS figure reported by most financial sites and used in P/E ratios. | Higher and rising is better; compare growth, not the absolute level. |
-| **Basic EPS** | (Net Income − Preferred Dividends) ÷ Weighted Average **Basic** Shares Outstanding (TTM) | Profit per share using only shares actually outstanding — no dilution assumed. Always ≥ Diluted EPS. A large gap between Basic and Diluted EPS signals heavy dilutive securities outstanding. | — |
+| **Diluted EPS** | (Net Income − Preferred Dividends) ÷ Diluted Shares Outstanding (TTM), where the denominator = Basic shares **+** every share that would exist if all outstanding options, RSUs, warrants, and convertible securities were exercised/converted into common stock | Profit per share after accounting for all potentially dilutive securities. This is the standard EPS figure reported by most financial sites and used in P/E ratios. | Higher and rising is better; compare growth, not the absolute level. |
+| **DCF Value** | 10-year two-stage FCFF DCF per share (see the methodology note below) | The model's inferred fair value per share, in the trading currency — directly comparable to Price. | Above Price = the model reads the stock as undervalued. N/A for financials/REITs, FCF ≤ 0, or WACC unavailable. |
+| **DCF Upside** | DCF Value ÷ Price − 1 | How far the current price sits below (+) or above (−) the model's fair value. | Assumption-heavy — a screen for where to look closer, not a target price. |
+| **Basic EPS** | (Net Income − Preferred Dividends) ÷ Basic Shares Outstanding (TTM), where the denominator = actual common shares outstanding only — nothing hypothetical added | Profit per share using only shares actually outstanding — no dilution assumed. Always ≥ Diluted EPS. A large gap between Basic and Diluted EPS signals heavy dilutive securities outstanding. | — |
+
+> **REITs use P/FFO, not P/E, as their primary multiple.** REIT depreciation
+> distorts earnings the same way it distorts ROIC, so P/E is a weak valuation
+> signal for property businesses. See **§6b REIT-specific metrics**.
+
+### How DCF Value is computed
+
+A deliberately simple, fully automatic 10-year two-stage free-cash-flow-to-firm
+(FCFF) model, discounted at the same **WACC** shown in §3:
+
+1. **Base cash flow** — the latest annual Free Cash Flow (must be positive;
+   loss-making-on-cash names get N/A rather than a fabricated value).
+2. **Stage-1 growth** — the company's **own historical FCF CAGR**, computed
+   from the ~4 fiscal years of cash-flow statements Yahoo provides, **clamped
+   to 0–20%** so one-off spikes can't compound into absurdity. When no usable
+   history exists (fewer than two positive-FCF years), the model falls back to
+   a flat 2.5% — the conservative floor, not a guess.
+3. **The fade** — growth declines **linearly from the stage-1 rate to 2.5%**
+   across the 10 projected years. Why fade rather than hold-then-cliff: growth
+   mean-reverts empirically (competition, scale, market saturation), a cliff
+   makes the output hypersensitive to the horizon, and no company outgrows the
+   economy forever — 2.5% ≈ long-run nominal GDP growth, the rate a mature
+   business can sustain in perpetuity without implausibly becoming the whole
+   economy. Fading also shrinks the terminal value's share of the total,
+   making the output more robust to the assumptions.
+4. **Terminal value** — Gordon growth on year-10 FCF at 2.5%, requiring WACC
+   to exceed the terminal rate by at least 0.5 pt (otherwise the denominator
+   approaches zero and the output would be absurd rather than merely rough —
+   the model returns N/A instead).
+5. **Enterprise → equity → per share** — PV of the 10 flows + PV of the
+   terminal value, minus total debt, plus cash, divided by shares
+   outstanding. For foreign-reporting tickers (§11) the statement-currency
+   result is FX-converted so DCF Value is always in the **trading currency**,
+   directly comparable to Price.
+
+**Not computed for financials or REITs** — the same archetype logic as §6a:
+FCF is meaningless for balance-sheet businesses (banks, insurers) and
+depreciation/capex-distorted for property businesses (equity REITs are valued
+on FFO, mortgage REITs on book value).
+
+On the screener and watchlist tabs, **DCF Value sits next to Price**, colored
+green when the model reads the stock as below its fair value and red when
+above; hovering the cell shows the exact upside % versus price. **Sorting the
+DCF Value column sorts by that upside** — descending puts the most-undervalued
+names on top. (A standalone, separately sortable **DCF Upside** column also
+lives in the Excel export.) The deep-dive Valuation panel shows both **DCF
+Value** and **DCF Upside %** as rows.
+
+**Treat it as a screen, not a target price.** Every input is a rough
+automatic estimate: growth is extrapolated from as few as two annual
+statements, and the discount rate inherits WACC's own caveats (CAPM beta, the
+fixed 5.5% US ERP — see §3). The coloring flags names whose cash flows look
+mispriced *under these assumptions*; it does not tell you the assumptions are
+right. All the model's constants (10-year horizon, 0–20% clamp, 2.5% terminal,
+0.5 pt WACC margin) are named constants in `app.py`.
+
+**To see the model's full work for one stock**, use the deep dive's
+**⭳ DCF** button: it exports a `TICKER-DCF-*.xlsx` workbook that is a **live
+spreadsheet model** — the inputs are values and every downstream cell (growth
+fade, projected cash flows, discount factors, present values, terminal value,
+the WACC composition, and the enterprise → equity → per-share bridge) is an
+actual Excel formula, so you can trace every number and tweak assumptions to
+watch the valuation recompute. See [STOCK_METRICS.md](STOCK_METRICS.md),
+"The DCF export".
 
 ---
 
@@ -50,7 +116,7 @@ better**, and consistency over time matters as much as the level.
 
 | Metric | Formula | How to read it | Rough range |
 | --- | --- | --- | --- |
-| **Gross Margin %** | (Revenue − COGS) ÷ revenue | Pricing power and production efficiency. | >40% strong, varies hugely (software 70%+, retail <30%). |
+| **Gross Margin %** | (Revenue − COGS) ÷ revenue, where COGS = Cost of Goods Sold (a.k.a. Cost of Revenue): the direct cost of producing/delivering what was sold — materials, direct labor, manufacturing overhead (Yahoo's trailing-12-month figures) | Pricing power and production efficiency. **Note:** Yahoo derives its own gross profit and revenue base, so this can differ from the fiscal-year statement margin shown in the revenue chart. | >40% strong, varies hugely (software 70%+, retail <30%). |
 | **Operating Margin %** | Operating income ÷ revenue (Yahoo's trailing-12-month figures) | Profit after running the business, before interest & tax. **Note:** Yahoo derives its own operating income and revenue base, so this can differ — even in sign — from the fiscal-year statement margin shown in the revenue chart. | >15% healthy; negative means core operations lose money. |
 | **EBITDA Margin %** | EBITDA ÷ revenue | Operating profitability before non-cash (D&A) and financing items. | >20% generally strong; useful for capital-intensive firms. |
 | **Net Profit Margin %** | Net income ÷ revenue | Bottom-line cents kept per sales dollar. | >10% solid, >20% excellent, negative = unprofitable. |
@@ -58,8 +124,24 @@ better**, and consistency over time matters as much as the level.
 | **ROA %** (Return on Assets) | Net income ÷ total assets | How well assets are used to make profit. | >5% decent; banks/utilities run lower, asset-light firms higher. |
 | **ROIC %** (Return on Invested Capital) | After-tax operating profit ÷ (debt + equity) | Return on **all** capital employed — the cleanest quality gauge. Compare directly against **WACC**: ROIC > WACC = value creation; ROIC < WACC = value destruction. | >15% is excellent. Meaningful only relative to WACC. |
 | **WACC %** (Weighted Average Cost of Capital) | (Equity weight × Cost of Equity) + (Debt weight × After-tax Cost of Debt) | The minimum return the business must earn to satisfy all capital providers. Cost of equity via CAPM (10Y Treasury + Beta × 5.5% ERP); cost of debt from interest expense ÷ total debt. | Benchmark for ROIC. Typical range 6–12% depending on beta, leverage, and the rate environment. Falls back to 10Y Treasury for cost of debt when interest expense is unavailable. |
+| **ROIC − WACC %** | ROIC − WACC | Excess return over the cost of capital — the direct value-creation/destruction signal. | > 0 = value creation, < 0 = value destruction. Blank if either input is missing. |
 | **ROCE %** (Return on Capital Employed) | EBIT ÷ (total assets − current liabilities) | Pre-tax sibling of ROIC. | >15% strong; compare to ROIC and to peers. |
 | **Revenue/Share** | TTM revenue ÷ shares outstanding | Sales backing each share. | Rising over time is the signal to want. |
+
+> **The 5.5% ERP is a fixed US-market estimate, not a live figure.** Unlike the
+> risk-free rate (a live 10Y Treasury quote), there's no clean data feed for
+> equity risk premium — it's a modeling input Aswath Damodaran (NYU Stern)
+> re-derives by hand each month, historically landing in a ~4–6% band, and 5.5%
+> is a reasonable fixed point within it. It is also a **US-market** number,
+> applied uniformly to every ticker regardless of where the company is
+> domiciled. For a foreign company (see **§11** on ADRs) this understates the
+> true cost of equity — emerging markets in particular carry a higher equity
+> risk premium than the US — so treat a foreign ticker's WACC as directionally
+> useful but a slight underestimate, not a precise figure.
+>
+> **The "ROIC vs Cost of Capital" chart (§8) shows WACC historically**, not as
+> today's single value repeated — every input except beta is recomputed for
+> each fiscal year.
 
 > **Why a margin can differ from the statement figures.** The margins and
 > **Net Income** above are Yahoo's **trailing-twelve-month (TTM)** figures —
@@ -92,7 +174,7 @@ Can the company pay its bills and survive a downturn?
 | **Current Ratio** | Current assets ÷ current liabilities | Ability to cover bills due within a year. | **>1 covers near-term obligations**; 1.5–3 comfortable; <1 potential squeeze; very high may mean idle assets. |
 | **Quick Ratio** | (Current assets − inventory) ÷ current liabilities | Stricter liquidity test (excludes inventory). | >1 strong; <1 relies on selling inventory to pay bills. |
 | **Free Cash Flow (FCF)** | Operating cash flow − capital expenditure | Cash left for dividends, buybacks, and debt paydown. | Positive and growing is the goal; persistent negative FCF needs external funding. |
-| **EBITDA** | Earnings before interest, tax, depreciation & amortization (Yahoo's trailing-12-month figure) | Proxy for operating cash earnings — the raw figure behind the Debt/EBITDA and EBITDA/FCF ratios shown alongside it. | Compare against total debt and FCF; negative EBITDA means the ratios built on it are suppressed. |
+| **EBITDA** | Net Income **+** Interest **+** Tax **+** Depreciation & Amortization — built up from the bottom line, not down from revenue (Yahoo's trailing-12-month figure) | Proxy for operating cash earnings — the raw figure behind the Debt/EBITDA and EBITDA/FCF ratios shown alongside it. | Compare against total debt and FCF; negative EBITDA means the ratios built on it are suppressed. |
 | **EBITDA/FCF** | EBITDA ÷ Free Cash Flow | Cash-conversion check: how much reported EBITDA it takes to produce a dollar of free cash. | **Closer to 1× = cleaner conversion.** High values flag heavy capex, taxes or working-capital drag eating into the cash EBITDA implies. |
 
 ---
@@ -113,6 +195,12 @@ For income investors. Sustainability matters more than headline yield.
 | **Years ▲ Dividend** | Consecutive completed years of rising dividends | Reliability streak. | 10y+ = strong culture of returning cash; 25y+ = "dividend aristocrat" territory. |
 | **Ex-Dividend Date** | Cutoff to own shares for the next dividend | Buy **before** this date to receive the upcoming dividend. | — |
 
+> **REITs use FFO, not FCF, for coverage.** Payout/FCF Coverage above are
+> computed the same way for every company, but for REITs the S1 Triage grade
+> substitutes **FFO Payout / FFO Coverage** instead — see **§6b REIT-specific
+> metrics**. GAAP FCF understates a REIT's true distributable cash because
+> reported capex isn't split into maintenance vs. growth spend.
+
 ---
 
 ## 6. Strategy ratings
@@ -128,18 +216,88 @@ documented in its own file in this directory; this section is a summary.
 | **S2 · Compounder** | Can this business compound capital for a decade? Weighs returns on capital (ROIC/ROCE/ROE), margin moat, capital discipline, a demonstrated 5Y/10Y price-compounding record, and a valuation sanity check. | ≥70 **Compounder**, 50–69 **Quality watch**, <50 **Pass**. A distress or twin-negative-earnings guard caps the score at 35 regardless of the rest. | [strategy-2-quality-compounder.md](strategy-2-quality-compounder.md) |
 | **S3 · Defensive Value** | Is this cheap *and* safe enough to hold? A Graham-style margin-of-safety score: earnings/cash yield, asset backing (including the classic P/E × P/B ≤ 22.5 test), financial strength, earnings quality, and dividend record. | ≥70 **Value candidate**, 50–69 **Fair**, <50 **Expensive/weak**. | [strategy-3-defensive-value.md](strategy-3-defensive-value.md) |
 | **Strat Min** | Which stocks hold up under *every* lens at once? The minimum of the three scores above. | Read against whichever strategy produced the minimum. Blank if any strategy is ungradable (e.g. S1 quarantined). | — (composite; see `strategies.py`) |
-| **S1 Flags** | Where should the deep dive look first? The triage framework's never-disqualifying context flags: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ divergent multiples and data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress · 📉 crowded short · 🌀 high beta. | Informational only — flags never change a score. Blank = no warnings. | [stock-triage-strategy.md](stock-triage-strategy.md) (Stages 0 & 3) |
+| **S1 Flags** | Where should the deep dive look first? The triage framework's never-disqualifying context flags: 🔺 priced for perfection · 🔻 suspiciously cheap · ⚠ low Altman-Z (non-manufacturer) · ⚠ low Piotroski F-Score (bank/REIT) · ⚠ divergent multiples and data-sanity warnings (P/B > 40, EV/EBITDA > 150, negative EV) · 💰 payout stress · 📉 crowded short · 🌀 high beta. | Informational only — flags never change a score. Blank = no warnings. | [stock-triage-strategy.md](stock-triage-strategy.md) (Stages 0 & 3) |
 
-Financials (banks, insurers) are graded on each strategy's own documented
-substitution — e.g. S1 and S2 swap in ROE/net-margin/Piotroski where
-Altman Z, Debt/EBITDA and ROIC are structurally meaningless for
-balance-sheet-driven businesses; S3 swaps in ROA for the financial-strength
-pillar.
+Every row is classified into a **business-type archetype** — financial, REIT,
+asset-light, cyclical, or capital-intensive — and each strategy substitutes
+metrics that don't fit that archetype (see **§6a** below). **Financials** and
+**REITs** get substituted pillars in all three strategies: S1 and S2 swap in
+ROE/net-margin/Piotroski for financials and a dedicated FFO-based rubric for
+REITs (FFO returns, REIT D/E bands, P/FFO — never zeroing them on the
+industrial Debt/EBITDA or a depreciation-inflated P/E); S3 swaps in ROA
+(financials) or FFO-based earnings-yield/quality/dividend pillars (REITs).
+**Cyclical and asset-light** names stay on the standard rubrics across all
+three strategies — they are ordinary operating companies whose ROIC, margins
+and P/E genuinely apply (with more year-to-year noise, which the track-record
+pillars smooth); there is no normalized/through-cycle data that would justify a
+bespoke rubric, so none is imposed. S1 additionally softens their *kill*
+switches (Altman-Z → flag, ROIC−WACC gate → deep-spread-only) so a cycle trough
+or a noisy WACC doesn't disqualify them — see **§6a**.
 
 **Where to sort:** rank by **Strat Min**, descending, to surface the stocks
 that score well under *all three* strategies simultaneously — a business in
 demonstrable health (S1), with a durable moat (S2), at a defensible price
 (S3) is the intersection this whole framework exists to find.
+
+### 6a. Business-type archetypes (S1 Triage)
+
+A metric that disqualifies one business model is often meaningless for
+another — the Altman Z-Score is a 1968 *manufacturer* model, ROIC/WACC breaks
+down for asset-light and property businesses, and REITs are levered by
+design. S1 classifies every row into one of six archetypes by sector
+(financials and mortgage REITs caught by industry first) and adjusts
+accordingly:
+
+| Archetype | Sectors | Altman-Z kill | Piotroski kill | ROIC−WACC gate | Leverage/liquidity kills |
+| --- | --- | --- | --- | --- | --- |
+| **Capital-intensive** *(default)* | Industrials, Utilities, Consumer, unknown | kill < 1.8 | kill ≤ 3 | full (cap at spread < 0) | full |
+| **Cyclical** | Energy, Basic Materials | flag only | kill ≤ 3 | softened (cap at spread < −5) | full |
+| **Asset-light** | Technology, Communication Services, Healthcare | flag only | kill ≤ 3 | de-weighted (spread halved; cap at < −5) | full |
+| **REIT** (equity) | Real Estate | ignored | flag only | none | exempt |
+| **mREIT** (mortgage) | industry "REIT — Mortgage" | ignored | flag only | none | exempt |
+| **Financial** | banks, insurers, lenders *(by industry)* | ignored | flag only | none | exempt |
+
+**Mortgage REITs** get their own rubric across all three strategies rather than
+the bank rubric (whose net-margin points reward a mREIT income-statement
+artifact) or the equity-REIT FFO rubric (mREITs own no depreciating property).
+S1 grades them on dividend coverage (payout ratio), price vs book (P/B),
+leverage (wide agency-appropriate bands, ≤800% / ≤1000%), and **book-value-per-
+share trend** — the headline signal, since a mREIT eroding book value to fund
+its dividend is destroying capital however high the yield.
+
+Full rationale and the flag-vs-kill design for each row: see
+[stock-triage-strategy.md](stock-triage-strategy.md) § *Business-type
+archetypes*.
+
+### 6b. REIT-specific metrics (all three strategies)
+
+REITs are graded on FFO-based rubrics rather than the standard ones across
+**all three** strategies — S1 substitutes a cash-flow / distribution /
+valuation rubric for the 4-pillar one, and S2/S3 rebuild their returns,
+discipline, earnings-quality and valuation pillars on FFO too (never zeroing a
+REIT on the industrial Debt/EBITDA or a depreciation-inflated P/E). All are
+built around **approximate NAREIT FFO**:
+
+| Metric | Formula | How to read it | Rough range |
+| --- | --- | --- | --- |
+| **FFO (Funds From Operations)** | Net Income + D&A − property-sale gains + impairments | The REIT-standard cash-generation measure — adds back the large non-cash depreciation charge that understates a property business's real operating performance, and strips one-off property-sale gains so a REIT can't flatter its payout by selling buildings. Equity REITs only (mortgage REITs own no depreciable property; they're judged on book value). | Compare to Total Debt and the dividend, same as FCF elsewhere. |
+| **P/FFO** | Market cap ÷ FFO | The REIT equivalent of P/E — the standard REIT valuation multiple. | <12× cheap-ish, 12–18× typical, >18× rich (real-world REIT P/FFO commonly runs 10–20×). |
+| **FFO Payout Ratio %** | Dividends paid ÷ FFO | Share of FFO distributed. REITs must legally pay out ~90% of *taxable* income, so this runs structurally higher than a normal payout ratio. | ≤80% comfortable cushion, ≤100% sustainable norm, **>100% paying out more than the business generates** — a real red flag. |
+| **FFO Coverage** | FFO ÷ dividends paid | How many times FFO covers the dividend (inverse of payout ratio, as a multiple). | ≥1.0× sustainable, <1.0× tight to under-covered. |
+
+> **This is *Simplified* FFO, not full NAREIT FFO or AFFO — a data ceiling,
+> not a choice.** True NAREIT FFO also backs out gains/losses on property
+> sales, which Yahoo's generic statement templates never expose as a discrete
+> line (only as cash proceeds, commingled inside net income). AFFO further
+> requires splitting capex into maintenance vs. growth spend — a split no
+> structured financial statement provides; real analysts get it from each
+> REIT's own investor disclosures, and AFFO isn't even standardized
+> industry-wide the way NAREIT FFO is, so no universal formula could compute
+> it regardless of data access. **Treat REIT grades as directional** — good
+> for ruling out clearly over-levered or under-covered names, not for
+> fine-ranking REIT against REIT. When a REIT's cash flow statement lacks a
+> D&A line, S1 falls back to the GAAP-FCF proxy automatically. Full detail:
+> [REITs.md](REITs.md).
 
 ---
 
@@ -152,8 +310,8 @@ Volatility, crowding, and distress signals.
 | **Beta** | Sensitivity of the stock vs. the market (S&P 500) | Volatility/market-risk gauge. | **β = 1** moves with the market; **>1** amplified (1.5 ≈ 50% bigger swings); **<1** more stable; **<0** moves opposite the market. |
 | **Short Interest %** | Shares sold short ÷ public float | How much of the float is bet against. | <5% normal, 5–10% elevated, **>10–20% heavily shorted** (bearish sentiment and/or squeeze fuel). |
 | **Days to Cover** | Short interest ÷ average daily volume | Days of normal trading for shorts to buy back. | <1 easy to cover; **>5–7 crowded short**, higher squeeze potential. |
-| **Altman Z-Score** | `1.2·WC/TA + 1.4·RE/TA + 3.3·EBIT/TA + 0.6·MktCap/TL + 1.0·Sales/TA` | Bankruptcy-risk gauge (higher = safer). | **>2.99 "safe" zone, 1.81–2.99 "grey" zone, <1.81 "distress" zone.** Built for manufacturers — **unreliable for banks/financials** (shown N/A when inputs don't fit). |
-| **Piotroski F-Score** | 0–9 points across 9 fundamental tests (see below) | Overall fundamental strength. | **7–9 strong, 4–6 middling, 0–3 weak.** Needs a prior year of statements. |
+| **Altman Z-Score** | `1.2·WC/TA + 1.4·RE/TA + 3.3·EBIT/TA + 0.6·MktCap/TL + 1.0·Sales/TA` | Bankruptcy-risk gauge (higher = safer). | **>2.99 "safe" zone, 1.81–2.99 "grey" zone, <1.81 "distress" zone.** Built for manufacturers, so the strategy grades only *disqualify* capital-intensive names on it — asset-light/cyclical get a soft flag, REITs/financials ignore it (see stock-triage-strategy.md archetypes). |
+| **Piotroski F-Score** | 0–9 points across 9 fundamental tests (see below) | Overall fundamental strength. | **7–9 strong, 4–6 middling, 0–3 weak.** Needs a prior year of statements. Two of the 9 tests (falling leverage, rising current ratio) are biased against banks and REITs' intentionally high, stable leverage, so the strategy grade only *disqualifies* other archetypes on ≤3 — banks/REITs get a soft flag instead (see stock-triage-strategy.md archetypes). |
 
 **Piotroski F-Score — the 9 tests (1 point each):**
 *Profitability:* (1) positive net income, (2) positive operating cash flow,
@@ -191,17 +349,57 @@ Share counts as bars (left axis) with payout/yield as lines (right %-axis):
 - **Shares Outstanding** (bar) — total shares. **Falling = buybacks** (each
   remaining share owns more of the company); **rising = dilution** (your stake
   shrinks, often from stock-based compensation or equity raises).
-- **Float Shares** (bar) — shares freely tradable by the public. *Only the
-  latest year is available from the data source, so it appears on the most
-  recent bar only.*
 - **Treasury Shares** (bar) — repurchased shares held by the company (often ~0
   for firms that retire bought-back shares).
 - **Dividend Yield %** (line) — historical yield (annual dividends ÷ year-end price).
 - **Payout Ratio %** (line) — dividends as a share of earnings, over time.
 
+> **Where the share count comes from** — Yahoo reports two different share rows,
+> and they are not interchangeable: *issued* shares include treasury stock,
+> *outstanding* shares don't (for KO the gap is 64%). This panel always plots
+> outstanding. Where Yahoo has no outstanding row, it is reconstructed exactly as
+> issued − treasury. Only if the treasury row is missing too do the bars fall
+> back to issued shares — then they relabel to **Shares Issued** with a ⚠ in the
+> panel header, and the level may overstate the true count (the trend still reads
+> normally).
+
 *Read it for:* whether management is returning capital (shrinking share count,
 steady/rising dividend) or diluting holders, and whether the payout ratio is
 creeping toward unsustainable levels.
+
+### ROIC vs Cost of Capital (last 5 years)
+
+**ROIC** bars against a **WACC** line, both on the same %-axis so a bar
+clearing the line reads directly as value creation that year, and one falling
+short reads as value destruction.
+
+Unlike the flat reference line this chart used to show, **the WACC line is
+now historical** — each fiscal year gets its own reconstructed cost of
+capital, not today's figure repeated:
+
+- **Risk-free rate** — the 10-year Treasury yield as of that year's fiscal
+  year-end (not today's).
+- **Capital-structure weights** — that year's own market cap (period-end price
+  × shares outstanding) and total debt.
+- **Cost of debt** — that year's interest expense ÷ that year's total debt
+  (falls back to the risk-free rate when interest expense is unavailable, same
+  as the current-year WACC).
+- **Tax rate** — that year's pretax income and tax provision.
+- **Beta** — held at **today's** value across every year. This is the one
+  input Yahoo doesn't expose historically (only a single current trailing
+  beta), and reconstructing it per year would need a full regression against
+  market returns for every period — not a reliable, available data point. Beta
+  is also the least time-variable of WACC's inputs, so freezing it loses the
+  least; the line still tracks what actually moves year to year (rates,
+  leverage, tax rate).
+
+The rightmost year is pinned to the same current WACC shown in the
+Profitability panel, so the two figures always reconcile.
+
+*Read it for:* whether the ROIC−WACC spread has been consistently positive
+and widening (compounding value), consistently negative (structurally
+destroying value), or crossing back and forth (cyclical, or newly
+improving/deteriorating) — not just where today's snapshot sits.
 
 ---
 
@@ -284,6 +482,46 @@ settlements.
 
 ---
 
+## 11. Foreign-reporting tickers (ADRs) and currency
+
+Most tickers trade and report in the same currency, and every dollar figure in
+the app is simply "dollars" (or whatever that one currency is). **Foreign
+private issuers — ADRs like WIT (Wipro), or any ticker whose exchange currency
+differs from the currency its filings are denominated in — break that
+assumption**: the stock *trades* in one currency but the company *reports* its
+financials in another.
+
+For WIT: **Price** and **Market Cap** are in USD (it trades on the NYSE in
+dollars), but **Revenue, Total Cash, Total Debt, Total Equity, EBITDA, Net
+Income, FCF**, and similar statement-derived figures are in **INR** (Wipro
+reports in rupees). Yahoo's raw data mixes these silently — its own
+`enterpriseValue`, `enterpriseToEbitda`, and `priceToSalesTrailing12Months`
+fields, for example, quietly divide a USD number by an INR one, producing
+nonsense (a negative Enterprise Value, an EV/EBITDA under zero).
+
+**What the app does about it:**
+
+- Every metric that combines the two currencies — Enterprise Value,
+  EV/EBITDA, Price/Sales, Price/Cash, Price/FCF, WACC's capital weights,
+  Altman Z-Score — is recomputed from a market cap **converted into the
+  statement's reporting currency** via a live FX rate, instead of trusting
+  Yahoo's cross-currency passthrough fields.
+- Every figure is tagged with the currency it's actually denominated in.
+  **Price**, **Market Cap**, and **Diluted EPS** show in the trading currency;
+  **Enterprise Value, Revenue, Cash, Debt, Equity, EBITDA, Net Income, FCF,
+  Basic EPS, Dividend TTM**, and similar statement-derived figures show in the
+  reporting currency (₹ for WIT) — both on-screen and in the Excel export
+  (which adds a **Financial Statement Currency** row alongside Currency when
+  the two differ).
+- Ratios that are unitless (P/E, P/B, margins, ROE/ROA/ROIC) needed no fix —
+  currency cancels out of a ratio as long as both sides already agreed, which
+  they did for those.
+
+For the overwhelming majority of tickers (reporting currency = trading
+currency), none of this changes anything — the conversion is a no-op.
+
+---
+
 ## How the deep-dive panels map to this doc
 
 | Panel in the app | Section here |
@@ -294,5 +532,6 @@ settlements.
 | Dividend | §5 Dividends |
 | Strategy Ratings | §6 Strategy ratings |
 | Risk | §7 Risk |
-| Revenue/Growth/Share-Dilution charts | §8 Charts |
+| Revenue/Growth/Share-Dilution/ROIC-vs-WACC charts | §8 Charts |
 | Performance columns | §9 Performance |
+| Foreign-reporting tickers (ADRs) | §11 |

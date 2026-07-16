@@ -26,10 +26,11 @@ MAX_ROWS = 100        # context cap: keeps a huge screener from costing dollars/
 MAX_TURNS = 40        # history cap: oldest turns dropped beyond this
 MAX_MSG_CHARS = 8000  # per-message cap
 
-# Row keys that carry no analytical signal for the model (chart data and the
-# per-pillar derivation blobs — the scores/verdicts/flags themselves stay).
+# Row keys that carry no analytical signal for the model (chart data, the
+# per-pillar derivation blobs and the tooltip blurb — the scores/verdicts/
+# flags themselves stay).
 _SKIP_KEYS = {
-    "spark_6mo", "spark_1y", "spark_5y",
+    "spark_6mo", "spark_1y", "spark_5y", "summary",
     "strategy_1_detail", "strategy_2_detail", "strategy_3_detail",
 }
 
@@ -45,13 +46,20 @@ turn to turn — always answer against the snapshot in the latest system block.
 Data conventions (source: Yahoo Finance via yfinance; missing values are
 omitted from the snapshot):
 - fractions (0.25 = 25%): profit_margin, gross_margin, operating_margin,
-  ebitda_margin, roe, roa, payout_ratio, short_interest
+  ebitda_margin, roe, roa, payout_ratio, short_interest, ffo_payout
 - percentage points (25 = 25%): roic, roce, wacc, div_yield, debt_to_equity,
   div_growth_3y/5y, perf_* (cumulative price returns, dividends excluded)
 - plain ratios: pe, pb, ps, peg, p_fcf, ev_ebitda, debt_ebitda, current_ratio,
-  quick_ratio, fcf_coverage, ebitda_fcf
+  quick_ratio, fcf_coverage, ebitda_fcf, p_ffo, ffo_coverage
 - absolute currency: market_cap, enterprise_value, income, fcf, ebitda,
-  total_cash, total_debt, total_equity
+  total_cash, total_debt, total_equity, ffo
+
+ffo (Funds From Operations = Net Income + D&A − property-sale gains +
+impairments), p_ffo and ffo_payout/ffo_coverage are equity-REIT-only — they
+are None on every other row, including mortgage REITs (which own securities,
+not depreciable buildings, and are judged on book value and the earnings
+payout instead). This approximates NAREIT FFO but isn't exact, so flag REIT
+conclusions as directional.
 
 Each row carries three strategy grades (0-100, graded server-side; the .md
 docs live in the repo):

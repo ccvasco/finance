@@ -6,7 +6,9 @@ a company's deep-dive page). It is intended as a reference for a human or an AI
 assistant interpreting that spreadsheet.
 
 The export has five sheets: **Overview**, **Charts Data**, **Income Statement**,
-**Balance Sheet**, and **Cash Flow**. Each is documented below.
+**Balance Sheet**, and **Cash Flow**. Each is documented below. The deep-dive
+page also offers a second, DCF-specific export (`TICKER-DCF-YYYYMMDD.xlsx`, the
+"⭳ DCF" button) — see **The DCF export** near the end of this document.
 
 > **Units cheat-sheet.** This workbook uses **one convention for every rate**: all
 > margins, returns, yields, growth rates, payout and short interest are stored as
@@ -14,8 +16,16 @@ The export has five sheets: **Overview**, **Charts Data**, **Income Statement**,
 > `0.0038` = 0.38%. This matches the multi-ticker screener export
 > ([SCREENER_COLUMNS.md](SCREENER_COLUMNS.md)), so the same metric reads the same
 > in both files. The other value types are:
-> - **currency** — an absolute amount in the company's reporting currency. Per-share
->   values are per single share.
+> - **currency** — an absolute amount. For most tickers this is simply the
+>   company's one currency, shown as **Currency** near the top of the Overview
+>   sheet. For a foreign-reporting ticker (an ADR like WIT, which trades in USD
+>   but reports in INR) it isn't one currency: **Price, Market Cap, Diluted
+>   EPS** are in the trading currency (**Currency**), while **Enterprise Value,
+>   Revenue, Cash, Debt, Equity, EBITDA, Net Income, FCF, Basic EPS, Dividend
+>   TTM** and similar statement-derived figures are in the reporting currency
+>   (**Financial Statement Currency**, shown only when it differs from
+>   Currency). See §11 in [METRICS.md](METRICS.md) for why. Per-share values
+>   are per single share.
 > - **multiple (×)** — a valuation/coverage ratio (P/E, EV/EBITDA, FCF Coverage).
 > - **ratio** — a plain liquidity ratio (Current, Quick).
 > - **number / integer / date / share count** — as labelled.
@@ -33,8 +43,12 @@ The export has five sheets: **Overview**, **Charts Data**, **Income Statement**,
 ## Sheet 1 — Overview
 
 Top rows carry identity: **Ticker — Name**, then **Sector**, **Industry**,
-**Exchange**, **Currency** (the reporting currency for every absolute figure),
-**Price** (latest share price), and **Change** (intraday price change, **fraction**).
+**Exchange**, **Currency** (the currency the stock trades in — Price and
+Market Cap are in this currency), **Price** (latest share price), and
+**Change** (intraday price change, **fraction**). A **Financial Statement
+Currency** row appears here too, only for a foreign-reporting ticker whose
+statements are denominated in a different currency than it trades in — see
+the units cheat-sheet above and [METRICS.md](METRICS.md) §11.
 
 Below that, metrics are grouped into the same panels shown in the app.
 
@@ -52,6 +66,8 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Price/Cash | Market cap ÷ total cash. | multiple (×) | Lower = more cash backing the valuation. |
 | Price/FCF | Market cap ÷ free cash flow. | multiple (×) | <15 attractive, >25 expensive. Blank if FCF ≤ 0. |
 | EV/EBITDA | Enterprise value ÷ EBITDA. | multiple (×) | <10 cheap, 10–15 average, >15 expensive. |
+| DCF Value | Inferred fair value per share — 10-year two-stage FCFF DCF discounted at WACC (methodology: [METRICS.md](METRICS.md) §2). Trading currency. | currency / share | Compare against Price. Blank for financials/REITs. Use the **⭳ DCF** button for the full working. |
+| DCF Upside | DCF Value ÷ Price − 1 (labelled "DCF Upside %" in the app; exported as a fraction). | fraction | >0 = model reads it below fair value; <0 above. |
 | EPS | Trailing 12-month earnings per share. | currency / share | Higher and rising is better. |
 
 ### Dividend
@@ -80,6 +96,8 @@ Below that, metrics are grouped into the same panels shown in the app.
 | ROE | Net income ÷ shareholders' equity. | fraction | >0.15 good; can be inflated by leverage. |
 | ROA | Net income ÷ total assets. | fraction | >0.05 decent; banks/utilities lower. |
 | ROIC | After-tax operating profit ÷ (debt + equity). | fraction | Creates value only when > cost of capital (~0.08–0.10). >0.15 excellent. |
+| WACC | Weighted average cost of capital: (equity weight × CAPM cost of equity) + (debt weight × after-tax cost of debt). Cost of equity = 10Y Treasury + Beta × 5.5% equity risk premium (a fixed US-market estimate — see [METRICS.md](METRICS.md) §3). | fraction | Benchmark for ROIC; typically 0.06–0.12. |
+| ROIC − WACC | ROIC − WACC. | fraction | >0 value creation, <0 value destruction. Blank if either input is missing. |
 | ROCE | EBIT ÷ (total assets − current liabilities). | fraction | >0.15 strong; pre-tax sibling of ROIC. |
 | Revenue/Share | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising is the signal to want. |
 | Net Income | Net income to common shareholders (Yahoo's trailing 12 months — its window and definition differ from the fiscal-year statement figure in Charts Data, so the two can disagree). | currency | Positive and growing is the goal. |
@@ -98,7 +116,7 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Current Ratio | Current assets ÷ current liabilities. | ratio | >1 covers near-term bills; 1.5–3 comfortable. |
 | Quick Ratio | (Current assets − inventory) ÷ current liabilities. | ratio | >1 strong; stricter than current ratio. |
 | Free Cash Flow | Operating cash flow − capital expenditure. | currency | Positive and growing is the goal. |
-| EBITDA | Earnings before interest, tax, depreciation & amortization (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
+| EBITDA | Net Income + Interest + Tax + Depreciation & Amortization — built up from the bottom line, not down from revenue (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion. |
 
 ### Risk
@@ -108,8 +126,8 @@ Below that, metrics are grouped into the same panels shown in the app.
 | Beta | Sensitivity vs. the market (S&P 500). | number | 1 = with market; >1 amplified; <1 stabler; <0 inverse. |
 | Short Interest | Shares sold short ÷ public float. | fraction | <0.05 normal, 0.05–0.10 elevated, >0.10–0.20 heavily shorted. |
 | Days to Cover | Short interest ÷ average daily volume. | number (days) | <1 easy; >5–7 crowded short. |
-| Altman Z-Score | Bankruptcy-risk gauge (higher = safer). | number | >2.99 safe, 1.81–2.99 grey, <1.81 distress. Blank for banks/financials. |
-| Piotroski F-Score | Fundamental strength across 9 tests (1 pt each). | integer 0–9 | 7–9 strong, 4–6 middling, 0–3 weak. |
+| Altman Z-Score | Bankruptcy-risk gauge (higher = safer). | number | >2.99 safe, 1.81–2.99 grey, <1.81 distress. Ignored for financials/REITs/mortgage REITs; softened to a flag (not a kill) for asset-light and cyclical names — see [business-type archetypes](stock-triage-strategy.md#business-type-archetypes). |
+| Piotroski F-Score | Fundamental strength across 9 tests (1 pt each). | integer 0–9 | 7–9 strong, 4–6 middling, 0–3 weak. Replaced by ROE/net-margin for financials and REITs, and by book-value-per-share trend for mortgage REITs. |
 
 ### Strategy Ratings
 
@@ -170,9 +188,8 @@ table needs a prior year per bar, so it shows one fewer.
 | Column | Meaning | Units |
 | --- | --- | --- |
 | Year | Fiscal year. | year |
-| Shares Outstanding | Total shares issued. Falling = buybacks; rising = dilution. | share count |
-| Float Shares | Shares freely tradable by the public. Latest year only (current snapshot); other years blank. | share count |
-| Treasury Shares | Repurchased shares held by the company (often ~0 when retired). | share count |
+| Shares Outstanding | Shares held by investors, excluding treasury. Falling = buybacks; rising = dilution. Reconstructed as issued − treasury where Yahoo has no outstanding row; renamed **Shares Issued (incl. treasury)** in the rarer case where there is no treasury row to net off either, since the level may then run high. | share count |
+| Treasury Shares | Repurchased shares held by the company (often ~0 when retired). Excluded from shares outstanding. | share count |
 | Dividend Yield | Historical yield = annual dividends ÷ year-end price. | fraction |
 | Payout Ratio | Dividends as a share of earnings, per year. | fraction |
 
@@ -208,11 +225,55 @@ reconciled.
 
 ---
 
+## The DCF export (⭳ DCF button)
+
+A second, separate export on the deep-dive page: `TICKER-DCF-YYYYMMDD.xlsx`,
+a single **DCF Valuation** sheet that shows every input and intermediate step
+behind the screener's **DCF Value** column (methodology:
+[METRICS.md](METRICS.md) §2). The button appears only when a DCF exists for
+the stock — financials and REITs (where an FCF model doesn't fit) don't get
+one.
+
+**It is a live spreadsheet model, not a static dump.** The input cells
+(base FCF, growth, WACC components, debt, cash, shares, FX) hold plain values;
+**every downstream cell holds an actual Excel formula** referencing those
+inputs — the growth fade, each year's projected FCF and discount factor, the
+present values, the terminal value, the whole enterprise → equity → per-share
+→ DCF-Value bridge, and the WACC composition. So you can trace exactly how each
+number was reached, and if you edit an assumption (say, the terminal growth or
+a projected year's growth) the valuation recomputes in your spreadsheet app.
+
+Sections:
+
+- **Result** — DCF Value (trading currency), current price, upside
+  (**fraction**, like every rate in these exports). When the DCF is N/A a
+  **Why N/A** row states the exact reason (business type, FCF ≤ 0, WACC
+  unavailable or too close to terminal growth, shares missing).
+- **Inputs** — business-type archetype, base FCF, raw historical FCF CAGR and
+  the clamped stage-1 growth actually used, terminal growth, horizon, WACC,
+  debt, cash, shares outstanding (flagged when derived from market cap ÷
+  price), and both currencies plus the FX rate for foreign-reporting tickers.
+- **WACC breakdown (CAPM)** — beta, risk-free rate, ERP, cost of
+  equity/debt, tax rate, capital weights, and the WACC formula result.
+- **Historical FCF** — the statement series the growth rate came from, with
+  YoY growth per year.
+- **Projection** — one row per forecast year: fading growth rate, projected
+  FCF, discount factor, present value; plus the terminal-value row.
+- **Valuation bridge** — PV of the forecast years + PV of terminal value =
+  enterprise value, − debt + cash = equity value, ÷ shares (× FX for ADRs) =
+  DCF Value, against the current price.
+
+All rates are stored as decimal fractions with a percent display format;
+currency amounts are raw values in the currency stated in each row label.
+
 ## Not in the export
 
 The deep-dive page also shows an **Earnings & Splits Calendar** (next earnings
-date, EPS/revenue estimates, recent earnings surprises, stock-split history) and
-an interactive **Price** chart. These are not part of the Excel export.
+date, EPS/revenue estimates, recent earnings surprises, stock-split history), an
+interactive **Price** chart, and a **ROIC vs Cost of Capital** chart (ROIC bars
+against a per-fiscal-year WACC line — every input except beta reconstructed
+historically, not today's WACC repeated; see [METRICS.md](METRICS.md) §8).
+These are not part of the Excel export.
 
 See [SCREENER_COLUMNS.md](SCREENER_COLUMNS.md) for the multi-ticker screener
 export, and [METRICS.md](METRICS.md) §6 for the strategy-rating methodology in

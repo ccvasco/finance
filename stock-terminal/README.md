@@ -17,7 +17,7 @@ to build a side-by-side comparison grid:
 |---|---|
 | **Price charts** | Inline 6-month, 1-year, and 5-year price sparklines (green = up over the window, red = down) |
 | **Strategy grades** | S1 Triage, S2 Compounder, S3 Defensive, Strat Min — each stock scored 0–100 against the three long-term strategy docs (see below), color-coded by decision band — plus S1 Flags, the triage context warnings (🔺 priced for perfection, 💰 payout stress, 📉 crowded short, …) |
-| **Valuation** | P/E, Forward P/E, PEG, P/B, P/S, P/C, P/FCF, EV/EBITDA, Diluted EPS, Basic EPS |
+| **Valuation** | P/E, Forward P/E, PEG, P/B, P/S, P/C, P/FCF, EV/EBITDA, DCF Value, DCF Upside, Diluted EPS, Basic EPS |
 | **Profitability** | Net Income, Profit Margin, Gross Margin, Operating Margin, EBITDA Margin, FCF, ROA, ROE, ROIC, ROCE, WACC, Revenue/Share |
 | **Financial Health** | Total Cash, Total Debt, Total Equity, Debt/Equity, Debt/EBITDA, LT Debt/Equity, Current Ratio, Quick Ratio, EBITDA, EBITDA/FCF |
 | **Dividend** | Yield, 5Y Avg Yield, Div Estimate, Div TTM, Payout Ratio, FCF Coverage, Div Growth 3Y/5Y CAGR, Years of consecutive increases, Ex-Dividend Date |
@@ -25,6 +25,16 @@ to build a side-by-side comparison grid:
 | **Performance** | Price-only return (excl. dividends): YTD, 1Y, 3Y, 5Y, 10Y |
 
 FCF Coverage is color-coded: green ≥ 1.2× · yellow 0.8–1.2× · red < 0.8×.
+
+**DCF Value.** An inferred fair value per share from a 10-year two-stage FCFF
+DCF — latest FCF grown at the company's own historical FCF CAGR (clamped
+0–20%), fading linearly to 2.5% terminal growth, discounted at the row's
+WACC. It sits **next to Price**, colored green when the model reads the stock
+as undervalued and red when overvalued; hover the cell for the exact upside %
+versus price (a small legend rides along). N/A for financials and REITs, where
+an FCF model doesn't fit the business. Assumption-heavy by construction: treat
+it as a screen, not a target price. Full methodology in
+[METRICS.md](METRICS.md) §2.
 
 **Strategy grades.** Every row is graded (0–100, server-side) against three
 long-term investing strategies, each documented in this directory:
@@ -41,10 +51,22 @@ long-term investing strategies, each documented in this directory:
 **Strat Min** is the minimum of the three — sort it descending to find the
 stocks rated best under *every* strategy at once. **S1 Flags** carries the
 triage framework's never-disqualifying context flags (priced for perfection,
-suspiciously cheap, divergent multiples, payout stress, crowded short, high
-beta, plus data-sanity warnings) so the deep dive starts with eyes open. The
-grades and flags also appear in both Excel exports and as a **Strategy
-Ratings** panel in the deep dive.
+suspiciously cheap, low Altman-Z, low Piotroski, divergent multiples, payout
+stress, crowded short, high beta, plus data-sanity warnings) so the deep dive
+starts with eyes open. The grades and flags also appear in both Excel exports
+and as a **Strategy Ratings** panel in the deep dive.
+
+**Business-type aware.** A metric that disqualifies one business model is
+often meaningless for another, so every stock is classified into one of six
+archetypes — capital-intensive (default), cyclical, asset-light, financial,
+REIT, and mortgage REIT — and each strategy substitutes the metrics that
+actually fit. Financials get an ROE/net-margin rubric instead of Altman-Z and
+leverage kills; REITs get an FFO-based rubric; **mortgage REITs** (leveraged
+mortgage-securities portfolios, not property owners) get their own rubric
+built on dividend coverage, price-to-book, leverage, and book-value-per-share
+trend — the last being the single best signal of whether an mREIT is
+compounding or quietly paying its dividend out of capital. Full table:
+[stock-triage-strategy.md § Business-type archetypes](stock-triage-strategy.md#business-type-archetypes).
 
 **Hover any grade to see how it was derived** — the tooltip shows a per-pillar
 breakdown (points earned / available, and the metric values behind each), so
@@ -95,6 +117,8 @@ the set is untouched, so returning to a large table is instant.
 Click any ticker row to open a full analysis page:
 
 - **Metric panels** — Valuation, Dividend (incl. 3Y/5Y growth CAGR and ex-date), Profitability, Financial Health, Risk, and **Strategy Ratings** (the three strategy grades + min, with verdicts and the S1 context flags).
+- **Company Profile** — what the company is and does (Yahoo business summary), headquarters, website, employees, sector/industry, exchange. In the screener and watchlist tables the same blurb appears when hovering a ticker cell.
+- **Ethics & Controversies** — the controversy/criticism-type sections of the company's Wikipedia article (labor practices, environmental record, lawsuits, human-rights concerns, …) with a link to the full article. Community-written content — verify independently. Empty when the article has no such sections.
 - **Revenue · Profit · Net Income · FCF** — 5-year bar chart with margin % on hover.
 - **Growth YoY** — Revenue, EPS, and EBITDA growth bars plus an EBITDA Margin line.
 - **Share Dilution** — shares outstanding/float/treasury bars with yield and payout-ratio lines.
@@ -102,6 +126,7 @@ Click any ticker row to open a full analysis page:
 - **Earnings & Splits Calendar** — next earnings date with EPS/revenue estimates, ex-dividend / dividend dates, last 12 quarters of earnings surprises, full split history.
 - **Financial statements** — Income Statement, Balance Sheet, Cash Flow (annual and quarterly), with a TTM/MRQ column prepended.
 - **Excel export** — download a single-company workbook (Overview, Charts Data, and all three statements).
+- **DCF export** — a second, DCF-specific workbook (`TICKER-DCF-*.xlsx`) that is a **live spreadsheet model** of the screener's DCF Value: inputs as values, and every downstream cell (growth fade, projected cash flows, discount factors, present values, terminal value, WACC composition, and the enterprise → equity → per-share bridge) as an actual Excel formula — so you can trace each number and tweak an assumption to watch it recompute. The button appears only for stocks that get a DCF (not financials/REITs).
 
 ### Calendar tab
 Market-wide upcoming events over a *Next 7 / 14 / 30 days* window:
@@ -241,6 +266,7 @@ All endpoints are served by `app.py` on the same port as the frontend.
 | `GET` | `/api/stock_calendar?ticker=AAPL` | Per-ticker: next earnings + estimates, ex-div dates, earnings history, split history |
 | `POST` | `/api/export` `{"tickers": [...]}` | Streams a multi-ticker `.xlsx` workbook |
 | `POST` | `/api/export_deepdive` `{"ticker": "AAPL"}` | Streams a single-company `.xlsx` workbook |
+| `POST` | `/api/export_dcf` `{"ticker": "AAPL"}` | Streams the DCF-valuation `.xlsx` workbook (all inputs + projection + bridge) |
 | `POST` | `/api/cache/clear` | Clears the server-side TTL cache |
 | `POST` | `/api/chat` `{"messages": [...], "rows": [...], "context_label": "Screener"}` | Analyst Chat — streams the agent's reply as Server-Sent Events (`{"text": …}` chunks, then `{"done": …}` or `{"error": …}`); `rows`/`context_label` are the current tab's snapshot |
 
@@ -271,7 +297,21 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   the UI renders those as **N/A** rather than failing.
 - **WACC** — cost of equity uses CAPM (10-year US Treasury yield + Beta × 5.5%
   ERP); cost of debt is derived from interest expense ÷ total debt and falls
-  back to the risk-free rate when interest expense is unavailable.
+  back to the risk-free rate when interest expense is unavailable. The 5.5%
+  ERP is a fixed US-market estimate (Damodaran), applied to every ticker
+  regardless of domicile — it understates the true cost of equity for foreign
+  (especially emerging-market) names. The deep dive's "ROIC vs Cost of
+  Capital" chart shows WACC **historically**, reconstructing every input except
+  beta (frozen at today's value) per fiscal year, rather than repeating today's
+  WACC as a flat line. See [METRICS.md](METRICS.md) §3 and §8.
+- **Foreign-reporting tickers (ADRs)** — a stock like WIT trades in USD but
+  reports its financials in INR. Price/Market Cap/Diluted EPS show in the
+  trading currency; Enterprise Value, Revenue, Cash, Debt, Equity, EBITDA, Net
+  Income, FCF, Basic EPS and Dividend TTM show in the reporting currency, and
+  every ratio that combines the two (EV/EBITDA, P/S, P/Cash, P/FCF, WACC,
+  Altman Z) is computed from a currency-converted market cap rather than
+  Yahoo's own (frequently broken, for these tickers) cross-currency fields.
+  See [METRICS.md](METRICS.md) §11.
 - **Dividend growth** — computed as the CAGR of completed-calendar-year
   dividend totals (requires ≥ 4 years of history for 3Y CAGR, ≥ 6 for 5Y;
   otherwise N/A).
@@ -279,5 +319,8 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   Total return for dividend payers is higher than shown.
 - **Watchlist and settings** — stored in your browser's `localStorage`.
   Clearing site data resets them.
-- **Altman Z-Score** — designed for manufacturers; unreliable for banks and
-  financials (shown as N/A when inputs do not fit the model).
+- **Altman Z-Score** — designed for manufacturers; ignored entirely for
+  financials, REITs and mortgage REITs (structurally meaningless for
+  balance-sheet businesses), and softened to an advisory flag rather than a
+  hard kill for asset-light and cyclical names. See [business-type
+  archetypes](stock-triage-strategy.md#business-type-archetypes).

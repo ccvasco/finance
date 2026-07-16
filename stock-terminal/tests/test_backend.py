@@ -615,6 +615,8 @@ _BASE_INFO = {
     "totalCash": 10e9,
     "enterpriseToEbitda": 12.0,
     "trailingEps": 5.0,
+    "totalRevenue": 400e9,
+    "operatingMargins": 0.20,
     "netIncomeToCommon": 50e9,
     "profitMargins": 0.25,
     "ebitda": 120e9,
@@ -656,10 +658,13 @@ _BAL_DF = _make_df(
 )
 
 _CF_DF = _make_df(
-    ["Free Cash Flow", "Cash Dividends Paid"],
+    ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid"],
     ["2024-12-31", "2023-12-31"],
     {
         "Free Cash Flow":      [40e9, 38e9],
+        # No "Capital Expenditure" row on purpose — exercises the FCF−OCF
+        # derivation fallback (see deepdive()'s capex_latest).
+        "Operating Cash Flow": [48e9, 44e9],
         "Cash Dividends Paid": [-8e9, -7e9],
     },
 )
@@ -700,7 +705,8 @@ class TestScreenerRow(unittest.TestCase):
         with _patch_all():
             row = app.screener_row("TST")
         required = ["ticker", "name", "price", "market_cap", "pe", "forward_pe", "peg",
-                    "pb", "ps", "pc", "p_fcf", "ev_ebitda", "eps",
+                    "pb", "ps", "pc", "p_fcf", "ev_ebitda", "dcf_value", "dcf_upside",
+                    "eps",
                     "income", "profit_margin", "fcf", "roa", "roe", "roic",
                     "debt_to_equity", "lt_debt_to_equity",
                     "div_yield", "five_year_avg_yield", "dividend_estimate", "dividend_ttm",
@@ -900,6 +906,338 @@ class TestPiotroskiF(unittest.TestCase):
         self.assertLess(s, 9)
 
 
+class TestBvpsGrowth(unittest.TestCase):
+    """Annualized book-value-per-share trend (mortgage-REIT quality signal)."""
+
+    def _bal(self, equity, shares, dates):
+        return _make_df(["Stockholders Equity", "Ordinary Shares Number"], dates,
+                        {"Stockholders Equity": equity, "Ordinary Shares Number": shares})
+
+    def test_growing_book_value_is_positive(self):
+        # BVPS 8 -> 10 over 2 year-gaps: (10/8)^(1/2)-1 ≈ +11.8%/yr
+        bal = self._bal([1000.0, 900.0, 800.0], [100.0, 100.0, 100.0],
+                        ["2024-12-31", "2023-12-31", "2022-12-31"])
+        g = app._bvps_growth(bal)
+        self.assertAlmostEqual(g, ((10.0 / 8.0) ** 0.5 - 1) * 100, places=4)
+
+    def test_eroding_book_value_is_negative(self):
+        # newest year (2024) has lower BVPS than the prior year (2023): equity
+        # shrank AND shares grew, so BVPS falls 1000/100=10 -> 900/110≈8.2.
+        bal = self._bal([900.0, 1000.0], [110.0, 100.0],
+                        ["2024-12-31", "2023-12-31"])
+        self.assertLess(app._bvps_growth(bal), 0)
+
+    def test_none_without_two_years(self):
+        bal = self._bal([1000.0], [100.0], ["2024-12-31"])
+        self.assertIsNone(app._bvps_growth(bal))
+
+    def test_none_on_nonpositive_equity(self):
+        bal = self._bal([-500.0, 900.0], [100.0, 100.0],
+                        ["2024-12-31", "2023-12-31"])
+        self.assertIsNone(app._bvps_growth(bal))
+
+
+class TestFcfCagr(unittest.TestCase):
+    """Annualized FCF growth from the cash-flow statement (DCF stage-1 input)."""
+
+    def _cf(self, fcf, dates):
+        return _make_df(["Free Cash Flow"], dates, {"Free Cash Flow": fcf})
+
+    def test_growth_from_fixture(self):
+        # _CF_DF: 38e9 (2023) -> 40e9 (2024), one year gap
+        self.assertAlmostEqual(app._fcf_cagr(_CF_DF),
+                               (40.0 / 38.0 - 1) * 100, places=6)
+
+    def test_multi_year_cagr(self):
+        # 100 -> 121 over 2 year-gaps: exactly 10%/yr
+        cf = self._cf([121.0, 110.0, 100.0],
+                      ["2024-12-31", "2023-12-31", "2022-12-31"])
+        self.assertAlmostEqual(app._fcf_cagr(cf), 10.0, places=6)
+
+    def test_none_single_period(self):
+        self.assertIsNone(app._fcf_cagr(self._cf([100.0], ["2024-12-31"])))
+
+    def test_none_on_nonpositive_endpoint(self):
+        cf = self._cf([100.0, -50.0], ["2024-12-31", "2023-12-31"])
+        self.assertIsNone(app._fcf_cagr(cf))
+
+    def test_none_without_fcf_row_or_df(self):
+        df = _make_df(["Operating Cash Flow"], ["2024-12-31"],
+                      {"Operating Cash Flow": [100.0]})
+        self.assertIsNone(app._fcf_cagr(df))
+        self.assertIsNone(app._fcf_cagr(None))
+
+
+class TestDcfEquityValue(unittest.TestCase):
+    """Two-stage FCFF DCF math (see app._dcf_equity_value)."""
+
+    def test_flat_growth_matches_closed_form(self):
+        # g0 = terminal g, so every year grows 2.5% and the whole model
+        # collapses to a closed form: PV = fcf·x·(1−x^N)/(1−x) + TV/(1+w)^N
+        # with x = 1.025/1.10.
+        fcf, w, g = 100.0, 0.10, 0.025
+        x = (1 + g) / (1 + w)
+        pv_stage1 = fcf * x * (1 - x ** 10) / (1 - x)
+        fcf10 = fcf * (1 + g) ** 10
+        pv_tv = (fcf10 * (1 + g) / (w - g)) / (1 + w) ** 10
+        expected = pv_stage1 + pv_tv
+        got = app._dcf_equity_value(100.0, 2.5, 10.0, 0, 0)
+        self.assertAlmostEqual(got, expected, places=6)
+
+    def test_g0_none_falls_back_to_terminal(self):
+        self.assertEqual(app._dcf_equity_value(100.0, None, 10.0, 0, 0),
+                         app._dcf_equity_value(100.0, 2.5, 10.0, 0, 0))
+
+    def test_g0_clamped_to_band(self):
+        self.assertEqual(app._dcf_equity_value(100.0, 50.0, 10.0, 0, 0),
+                         app._dcf_equity_value(100.0, 20.0, 10.0, 0, 0))
+        self.assertEqual(app._dcf_equity_value(100.0, -5.0, 10.0, 0, 0),
+                         app._dcf_equity_value(100.0, 0.0, 10.0, 0, 0))
+
+    def test_higher_growth_is_worth_more(self):
+        self.assertGreater(app._dcf_equity_value(100.0, 15.0, 10.0, 0, 0),
+                           app._dcf_equity_value(100.0, 5.0, 10.0, 0, 0))
+
+    def test_guards_return_none(self):
+        self.assertIsNone(app._dcf_equity_value(None, 5.0, 10.0, 0, 0))
+        self.assertIsNone(app._dcf_equity_value(0.0, 5.0, 10.0, 0, 0))
+        self.assertIsNone(app._dcf_equity_value(-10.0, 5.0, 10.0, 0, 0))
+        self.assertIsNone(app._dcf_equity_value(100.0, 5.0, None, 0, 0))
+        # WACC must clear terminal growth (2.5) by the margin (0.5): 3.0 fails
+        self.assertIsNone(app._dcf_equity_value(100.0, 5.0, 3.0, 0, 0))
+
+    def test_net_debt_bridge(self):
+        base = app._dcf_equity_value(100.0, 2.5, 10.0, 0, 0)
+        self.assertAlmostEqual(
+            app._dcf_equity_value(100.0, 2.5, 10.0, 100.0, 40.0), base - 60.0)
+        # None debt/cash treated as zero
+        self.assertAlmostEqual(
+            app._dcf_equity_value(100.0, 2.5, 10.0, None, None), base)
+
+
+class TestDcfDetail(unittest.TestCase):
+    """_dcf_detail's breakdown must reconcile with _dcf_equity_value, and
+    _wacc_detail with _compute_wacc (both pairs are wrapper + detail)."""
+
+    def test_equity_value_matches_wrapper(self):
+        d = app._dcf_detail(100.0, 8.0, 10.0, 30.0, 10.0)
+        self.assertEqual(d["equity_value"],
+                         app._dcf_equity_value(100.0, 8.0, 10.0, 30.0, 10.0))
+
+    def test_none_conditions_match_wrapper(self):
+        for args in ((None, 5.0, 10.0, 0, 0), (0.0, 5.0, 10.0, 0, 0),
+                     (100.0, 5.0, None, 0, 0), (100.0, 5.0, 3.0, 0, 0)):
+            self.assertIsNone(app._dcf_detail(*args))
+            self.assertIsNone(app._dcf_equity_value(*args))
+
+    def test_fade_endpoints_and_structure(self):
+        d = app._dcf_detail(100.0, 12.0, 10.0, 0, 0)
+        years = d["years"]
+        self.assertEqual(len(years), app._DCF_YEARS)
+        self.assertEqual([y["year"] for y in years], list(range(1, 11)))
+        self.assertAlmostEqual(years[0]["growth"], 12.0)              # year 1 = g0
+        self.assertAlmostEqual(years[-1]["growth"], app._DCF_TERMINAL_G)  # year N = terminal
+        self.assertEqual(d["g0_used"], 12.0)
+
+    def test_pv_components_reconcile(self):
+        d = app._dcf_detail(100.0, 8.0, 10.0, 30.0, 10.0)
+        self.assertAlmostEqual(d["stage1_pv"], sum(y["pv"] for y in d["years"]))
+        self.assertAlmostEqual(d["terminal_pv"],
+                               d["terminal_value"] * d["terminal_df"])
+        self.assertAlmostEqual(d["enterprise_value"],
+                               d["stage1_pv"] + d["terminal_pv"])
+        self.assertAlmostEqual(d["equity_value"],
+                               d["enterprise_value"] - 30.0 + 10.0)
+        # per-year rows are internally consistent too
+        for y in d["years"]:
+            self.assertAlmostEqual(y["pv"], y["fcf"] * y["discount_factor"])
+
+    def test_wacc_detail_matches_compute_wacc(self):
+        args = (1.2, 1e12, 30e9, 1.5e9, 0.21, 4.0)
+        d = app._wacc_detail(*args)
+        self.assertEqual(d["wacc"], app._compute_wacc(*args))
+        self.assertAlmostEqual(d["w_e"] + d["w_d"], 1.0)
+        self.assertAlmostEqual(d["cost_of_equity"], 4.0 + 1.2 * app._ERP)
+        self.assertIsNone(app._wacc_detail(None, 1e12, 0, None, 0.21, 4.0))
+        self.assertIsNone(app._compute_wacc(None, 1e12, 0, None, 0.21, 4.0))
+
+
+class TestScreenerRowDcf(unittest.TestCase):
+    """dcf_value / dcf_upside wiring inside _screener_row."""
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _row(self, info_overrides=None, fx=None):
+        info = {**_BASE_INFO, "beta": 1.0, "sharesOutstanding": 1e10,
+                **(info_overrides or {})}
+        with _patch_all(), \
+             patch("app.get_info", return_value=info), \
+             patch("app.get_risk_free_rate", return_value=4.0):
+            if fx:
+                with patch("app._fx_rate", side_effect=fx):
+                    return app.screener_row("TST")
+            return app.screener_row("TST")
+
+    def test_happy_path_cross_checks_helper(self):
+        row = self._row()
+        self.assertIsNotNone(row["dcf_value"])
+        expected = app._dcf_equity_value(
+            40e9, app._fcf_cagr(_CF_DF), row["wacc"], 30e9, 10e9) / 1e10
+        self.assertAlmostEqual(row["dcf_value"], expected, places=6)
+        self.assertAlmostEqual(row["dcf_upside"],
+                               (row["dcf_value"] / 100.0 - 1) * 100, places=6)
+
+    def test_shares_fallback_from_market_cap(self):
+        # No sharesOutstanding: falls back to market_cap/price = 1e12/100 = 1e10
+        explicit = self._row()
+        info = {**_BASE_INFO, "beta": 1.0}
+        with _patch_all(), \
+             patch("app.get_info", return_value=info), \
+             patch("app.get_risk_free_rate", return_value=4.0):
+            fallback = app.screener_row("TST")
+        self.assertAlmostEqual(fallback["dcf_value"], explicit["dcf_value"])
+
+    def test_none_when_wacc_unavailable(self):
+        # _BASE_INFO has no beta -> WACC None -> DCF None (keys still present)
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertIsNone(row["dcf_value"])
+        self.assertIsNone(row["dcf_upside"])
+
+    def test_blanked_for_financials_and_reits(self):
+        bank = self._row({"sector": "Financial Services",
+                          "industry": "Banks — Diversified"})
+        self.assertIsNone(bank["dcf_value"])
+        reit = self._row({"sector": "Real Estate", "industry": "REIT — Retail"})
+        self.assertIsNone(reit["dcf_value"])
+        mreit = self._row({"sector": "Real Estate", "industry": "REIT — Mortgage"})
+        self.assertIsNone(mreit["dcf_value"])
+
+    def test_fx_mismatch_converts_to_trading_currency(self):
+        # Trades USD, reports INR: the per-share DCF (reporting ccy) must come
+        # back in USD via _fx_rate(INR, USD) so it compares against price.
+        rates = {("USD", "INR"): 83.0, ("INR", "USD"): 1 / 83.0}
+        row = self._row({"currency": "USD", "financialCurrency": "INR"},
+                        fx=lambda b, q: rates.get((b, q), 1.0))
+        self.assertIsNotNone(row["dcf_value"])
+        expected = app._dcf_equity_value(
+            40e9, app._fcf_cagr(_CF_DF), row["wacc"], 30e9, 10e9) / 1e10 / 83.0
+        self.assertAlmostEqual(row["dcf_value"], expected, places=6)
+
+    def test_dcf_keys_registered_as_non_metrics(self):
+        # Blanked-by-design fields must not count toward Stage-0 quarantine
+        self.assertIn("dcf_value", strategies._NON_METRIC_KEYS)
+        self.assertIn("dcf_upside", strategies._NON_METRIC_KEYS)
+        self.assertIn("financial_currency", strategies._NON_METRIC_KEYS)
+
+
+@unittest.skipUnless(app._HAS_OPENPYXL, "openpyxl not installed")
+class TestDcfWorkbook(unittest.TestCase):
+    """build_dcf_workbook — the per-stock DCF-valuation Excel export."""
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _build(self, info_overrides=None):
+        info = {**_BASE_INFO, "beta": 1.0, "sharesOutstanding": 1e10,
+                **(info_overrides or {})}
+        with _patch_all(), \
+             patch("app.get_info", return_value=info), \
+             patch("app.get_risk_free_rate", return_value=4.0):
+            row = app.screener_row("TST")
+            app.clear_cache()   # row is rebuilt inside the builder from the same mocks
+            return row, app.build_dcf_workbook("TST")
+
+    def _cells(self, data):
+        """(worksheet, {label: colB-value}) from the DCF sheet. Column B now
+        holds Excel *formulas* (strings starting with '=') for every derived
+        cell — openpyxl does not evaluate them, so value assertions here target
+        the input cells; formula wiring is asserted separately, and the numbers
+        are covered by TestDcfDetail / the live LibreOffice recalc check."""
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb["DCF Valuation"]
+        return ws, {ws.cell(row=i, column=1).value: ws.cell(row=i, column=2).value
+                    for i in range(1, ws.max_row + 1)
+                    if ws.cell(row=i, column=1).value is not None}
+
+    def test_inputs_carry_real_values(self):
+        row, data = self._build()
+        _, cells = self._cells(data)
+        # input cells hold plain values (not formulas)
+        self.assertAlmostEqual(cells["Base FCF — latest annual (USD)"], row["fcf"])
+        self.assertAlmostEqual(cells["Shares Outstanding"], 1e10)
+        self.assertAlmostEqual(cells["Terminal growth"], app._DCF_TERMINAL_G / 100.0)
+        self.assertEqual(cells["Projection horizon (years)"], app._DCF_YEARS)
+        self.assertAlmostEqual(cells["Beta"], 1.0)
+        self.assertAlmostEqual(cells["Risk-free rate (10Y Treasury)"], 0.04)
+        self.assertAlmostEqual(cells["Equity risk premium (fixed US estimate)"],
+                               app._ERP / 100.0)
+
+    def test_derived_cells_are_live_formulas(self):
+        _, data = self._build()
+        _, cells = self._cells(data)
+        # every downstream number is a formula, not a baked value
+        for label in ("DCF Value (USD / share)", "DCF Upside vs Price",
+                      "Cost of equity = rfr + β × ERP",
+                      "Equity weight = mktcap ÷ (mktcap + debt)",
+                      "Debt weight = debt ÷ (mktcap + debt)",
+                      "Effective tax = min(max(tax ÷ pretax, 0), 50%)",
+                      "WACC = wE·costE + wD·costD·(1−tax)",
+                      "Enterprise value (DCF)", "Equity value",
+                      "DCF Value (USD)", "Upside vs price"):
+            v = cells[label]
+            self.assertTrue(isinstance(v, str) and v.startswith("="),
+                            f"{label!r} should be a formula, got {v!r}")
+
+    def test_no_label_cell_is_a_formula(self):
+        # Regression: labels starting with "=" (e.g. "= Equity value") were
+        # silently stored as formulas and rendered as Err:509. No column-A
+        # label cell may be a formula.
+        from openpyxl import load_workbook
+        _, data = self._build()
+        ws = load_workbook(io.BytesIO(data))["DCF Valuation"]
+        for i in range(1, ws.max_row + 1):
+            c = ws.cell(row=i, column=1)
+            self.assertNotEqual(c.data_type, "f",
+                                f"row {i} label is a formula: {c.value!r}")
+
+    def test_projection_table_structure(self):
+        _, data = self._build()
+        ws, _ = self._cells(data)
+        col_a = [ws.cell(row=i, column=1).value for i in range(1, ws.max_row + 1)]
+        self.assertTrue(all(y in col_a for y in range(1, app._DCF_YEARS + 1)))
+        self.assertIn("Terminal", col_a)
+        # a projection PV cell (column E) is a formula
+        for i in range(1, ws.max_row + 1):
+            if ws.cell(row=i, column=1).value == 1:      # year-1 row
+                self.assertTrue(str(ws.cell(row=i, column=5).value).startswith("="))
+                break
+
+    def test_blanked_archetype_explains_why(self):
+        _, data = self._build({"sector": "Financial Services",
+                               "industry": "Banks — Diversified"})
+        _, cells = self._cells(data)
+        self.assertIsNone(cells["DCF Value (USD / share)"])
+        self.assertIn("business type", cells["Why N/A"])
+        # no projection/bridge built for a blanked archetype
+        self.assertNotIn("Enterprise value (DCF)", cells)
+
+    def test_wacc_missing_explains_why(self):
+        # No beta -> WACC None -> N/A with the WACC reason
+        info = {**_BASE_INFO, "sharesOutstanding": 1e10}
+        with _patch_all(), patch("app.get_info", return_value=info):
+            data = app.build_dcf_workbook("TST")
+        _, cells = self._cells(data)
+        self.assertIn("WACC unavailable", cells["Why N/A"])
+
+    def test_error_row_raises(self):
+        with patch("app.get_info", return_value={}):
+            with self.assertRaises(ValueError):
+                app.build_dcf_workbook("BAD")
+
+
 # ---------------------------------------------------------------------------
 # 8. deepdive (panel structure + new fields)
 # ---------------------------------------------------------------------------
@@ -936,6 +1274,106 @@ class TestDeepdive(unittest.TestCase):
                          {"valuation", "dividend", "profitability", "health",
                           "risk", "strategies"})
 
+    def test_no_reit_panel_for_non_reit(self):
+        # _BASE_INFO is Technology/Software -> no "reit" panel.
+        self.assertNotIn("reit", self._run()["panels"])
+
+    def _run_reit(self, industry, cashflow, extra_info):
+        info = {**_BASE_INFO, "sector": "Real Estate", "industry": industry,
+                **extra_info}
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = cashflow
+        mock_tk.balance_sheet = _BAL_DF
+        app.clear_cache()
+        with patch("app.get_info", return_value=info), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={"cagr_3y": 5.0, "cagr_5y": 4.0, "annual": []}):
+            return app.deepdive("REITX")
+
+    def test_equity_reit_gets_ffo_panel(self):
+        # Cash flow carries a D&A line -> FFO = NI + D&A is computable.
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [30e9, 28e9]})
+        d = self._run_reit("REIT - Retail", cf,
+                           {"bookValue": 40.0, "sharesOutstanding": 1e9})
+        reit = d["panels"]["reit"]
+        self.assertEqual(set(reit), {"FFO", "FFO/Share", "P/FFO", "FFO Payout %",
+                                     "FFO Coverage", "Book Value/Share", "Price/Book"})
+        # NI (50e9) + D&A (30e9) = 80e9
+        self.assertAlmostEqual(reit["FFO"], 80e9)
+        self.assertAlmostEqual(reit["FFO/Share"], 80.0)          # 80e9 / 1e9 shares
+        self.assertAlmostEqual(reit["P/FFO"], 12.5)              # mktcap 1e12 / 80e9
+        self.assertAlmostEqual(reit["FFO Payout %"], 10.0)       # 8e9 / 80e9
+        self.assertAlmostEqual(reit["FFO Coverage"], 10.0)       # 80e9 / 8e9
+        self.assertAlmostEqual(reit["Book Value/Share"], 40.0)
+
+    def test_ffo_backs_out_property_sale_gains_and_adds_back_impairments(self):
+        # NAREIT FFO excludes both, so a REIT can neither flatter its payout by
+        # selling buildings nor look stressed for writing one down. Both lines
+        # arrive from the cash flow reconciliation already signed to add: a
+        # backed-out gain negative, an impairment positive.
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization", "Operating Gains Losses",
+             "Asset Impairment Charge"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [30e9, 28e9],
+             "Operating Gains Losses": [-12e9, -3e9],
+             "Asset Impairment Charge": [2e9, 0.0]})
+        d = self._run_reit("REIT - Retail", cf,
+                           {"bookValue": 40.0, "sharesOutstanding": 1e9})
+        reit = d["panels"]["reit"]
+        # NI (50e9) + D&A (30e9) − gains (12e9) + impairment (2e9) = 70e9,
+        # against the 80e9 the unadjusted NI + D&A would have claimed.
+        self.assertAlmostEqual(reit["FFO"], 70e9)
+        self.assertAlmostEqual(reit["P/FFO"], 1e12 / 70e9)
+        # The payout the dividend really represents: 11.4%, not 10.0%.
+        self.assertAlmostEqual(reit["FFO Payout %"], 8e9 / 70e9 * 100)
+
+    def test_mortgage_reit_gets_book_value_panel(self):
+        # No D&A line -> FFO is None -> the book-value branch is used instead.
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9]})
+        d = self._run_reit("REIT - Mortgage", cf,
+                           {"bookValue": 7.0, "netIncomeToCommon": 4e9})
+        reit = d["panels"]["reit"]
+        self.assertEqual(set(reit),
+                         {"Book Value/Share", "Book Value Trend %", "Price/Book",
+                          "Net Income", "Div Coverage (NI)"})
+        self.assertNotIn("FFO", reit)                            # no fabricated FFO
+        self.assertAlmostEqual(reit["Book Value/Share"], 7.0)
+        self.assertAlmostEqual(reit["Net Income"], 4e9)
+        self.assertAlmostEqual(reit["Div Coverage (NI)"], 0.5)  # 4e9 / |−8e9|
+
+    def test_mortgage_reit_with_da_line_still_gets_book_value_panel(self):
+        # Some mREITs (NLY) do report a D&A line, so FFO must be excluded by
+        # business type, not by the line happening to be absent — otherwise they
+        # land on the equity branch and show an FFO that means nothing for a
+        # securities portfolio.
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization", "Operating Gains Losses"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [1e9, 1e9],
+             "Operating Gains Losses": [-5e9, -2e9]})
+        d = self._run_reit("REIT - Mortgage", cf,
+                           {"bookValue": 7.0, "netIncomeToCommon": 4e9})
+        self.assertNotIn("FFO", d["panels"]["reit"])
+        self.assertIn("Book Value/Share", d["panels"]["reit"])
+
     def test_valuation_keys(self):
         d = self._run()
         v = d["panels"]["valuation"]
@@ -970,6 +1408,104 @@ class TestDeepdive(unittest.TestCase):
                         "Total Equity should appear after Total Debt")
         self.assertLess(keys.index("Total Equity"), keys.index("Debt/Equity"),
                         "Total Equity should appear before Debt/Equity")
+
+    def test_health_panel_has_ocf_and_capex(self):
+        d = self._run()
+        h = d["panels"]["health"]
+        # Operating Cash Flow: direct statement hit (_CF_DF's 2024 value).
+        self.assertAlmostEqual(h["Operating Cash Flow"], 48e9)
+        # Capital Expenditure: _CF_DF has no such row, so it's derived as
+        # FCF − OCF = 40e9 − 48e9 = −8e9 (a cash outflow, correctly negative).
+        self.assertAlmostEqual(h["Capital Expenditure"], -8e9)
+        # OCF + Capex should reconcile back to Free Cash Flow.
+        self.assertAlmostEqual(h["Operating Cash Flow"] + h["Capital Expenditure"],
+                               h["Free Cash Flow"])
+
+    def test_health_panel_ocf_capex_order(self):
+        d = self._run()
+        keys = list(d["panels"]["health"].keys())
+        self.assertLess(keys.index("Operating Cash Flow"), keys.index("Capital Expenditure"))
+        self.assertLess(keys.index("Capital Expenditure"), keys.index("Free Cash Flow"))
+
+    def test_profitability_panel_has_revenue_and_operating_income(self):
+        d = self._run()
+        p = d["panels"]["profitability"]
+        # Revenue: straight from info.totalRevenue.
+        self.assertAlmostEqual(p["Revenue"], 400e9)
+        # Operating Income: revenue × operatingMargins = 400e9 × 0.20 = 80e9.
+        self.assertAlmostEqual(p["Operating Income"], 80e9)
+
+    def test_profitability_panel_revenue_first_operating_income_before_net(self):
+        d = self._run()
+        keys = list(d["panels"]["profitability"].keys())
+        self.assertEqual(keys[0], "Revenue")
+        self.assertLess(keys.index("Operating Income"), keys.index("Net Income"))
+
+    def test_capex_prefers_statement_over_derivation(self):
+        # When the cash flow statement reports "Capital Expenditure" directly,
+        # that value wins over the FCF−OCF fallback.
+        cf_with_capex = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Capital Expenditure", "Cash Dividends Paid"],
+            ["2024-12-31", "2023-12-31"],
+            {
+                "Free Cash Flow":      [40e9, 38e9],
+                "Operating Cash Flow": [48e9, 44e9],
+                "Capital Expenditure": [-9e9, -8e9],   # deliberately != FCF-OCF (-8e9)
+                "Cash Dividends Paid": [-8e9, -7e9],
+            },
+        )
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = cf_with_capex
+        mock_tk.balance_sheet = _BAL_DF
+        app.clear_cache()
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.dividend_growth", return_value={"cagr_3y": 5.0, "cagr_5y": 4.0, "annual": []}):
+            d = app.deepdive("CAPEX_STMT")
+        self.assertAlmostEqual(d["panels"]["health"]["Capital Expenditure"], -9e9)
+
+    def test_roic_history_matches_per_year_formula(self):
+        d = self._run()
+        hist = {r["period"]: r["roic"] for r in d["roic_history"]}
+        self.assertIn("2024", hist)
+        self.assertIn("2023", hist)
+        # 2024: EBIT=80e9, Pretax=78e9, Tax=16e9, Debt=30e9, Equity=50e9
+        tr_2024 = 16e9 / 78e9
+        expected_2024 = 80e9 * (1 - tr_2024) / (30e9 + 50e9) * 100
+        self.assertAlmostEqual(hist["2024"], expected_2024)
+        # 2023: EBIT=75e9, Pretax=73e9, Tax=15e9, Debt=27e9, Equity=45e9
+        tr_2023 = 15e9 / 73e9
+        expected_2023 = 75e9 * (1 - tr_2023) / (27e9 + 45e9) * 100
+        self.assertAlmostEqual(hist["2023"], expected_2023)
+
+    def test_roic_history_latest_year_matches_current_roic(self):
+        # The newest year in the history uses the same latest-period statement
+        # figures and formula as the single "current" ROIC % in the
+        # Profitability panel, so the two must agree exactly.
+        d = self._run()
+        latest = d["roic_history"][-1]["roic"]
+        self.assertAlmostEqual(latest, d["panels"]["profitability"]["ROIC %"])
+
+    def test_wacc_current_none_when_beta_missing(self):
+        # _BASE_INFO has no "beta" -> _compute_wacc can't run -> None.
+        d = self._run()
+        self.assertIsNone(d["wacc_current"])
+
+    def test_wacc_current_matches_panel_when_beta_present(self):
+        info = {**_BASE_INFO, "beta": 1.2}
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = _INCOME_DF
+        mock_tk.cash_flow = _CF_DF
+        mock_tk.balance_sheet = _BAL_DF
+        app.clear_cache()
+        with patch("app.get_info", return_value=info), \
+             patch("app.yf.Ticker", return_value=mock_tk), \
+             patch("app.get_risk_free_rate", return_value=4.0), \
+             patch("app.dividend_growth", return_value={"cagr_3y": 5.0, "cagr_5y": 4.0, "annual": []}):
+            d = app.deepdive("WACC_TST")
+        self.assertIsNotNone(d["wacc_current"])
+        self.assertAlmostEqual(d["wacc_current"], d["panels"]["profitability"]["WACC %"])
 
     def test_revenue_net_income_has_four_series(self):
         d = self._run()
@@ -1158,37 +1694,81 @@ _DIL_BAL = _make_df(
     },
 )
 _DIL_INC = _make_df(
-    ["Net Income"], ["2024-12-31", "2023-12-31"], {"Net Income": [500.0, 400.0]})
+    ["Net Income", "Diluted EPS"], ["2024-12-31", "2023-12-31"],
+    {"Net Income": [500.0, 400.0], "Diluted EPS": [5.0, 4.0]})
 _DIL_CF = _make_df(
     ["Cash Dividends Paid"], ["2024-12-31", "2023-12-31"],
     {"Cash Dividends Paid": [-100.0, -80.0]})
 
 
+class TestSharesOutstandingSeries(unittest.TestCase):
+    """The one place share counts are resolved — every caller depends on it
+    returning outstanding shares, never issued, whenever that is knowable."""
+
+    def test_prefers_ordinary_shares_row(self):
+        series, basis = app._shares_outstanding_series(_DIL_BAL)
+        self.assertEqual(basis, "outstanding")
+        self.assertEqual([s["value"] for s in series], [1050.0, 1000.0])
+
+    def test_derives_outstanding_from_issued_minus_treasury(self):
+        bal = _make_df(["Share Issued", "Treasury Shares Number"],
+                       ["2024-12-31", "2023-12-31"],
+                       {"Share Issued": [1200.0, 1200.0],
+                        "Treasury Shares Number": [200.0, 150.0]})
+        series, basis = app._shares_outstanding_series(bal)
+        self.assertEqual(basis, "derived")
+        self.assertEqual([s["value"] for s in series], [1050.0, 1000.0])
+
+    def test_missing_treasury_value_nets_nothing_for_that_period(self):
+        bal = _make_df(["Share Issued", "Treasury Shares Number"],
+                       ["2024-12-31", "2023-12-31"],
+                       {"Share Issued": [1200.0, 1200.0],
+                        "Treasury Shares Number": [200.0, float("nan")]})
+        series, basis = app._shares_outstanding_series(bal)
+        self.assertEqual(basis, "derived")
+        self.assertEqual([s["value"] for s in series], [1200.0, 1000.0])
+
+    def test_issued_without_treasury_row_stays_issued(self):
+        bal = _make_df(["Share Issued"], ["2024-12-31"], {"Share Issued": [1200.0]})
+        series, basis = app._shares_outstanding_series(bal)
+        self.assertEqual(basis, "issued")
+        self.assertEqual([s["value"] for s in series], [1200.0])
+
+    def test_no_share_rows(self):
+        bal = _make_df(["Total Assets"], ["2024-12-31"], {"Total Assets": [1.0]})
+        self.assertEqual(app._shares_outstanding_series(bal), ([], None))
+
+
 class TestShareDilution(unittest.TestCase):
 
-    def _run(self, info=None):
-        info = info if info is not None else {"floatShares": 800.0}
+    def _run(self, bal=None):
         with patch("app.get_dividends", return_value=None), \
              patch("app.get_raw_close", return_value=None):
-            return app.share_dilution(_DIL_INC, _DIL_BAL, _DIL_CF, "TST", info)
+            rows, _ = app.share_dilution(_DIL_INC, bal if bal is not None else _DIL_BAL,
+                                         _DIL_CF, "TST")
+            return rows
+
+    def _basis(self, bal):
+        with patch("app.get_dividends", return_value=None), \
+             patch("app.get_raw_close", return_value=None):
+            return app.share_dilution(_DIL_INC, bal, _DIL_CF, "TST")[1]
 
     def test_returns_rows_with_all_series(self):
         rows = self._run()
         self.assertTrue(rows)
-        for k in ("period", "shares_outstanding", "float_shares",
-                  "treasury_shares", "div_yield", "payout_ratio"):
+        for k in ("period", "shares_outstanding", "treasury_shares", "eps",
+                  "div_yield", "payout_ratio"):
             self.assertIn(k, rows[0])
+
+    def test_eps_per_year(self):
+        by_year = {r["period"]: r for r in self._run()}
+        self.assertAlmostEqual(by_year["2024"]["eps"], 5.0)
+        self.assertAlmostEqual(by_year["2023"]["eps"], 4.0)
 
     def test_shares_and_treasury_values(self):
         by_year = {r["period"]: r for r in self._run()}
         self.assertAlmostEqual(by_year["2024"]["shares_outstanding"], 1000.0)
         self.assertAlmostEqual(by_year["2024"]["treasury_shares"], 200.0)
-
-    def test_float_only_on_latest_year(self):
-        rows = self._run()
-        by_year = {r["period"]: r for r in rows}
-        self.assertAlmostEqual(by_year["2024"]["float_shares"], 800.0)   # latest
-        self.assertIsNone(by_year["2023"]["float_shares"])               # earlier
 
     def test_payout_ratio_computed(self):
         by_year = {r["period"]: r for r in self._run()}
@@ -1196,12 +1776,35 @@ class TestShareDilution(unittest.TestCase):
         self.assertAlmostEqual(by_year["2024"]["payout_ratio"], 20.0)
         self.assertAlmostEqual(by_year["2023"]["payout_ratio"], 20.0)
 
-    def test_empty_when_no_share_rows(self):
+    def test_basis_is_outstanding_when_ordinary_shares_present(self):
+        self.assertEqual(self._basis(_DIL_BAL), "outstanding")
+
+    def test_outstanding_derived_when_only_issued_and_treasury(self):
+        # No "Ordinary Shares Number", but treasury is there to net off, so the
+        # count is reconstructed exactly (issued − treasury) rather than left as
+        # issued. 1200 − 200 = 1000 == the real outstanding count.
+        bal = _make_df(
+            ["Share Issued", "Treasury Shares Number"], ["2024-12-31", "2023-12-31"],
+            {"Share Issued": [1200.0, 1200.0], "Treasury Shares Number": [200.0, 150.0]})
+        self.assertEqual(self._basis(bal), "derived")
+        rows = self._run(bal)
+        self.assertAlmostEqual(rows[-1]["shares_outstanding"], 1000.0)
+        self.assertAlmostEqual(rows[0]["shares_outstanding"], 1050.0)
+
+    def test_basis_is_issued_when_treasury_row_absent(self):
+        # Only issued shares and nothing to net off: the count may include
+        # treasury, so it stays raw and the basis warns rather than pretending.
+        bal = _make_df(["Share Issued"], ["2024-12-31", "2023-12-31"],
+                       {"Share Issued": [1200.0, 1200.0]})
+        self.assertEqual(self._basis(bal), "issued")
+        self.assertAlmostEqual(self._run(bal)[-1]["shares_outstanding"], 1200.0)
+
+    def test_basis_reported_even_when_no_share_rows(self):
         bal = _make_df(["Total Assets"], ["2024-12-31"], {"Total Assets": [1.0]})
         with patch("app.get_dividends", return_value=None), \
              patch("app.get_raw_close", return_value=None):
             self.assertEqual(
-                app.share_dilution(_DIL_INC, bal, _DIL_CF, "TST", {}), [])
+                app.share_dilution(_DIL_INC, bal, _DIL_CF, "TST"), ([], None))
 
 
 # ---------------------------------------------------------------------------
@@ -1694,6 +2297,7 @@ class TestHTTPServer(unittest.TestCase):
         _, body, _ = _get(f"{self.base}/api/screener?tickers=TST")
         row = json.loads(body)["rows"][0]
         for field in ("pe", "forward_pe", "peg", "pb", "ps", "pc", "p_fcf", "ev_ebitda",
+                      "dcf_value", "dcf_upside",
                       "eps", "income", "profit_margin", "fcf", "roa", "roe", "roic",
                       "debt_to_equity", "lt_debt_to_equity", "div_yield", "five_year_avg_yield",
                       "dividend_estimate", "dividend_ttm", "payout_ratio", "fcf_coverage",
@@ -1808,6 +2412,22 @@ class TestHTTPServer(unittest.TestCase):
     def test_export_empty_tickers_400(self):
         try:
             _post(f"{self.base}/api/export", {"tickers": []})
+            self.fail("Expected 400")
+        except HTTPError as e:
+            self.assertEqual(e.code, 400)
+
+    @unittest.skipUnless(app._HAS_OPENPYXL, "openpyxl not installed")
+    def test_export_dcf_returns_xlsx(self):
+        from openpyxl import load_workbook
+        status, body, ct = _post(f"{self.base}/api/export_dcf", {"ticker": "TST"})
+        self.assertEqual(status, 200)
+        self.assertIn("spreadsheetml", ct)
+        wb = load_workbook(io.BytesIO(body))
+        self.assertEqual(wb.sheetnames, ["DCF Valuation"])
+
+    def test_export_dcf_no_ticker_400(self):
+        try:
+            _post(f"{self.base}/api/export_dcf", {})
             self.fail("Expected 400")
         except HTTPError as e:
             self.assertEqual(e.code, 400)
@@ -2026,6 +2646,12 @@ class TestExportValHelper(unittest.TestCase):
         self.assertAlmostEqual(app._export_val("wacc", 8.5), 0.085)
         self.assertAlmostEqual(app._export_val("roce", 15.0), 0.15)
 
+    def test_dcf_upside_fraction_but_dcf_value_currency(self):
+        # DCF Upside is percentage points -> fraction; DCF Value is a per-share
+        # currency amount and must pass through untouched.
+        self.assertAlmostEqual(app._export_val("dcf_upside", 25.0), 0.25)
+        self.assertEqual(app._export_val("dcf_value", 150.0), 150.0)
+
     def test_fraction_keys_pass_through(self):
         self.assertEqual(app._export_val("profit_margin", 0.25), 0.25)
         self.assertEqual(app._export_val("roe", 0.20), 0.20)
@@ -2069,7 +2695,8 @@ class TestMetricColsExpanded(unittest.TestCase):
                   "quick_ratio", "total_cash", "total_debt", "total_equity",
                   "div_growth_3y", "div_growth_5y", "ex_dividend_date",
                   "debt_to_equity_mrq", "debt_ebitda", "ebitda_fcf",
-                  "short_interest", "days_to_cover", "altman_z", "piotroski_f"):
+                  "short_interest", "days_to_cover", "altman_z", "piotroski_f",
+                  "dcf_value", "dcf_upside"):
             self.assertIn(k, keys)
 
     def test_ticker_is_first_column(self):
@@ -2525,12 +3152,14 @@ class TestPerfColumnFormat(unittest.TestCase):
 # 20. Strategy graders (strategies.py)
 # ---------------------------------------------------------------------------
 def _strategy_row(**over):
-    """A healthy non-financial screener row (units match screener_row):
-    margins/roe/roa/payout are fractions; roic/roce/wacc/div_yield/
-    debt_to_equity/perf_* are percentage points."""
+    """A healthy capital-intensive (manufacturer-like) screener row — the
+    default archetype, on which the classic Altman/ROIC-WACC rubric applies
+    unchanged. Units match screener_row: margins/roe/roa/payout are fractions;
+    roic/roce/wacc/div_yield/debt_to_equity/perf_* are percentage points.
+    Override `sector` to exercise the other archetypes (see _business_type)."""
     row = {
-        "ticker": "TST", "name": "Test Co", "sector": "Technology",
-        "industry": "Software", "currency": "USD",
+        "ticker": "TST", "name": "Test Co", "sector": "Industrials",
+        "industry": "Specialty Industrial Machinery", "currency": "USD",
         "price": 100.0, "market_cap": 1e12, "enterprise_value": 1e12,
         "pe": 20.0, "forward_pe": 18.0, "peg": 1.2, "pb": 5.0, "ps": 5.0,
         "pc": 50.0, "p_fcf": 20.0, "ev_ebitda": 12.0, "eps": 5.0, "eps_basic": 5.0,
@@ -2740,6 +3369,285 @@ class TestFinancialClassification(unittest.TestCase):
             {"sector": "Technology", "industry": None}))
 
 
+class TestBusinessType(unittest.TestCase):
+    """_business_type routes each sector to the right archetype rubric."""
+
+    def _bt(self, sector, industry=""):
+        return strategies._business_type({"sector": sector, "industry": industry})
+
+    def test_archetype_by_sector(self):
+        self.assertEqual(self._bt("Industrials", "Aerospace & Defense"),
+                         "capital_intensive")
+        self.assertEqual(self._bt("Utilities", "Utilities—Regulated Electric"),
+                         "capital_intensive")
+        self.assertEqual(self._bt("Consumer Cyclical", "Auto Manufacturers"),
+                         "capital_intensive")
+        self.assertEqual(self._bt("Technology", "Software—Infrastructure"),
+                         "asset_light")
+        self.assertEqual(self._bt("Communication Services", "Internet Content"),
+                         "asset_light")
+        self.assertEqual(self._bt("Healthcare", "Biotechnology"), "asset_light")
+        self.assertEqual(self._bt("Energy", "Oil & Gas E&P"), "cyclical")
+        self.assertEqual(self._bt("Basic Materials", "Copper"), "cyclical")
+        self.assertEqual(self._bt("Real Estate", "REIT—Retail"), "reit")
+        # a mortgage REIT is its own archetype (leveraged securities portfolio)
+        self.assertEqual(self._bt("Real Estate", "REIT—Mortgage"), "mreit")
+        self.assertEqual(self._bt("Real Estate", "REIT - Mortgage"), "mreit")
+
+    def test_financial_takes_precedence(self):
+        # a balance-sheet business is 'financial' even if sector says otherwise
+        self.assertEqual(self._bt("Financial Services", "Banks—Regional"),
+                         "financial")
+        # a mortgage *originator* (no "reit" in the industry) stays a financial —
+        # only mortgage REITs (industry has both "reit" and "mortgage") route to mreit
+        self.assertEqual(self._bt("Financial Services", "Mortgage Finance"),
+                         "financial")
+
+    def test_unknown_sector_defaults_to_capital_intensive(self):
+        self.assertEqual(self._bt("", ""), "capital_intensive")
+        self.assertEqual(self._bt("Consumer Defensive", "Grocery Stores"),
+                         "capital_intensive")
+
+
+class TestBusinessTypeGrading(unittest.TestCase):
+    """Altman-Z and ROIC-WACC are only decisive for the archetypes they fit."""
+
+    def _distressed(self, **over):
+        # low Altman-Z + weak everything, but NOT twin-negative / Piotroski-killed
+        return _strategy_row(altman_z=1.2, piotroski_f=6, **over)
+
+    def test_altman_kill_only_for_capital_intensive(self):
+        cap = strategies.grade_triage(self._distressed(sector="Industrials"))
+        self.assertEqual(cap[0], 0)
+        self.assertIn("Altman Z distress", cap[1])
+        # asset-light / cyclical / REIT are not killed by a low Altman-Z
+        for sector in ("Technology", "Energy", "Real Estate"):
+            score, verdict = strategies.grade_triage(self._distressed(sector=sector))
+            self.assertNotIn("Altman", verdict, sector)
+            self.assertNotEqual(score, 0, sector)
+
+    def test_low_altman_flag_for_asset_light_and_cyclical(self):
+        for sector in ("Technology", "Energy"):
+            row = self._distressed(sector=sector)
+            flags = strategies.triage_flags(row, 70)
+            self.assertTrue(any("Low Altman-Z" in f for f in flags), sector)
+        # capital-intensive is killed (not flagged); REIT ignores Altman entirely
+        self.assertFalse(any("Low Altman-Z" in f for f in
+                             strategies.triage_flags(self._distressed(sector="Real Estate"), 70)))
+
+    def test_reit_not_killed_by_leverage_or_liquidity(self):
+        # a REIT with heavy debt and thin liquidity that would sink an industrial
+        row = _strategy_row(sector="Real Estate", industry="REIT—Residential",
+                            debt_ebitda=9.0, current_ratio=0.6, quick_ratio=0.3,
+                            debt_to_equity=140.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertNotEqual(score, 0)
+        self.assertNotIn("Debt/EBITDA", verdict)
+        self.assertNotIn("liquidity", verdict)
+
+    def test_value_destruction_kill_exempts_cyclical_and_reit(self):
+        vd = dict(roic=-5.0, operating_margin=-0.10)
+        # capital-intensive & asset-light: killed
+        for sector in ("Industrials", "Technology"):
+            score, verdict = strategies.grade_triage(
+                _strategy_row(sector=sector, **vd))
+            self.assertIn("value destruction", verdict, sector)
+        # cyclical (trough) & REIT: not killed on value destruction
+        for sector in ("Energy", "Real Estate"):
+            score, verdict = strategies.grade_triage(
+                _strategy_row(sector=sector, **vd))
+            self.assertNotIn("value destruction", verdict, sector)
+
+    def test_negative_spread_cap_needs_deep_spread_off_manufacturing(self):
+        # spread = roic - wacc = 8 - 12 = -4  (shallow negative)
+        shallow = dict(roic=8.0, wacc=12.0)
+        cap = strategies.grade_triage(_strategy_row(sector="Industrials", **shallow))
+        self.assertLessEqual(cap[0], 55)          # capital-intensive: capped at <0
+        light = strategies.grade_triage(_strategy_row(sector="Technology", **shallow))
+        self.assertGreater(light[0], 55)          # asset-light: -4 is within noise
+        # a deep negative spread (-10) caps even asset-light
+        deep = strategies.grade_triage(
+            _strategy_row(sector="Technology", roic=2.0, wacc=12.0))
+        self.assertLessEqual(deep[0], 55)
+
+    def test_s2_solvency_guard_altman_only_capital_intensive(self):
+        capped = strategies.grade_compounder(
+            _strategy_row(sector="Industrials", altman_z=1.2))
+        self.assertLessEqual(capped[0], 35)
+        # asset-light with the same low Z is not solvency-capped by Altman
+        light = strategies.grade_compounder(
+            _strategy_row(sector="Technology", altman_z=1.2))
+        self.assertGreater(light[0], 35)
+
+    def test_reit_grades_are_reasonable_and_bounded(self):
+        row = _strategy_row(sector="Real Estate", industry="REIT—Residential")
+        for fn in (strategies._grade_triage, strategies._grade_compounder,
+                   strategies._grade_defensive):
+            score, verdict, pillars = fn(dict(row))
+            self.assertIsNotNone(score)
+            self.assertTrue(0 <= score <= 100, f"{verdict}: {score}")
+            self.assertEqual(strategies._round_score(sum(p["p"] for p in pillars)),
+                             score)
+
+    def test_reit_uses_ffo_when_available(self):
+        # ffo/p_ffo/ffo_payout/ffo_coverage are populated the way app.py would
+        # (from Net Income + D&A) — the REIT branch should switch onto them.
+        row = _strategy_row(sector="Real Estate", industry="REIT—Residential",
+                            ffo=5e9, p_ffo=10.0, ffo_payout=0.75, ffo_coverage=1.3)
+        score, verdict, pillars = strategies._grade_triage(row)
+        by_k = {p["k"]: p for p in pillars}
+        self.assertIn("FFO", by_k["Cash generation"]["d"])
+        self.assertIn("FFO payout", by_k["Distribution"]["d"])
+        self.assertIn("P/FFO", by_k["Valuation"]["d"])
+        self.assertTrue(0 <= score <= 100, verdict)
+
+    def test_reit_falls_back_to_fcf_without_ffo_data(self):
+        # no ffo/p_ffo override -> the base fixture has neither field at all,
+        # simulating a REIT whose cash flow statement lacks a D&A line.
+        row = _strategy_row(sector="Real Estate", industry="REIT—Residential")
+        self.assertNotIn("ffo", row)
+        _score, _verdict, pillars = strategies._grade_triage(row)
+        by_k = {p["k"]: p for p in pillars}
+        self.assertIn("FCF", by_k["Cash generation"]["d"])
+        self.assertIn("no FFO data", by_k["Valuation"]["d"])
+
+    def _reit(self, **over):
+        base = dict(sector="Real Estate", industry="REIT—Residential",
+                    ffo=5e9, p_ffo=14.0, ffo_payout=0.7, ffo_coverage=1.4,
+                    total_debt=40e9, total_equity=50e9)
+        base.update(over)
+        return _strategy_row(**base)
+
+    def test_s2_reit_branch_uses_ffo_not_industrial_bands(self):
+        _score, _v, pillars = strategies._grade_compounder(self._reit())
+        by_k = {p["k"]: p for p in pillars}
+        # returns measured on FFO/IC, discipline on FFO payout, valuation on P/FFO
+        self.assertIn("FFO/IC", by_k["Returns on capital"]["d"])
+        self.assertIn("FFO payout", by_k["Capital discipline"]["d"])
+        self.assertIn("REIT bands", by_k["Capital discipline"]["d"])
+        self.assertIn("P/FFO", by_k["Valuation sanity"]["d"])
+
+    def test_s2_reit_not_zeroed_by_high_debt_ebitda(self):
+        # Debt/EBITDA of 8x would zero an industrial's capital-discipline pillar;
+        # a REIT with conservative D/E should still earn its leverage points.
+        row = self._reit(debt_ebitda=8.0, debt_to_equity=80.0)
+        _score, _v, pillars = strategies._grade_compounder(row)
+        c = next(p for p in pillars if p["k"] == "Capital discipline")
+        self.assertGreater(c["p"], 10)          # leverage + FFO-payout points earned
+
+    def test_s3_reit_branch_uses_ffo_and_pb(self):
+        _score, _v, pillars = strategies._grade_defensive(self._reit())
+        by_k = {p["k"]: p for p in pillars}
+        self.assertIn("P/FFO", by_k["Earnings/cash yield"]["d"])
+        self.assertIn("discount to assets", by_k["Asset backing"]["d"])
+        self.assertIn("FFO", by_k["Earnings quality"]["d"])
+
+    def test_s3_reit_cheap_on_ffo_scores_as_value(self):
+        # a REIT trading at a low P/FFO and below book should read as value,
+        # where the old P/E-based pillar A would have scored it near zero
+        # (REIT P/E is depreciation-inflated).
+        cheap = strategies.grade_defensive(self._reit(p_ffo=8.0, pb=0.9))
+        rich = strategies.grade_defensive(self._reit(p_ffo=30.0, pb=3.0))
+        self.assertGreater(cheap[0], rich[0])
+        self.assertGreaterEqual(cheap[0], 60)
+
+    def test_reit_pillars_resum_across_all_three_strategies(self):
+        for fn in (strategies._grade_triage, strategies._grade_compounder,
+                   strategies._grade_defensive):
+            score, _v, pillars = fn(self._reit())
+            self.assertEqual(
+                strategies._round_score(sum(p["p"] for p in pillars)), score)
+            for p in pillars:
+                if p["m"] > 0:
+                    self.assertLessEqual(p["p"], p["m"])
+                    self.assertGreaterEqual(p["p"], 0)
+
+    # ----- mortgage REITs (mreit) -----
+    def _mreit(self, **over):
+        base = dict(sector="Real Estate", industry="REIT - Mortgage",
+                    piotroski_f=5, altman_z=1.0)   # low Altman must NOT kill mREITs
+        base.update(over)
+        return _strategy_row(**base)
+
+    def test_mreit_uses_dedicated_rubric_not_bank_rubric(self):
+        # S1 pillars are the mREIT ones (coverage / P-B / leverage / BVPS),
+        # NOT the financial rubric's ROE / net margin / Piotroski.
+        _s, _v, pillars = strategies._grade_triage(self._mreit())
+        labels = {p["k"] for p in pillars}
+        self.assertEqual(labels, {"Dividend coverage", "Price vs book",
+                                  "Leverage (mREIT)", "Book value trend"})
+        self.assertNotIn("Net margin", labels)
+
+    def test_mreit_uncovered_dividend_and_eroding_book_scores_discard(self):
+        # ORC-shaped: 152% payout (uncovered), near book, ~8x leverage, book
+        # value eroding — should land in Discard, not the old inflated Advance.
+        row = self._mreit(payout_ratio=1.52, pb=0.97, debt_to_equity=790.0,
+                          bvps_growth=-14.0)
+        score, verdict = strategies.grade_triage(row)
+        self.assertLess(score, 45)
+        self.assertEqual(verdict, "Discard")
+
+    def test_mreit_covered_dividend_and_stable_book_scores_well(self):
+        # NLY-shaped: 90% covered payout, mild BVPS slide, agency leverage.
+        row = self._mreit(payout_ratio=0.90, pb=0.98, debt_to_equity=740.0,
+                          bvps_growth=-1.8)
+        score, _verdict = strategies.grade_triage(row)
+        self.assertGreaterEqual(score, 55)   # covered + holding book -> respectable
+
+    def test_mreit_leverage_bands_tolerate_agency_levels(self):
+        # 8x (800%) is normal agency leverage -> full points; >1000% -> zero.
+        base = dict(payout_ratio=0.9, pb=0.9, bvps_growth=1.0)
+        normal = strategies._grade_triage(self._mreit(debt_to_equity=800.0, **base))
+        excessive = strategies._grade_triage(self._mreit(debt_to_equity=1200.0, **base))
+        lev_n = next(p for p in normal[2] if p["k"] == "Leverage (mREIT)")["p"]
+        lev_x = next(p for p in excessive[2] if p["k"] == "Leverage (mREIT)")["p"]
+        self.assertEqual(lev_n, 20)
+        self.assertEqual(lev_x, 0)
+
+    def test_mreit_low_altman_does_not_kill(self):
+        # altman_z=1.0 would kill a capital-intensive name; a mREIT ignores it.
+        score, verdict = strategies.grade_triage(self._mreit())
+        self.assertNotEqual(score, 0)
+        self.assertNotIn("Altman", verdict)
+
+    def test_mreit_pillars_resum_across_all_three_strategies(self):
+        for fn in (strategies._grade_triage, strategies._grade_compounder,
+                   strategies._grade_defensive):
+            score, _v, pillars = fn(self._mreit(payout_ratio=1.1, pb=1.0,
+                                                debt_to_equity=700.0, bvps_growth=-3.0))
+            self.assertEqual(
+                strategies._round_score(sum(p["p"] for p in pillars)), score)
+            for p in pillars:
+                if p["m"] > 0:
+                    self.assertLessEqual(p["p"], p["m"])
+                    self.assertGreaterEqual(p["p"], 0)
+
+    def test_piotroski_kill_exempts_financial_and_reit(self):
+        weak_f = {"piotroski_f": 2}
+        # capital-intensive, asset-light and cyclical are still killed
+        for sector in ("Industrials", "Technology", "Energy"):
+            score, verdict = strategies.grade_triage(_strategy_row(sector=sector, **weak_f))
+            self.assertEqual(score, 0, sector)
+            self.assertIn("Piotroski", verdict, sector)
+        # financial and REIT: not killed, flagged instead
+        for sector, industry in (("Financial Services", "Banks—Regional"),
+                                 ("Real Estate", "REIT—Residential")):
+            row = _strategy_row(sector=sector, industry=industry, **weak_f)
+            score, verdict = strategies.grade_triage(row)
+            self.assertNotIn("Piotroski", verdict, sector)
+            self.assertNotEqual(score, 0, sector)
+            flags = strategies.triage_flags(row, score)
+            self.assertTrue(any("Low Piotroski" in f for f in flags), sector)
+
+    def test_low_piotroski_flag_absent_for_healthy_bank_and_reit(self):
+        for sector, industry in (("Financial Services", "Banks—Regional"),
+                                 ("Real Estate", "REIT—Residential")):
+            row = _strategy_row(sector=sector, industry=industry)  # piotroski_f=8
+            score, _verdict = strategies.grade_triage(row)
+            flags = strategies.triage_flags(row, score)
+            self.assertFalse(any("Low Piotroski" in f for f in flags), sector)
+
+
 class TestRoundScore(unittest.TestCase):
 
     def test_rounds_half_up_not_bankers(self):
@@ -2778,9 +3686,51 @@ class TestTriageFlags(unittest.TestCase):
         self.assertTrue(any("Divergent multiples" in f for f in flags))
 
     def test_payout_stress(self):
-        for over in ({"payout_ratio": 0.80}, {"fcf_coverage": 1.2}):
+        for over in ({"payout_ratio": 0.65}, {"fcf_coverage": 1.0}):
             flags = strategies.triage_flags(_strategy_row(**over), 80)
             self.assertTrue(any("Payout stress" in f for f in flags), over)
+
+    def _stressed(self, **over):
+        return any("Payout stress" in f
+                   for f in strategies.triage_flags(_strategy_row(**over), 80))
+
+    def test_payout_stress_judges_reits_on_ffo_not_earnings(self):
+        # A healthy equity REIT: earnings payout is huge (depreciation crushes
+        # the denominator) and GAAP FCF barely covers the dividend, but FFO —
+        # what it actually distributes out of — is comfortable. The generic
+        # earnings test fired on every REIT alive; the FFO test must not.
+        reit = dict(sector="Real Estate", industry="REIT—Residential",
+                    payout_ratio=2.65, fcf_coverage=1.0)
+        self.assertFalse(self._stressed(**reit, ffo_payout=0.74, ffo_coverage=1.35))
+        # Above the comfortable band and nearing the 100% line: real stress.
+        self.assertTrue(self._stressed(**reit, ffo_payout=0.95, ffo_coverage=1.05))
+        # Negative FFO leaves the payout undefined — coverage still catches it.
+        self.assertTrue(self._stressed(**reit, ffo_payout=None, ffo_coverage=-1.2))
+        # No FFO line at all: fall back to FCF coverage, as the graders do.
+        self.assertTrue(self._stressed(**reit, ffo_payout=None, ffo_coverage=None))
+        self.assertFalse(self._stressed(sector="Real Estate",
+                                        industry="REIT—Residential",
+                                        payout_ratio=2.65, fcf_coverage=3.0,
+                                        ffo_payout=None, ffo_coverage=None))
+
+    def test_payout_stress_ignores_bank_fcf(self):
+        # A bank's lending runs through operating cash flow, so a year of loan
+        # growth prints a deeply negative FCF (JPM: −$148B) that says nothing
+        # about the dividend. Earnings payout is the only leg that applies.
+        bank = dict(sector="Financial Services", industry="Banks - Diversified")
+        self.assertFalse(self._stressed(**bank, payout_ratio=0.26, fcf_coverage=-8.9))
+        self.assertTrue(self._stressed(**bank, payout_ratio=0.65, fcf_coverage=3.0))
+
+    def test_payout_stress_judges_mreits_on_earnings_at_100pct(self):
+        # Mortgage REITs hold securities, not buildings: earnings are the right
+        # denominator, but they distribute nearly all of them by design, so only
+        # a payout above 100% — the dividend eating book value — is stress.
+        mreit = dict(sector="Real Estate", industry="REIT — Mortgage")
+        self.assertFalse(self._stressed(**mreit, payout_ratio=0.95))
+        self.assertTrue(self._stressed(**mreit, payout_ratio=1.10))
+        # FCF is an income-statement artifact for a securities portfolio and
+        # must not fire the flag on its own.
+        self.assertFalse(self._stressed(**mreit, payout_ratio=0.95, fcf_coverage=0.1))
 
     def test_crowded_short_and_high_beta(self):
         flags = strategies.triage_flags(
@@ -2942,11 +3892,25 @@ class TestGradeRowComposite(unittest.TestCase):
             for p in g[k]:
                 self.assertEqual(set(p), {"k", "p", "m", "d"})
 
-    def test_quarantine_and_kill_have_empty_detail(self):
+    def test_quarantine_has_empty_detail(self):
+        # Missing critical data -> nothing computable -> empty breakdown.
         quar = strategies.grade_row(_strategy_row(total_equity=None))
         self.assertEqual(quar["strategy_1_detail"], [])
+
+    def test_kill_keeps_breakdown_with_disqualified_row(self):
+        # A Stage 1 kill forces the score to 0 but retains the Stage 2 pillar
+        # breakdown so the tooltip can show the underlying values, ending with a
+        # signed 'Disqualified' adjustment row.
         kill = strategies.grade_row(_strategy_row(income=-1e9, fcf=-1e9))
-        self.assertEqual(kill["strategy_1_detail"], [])   # Stage 1 kill
+        self.assertEqual(kill["strategy_1"], 0)
+        self.assertTrue(kill["strategy_1_verdict"].startswith("Discard · "))
+        detail = kill["strategy_1_detail"]
+        self.assertTrue(detail)                            # values retained
+        self.assertEqual(detail[-1]["k"], "Disqualified")
+        self.assertEqual(detail[-1]["m"], 0)               # signed adjustment
+        # Pillars must still re-sum to the reported (zero) score.
+        self.assertEqual(
+            strategies._round_score(sum(p["p"] for p in detail)), 0)
 
 
 class TestPillarBreakdownInvariant(unittest.TestCase):
@@ -2956,10 +3920,23 @@ class TestPillarBreakdownInvariant(unittest.TestCase):
 
     def _rows(self):
         return [
-            _strategy_row(),
+            _strategy_row(),                                 # capital-intensive
             _strategy_row(total_equity=-5e9, debt_to_equity=-20.0),
             _strategy_row(sector="Financial Services",
                           industry="Banks—Diversified"),
+            _strategy_row(sector="Real Estate", industry="REIT—Retail"),
+            _strategy_row(sector="Real Estate", industry="REIT—Retail",
+                          ffo=5e9, p_ffo=10.0, ffo_payout=0.75, ffo_coverage=1.3),
+            _strategy_row(sector="Real Estate", industry="REIT—Retail",
+                          piotroski_f=2),                        # low-Piotroski flag path
+            _strategy_row(sector="Real Estate", industry="REIT - Mortgage",
+                          payout_ratio=1.4, pb=0.9, debt_to_equity=760.0,
+                          bvps_growth=-6.0),                     # mreit
+            _strategy_row(sector="Real Estate", industry="REIT - Mortgage",
+                          total_equity=-1e9, debt_to_equity=-20.0),  # mreit + neg equity
+            _strategy_row(sector="Technology", industry="Software—Infrastructure"),
+            _strategy_row(sector="Energy", industry="Oil & Gas E&P"),
+            _strategy_row(sector="Technology", industry="Software", wacc=25.0),
             _strategy_row(wacc=20.0),                        # neg-spread cap
             _strategy_row(altman_z=1.2),                     # solvency guard
             _strategy_row(pe=10.0, pb=1.2, p_fcf=12.0, ev_ebitda=8.0),
@@ -3290,6 +4267,188 @@ class TestChatEndpoint(unittest.TestCase):
         self.assertEqual(seen["messages"], [{"role": "user", "content": "q"}])
         self.assertEqual(seen["rows"], [{"ticker": "AAPL"}])
         self.assertEqual(seen["label"], "Dashboard")
+
+
+import wiki  # noqa: E402  (Wikipedia company-context module)
+
+
+class TestBriefSummary(unittest.TestCase):
+    def test_none_and_short_pass_through(self):
+        self.assertIsNone(app._brief_summary(None))
+        self.assertIsNone(app._brief_summary(""))
+        self.assertEqual(app._brief_summary("Makes shoes."), "Makes shoes.")
+
+    def test_long_text_cut_at_sentence_boundary(self):
+        text = ("Acme designs widgets for industry. " * 3
+                + "It also does many other things " * 20)
+        out = app._brief_summary(text, limit=120)
+        self.assertLessEqual(len(out), 120)
+        self.assertTrue(out.endswith("."))          # ended on a full sentence
+
+    def test_no_sentence_boundary_falls_back_to_word_cut(self):
+        text = "word " * 100                        # no '. ' anywhere
+        out = app._brief_summary(text, limit=50)
+        self.assertLessEqual(len(out), 51)          # cut + ellipsis
+        self.assertTrue(out.endswith("…"))
+
+
+class TestWikiPureFunctions(unittest.TestCase):
+    def test_clean_company_name(self):
+        self.assertEqual(wiki.clean_company_name("NIKE, Inc."), "NIKE")
+        self.assertEqual(wiki.clean_company_name("Toyota Motor Corp."), "Toyota Motor")
+        self.assertEqual(wiki.clean_company_name("Apple Inc"), "Apple")
+        # double suffix sheds both layers
+        self.assertEqual(wiki.clean_company_name("Zoom Video Holdings, Inc."),
+                         "Zoom Video")
+        # suffix must be its own word — 'Visa' keeps its 'sa', 'Cisco' its 'co'
+        self.assertEqual(wiki.clean_company_name("Visa Inc."), "Visa")
+        self.assertEqual(wiki.clean_company_name("Visa"), "Visa")
+        self.assertEqual(wiki.clean_company_name("Cisco"), "Cisco")
+        # never empties the name
+        self.assertEqual(wiki.clean_company_name("Inc."), "Inc.")
+        self.assertEqual(wiki.clean_company_name(None), "")
+
+    def test_pick_title_skips_disambiguation_and_lists(self):
+        titles = ["Apple (disambiguation)", "List of Apple products", "Apple Inc."]
+        self.assertEqual(wiki.pick_title(titles, "Apple"), "Apple Inc.")
+        self.assertIsNone(wiki.pick_title([], "X"))
+        self.assertIsNone(wiki.pick_title(["Foo (disambiguation)"], "Foo"))
+
+    def test_pick_ethics_sections_matches_and_dedupes_children(self):
+        sections = [
+            {"index": "1", "number": "1", "line": "History"},
+            {"index": "8", "number": "8", "line": "Controversies"},
+            {"index": "9", "number": "8.1", "line": "Child labour"},
+            {"index": "10", "number": "8.2", "line": "Environmental record"},
+            {"index": "12", "number": "9", "line": "Lawsuits"},
+            {"index": "14", "number": "10", "line": "See also"},
+        ]
+        picked = wiki.pick_ethics_sections(sections)
+        # children 8.1/8.2 folded into parent 8; 'See also'/'History' ignored
+        self.assertEqual([s["index"] for s in picked], ["8", "12"])
+        self.assertEqual(picked[0]["line"], "Controversies")
+
+    def test_pick_ethics_sections_matches_orphan_subsection(self):
+        # an ethics-flavoured subsection under an innocuous parent still matches
+        sections = [
+            {"index": "2", "number": "2", "line": "Operations"},
+            {"index": "3", "number": "2.1", "line": "Labor practices"},
+        ]
+        picked = wiki.pick_ethics_sections(sections)
+        self.assertEqual([s["index"] for s in picked], ["3"])
+
+    def test_pick_ethics_sections_skips_unfetchable_and_caps(self):
+        sections = [{"index": "T-1", "number": "5", "line": "Controversies"}]
+        self.assertEqual(wiki.pick_ethics_sections(sections), [])  # transcluded
+        many = [{"index": str(i), "number": str(i), "line": f"Lawsuit {i}"}
+                for i in range(1, 12)]
+        self.assertEqual(len(wiki.pick_ethics_sections(many)), wiki.MAX_SECTIONS)
+
+    def test_section_blocks_structure_and_cleanup(self):
+        # mirrors real MediaWiki output: h2 section heading, an h3 sub-heading,
+        # a dropped style block + hatnote, a paragraph and a two-item list.
+        html = (
+            '<div class="mw-heading mw-heading2"><h2>Controversies</h2>'
+            '<span class="mw-editsection">[edit]</span></div>'
+            '<div class="mw-heading mw-heading3"><h3>Ad dispute</h3></div>'
+            '<style>.hatnote{}</style>'
+            '<div role="note" class="hatnote navigation-not-searchable">'
+            'Main article: <a href="/x">Somewhere</a></div>'
+            '<p>Acme was fined<sup>[9]</sup> &amp; sued.</p>'
+            '<ul><li>case one</li><li>case two</li></ul>')
+        blocks = wiki.section_blocks(html)
+        self.assertEqual([b["t"] for b in blocks], ["h", "p", "li", "li"])
+        self.assertEqual(blocks[0]["s"], "Ad dispute")       # h2 skipped, h3 kept
+        self.assertEqual(blocks[1]["s"], "Acme was fined & sued.")
+        self.assertEqual(blocks[2]["s"], "case one")
+        # references, [edit] links and the "Main article" hatnote are gone
+        joined = " ".join(b["s"] for b in blocks)
+        self.assertNotIn("[9]", joined)
+        self.assertNotIn("[edit]", joined)
+        self.assertNotIn("Main article", joined)
+        self.assertNotIn("<", joined)
+
+    def test_section_blocks_drops_dangling_trailing_heading(self):
+        html = "<p>Body.</p><h3>Empty tail heading</h3>"
+        blocks = wiki.section_blocks(html)
+        self.assertEqual([b["t"] for b in blocks], ["p"])
+
+    def test_section_blocks_respects_char_cap(self):
+        html = "".join(f"<p>{'x' * 100}</p>" for _ in range(10))
+        blocks = wiki.section_blocks(html, max_chars=250)
+        self.assertEqual(len(blocks), 3)                     # stops once over cap
+
+    def test_ethics_heading_regex_spot_checks(self):
+        yes = ["Controversies", "Criticism", "Human rights concerns",
+               "Labour disputes", "Environmental record", "Antitrust cases",
+               "Sexual harassment allegations", "Tax avoidance"]
+        no = ["History", "Products", "Finances", "See also", "References",
+              "Corporate affairs", "Sponsorships"]
+        for h in yes:
+            self.assertTrue(wiki.ETHICS_HEADING.search(h), h)
+        for h in no:
+            self.assertFalse(wiki.ETHICS_HEADING.search(h), h)
+
+
+class TestWikiCompanyContext(unittest.TestCase):
+    """company_context with the HTTP layer mocked out."""
+
+    def _run(self, responses):
+        calls = []
+
+        def fake_get(params):
+            calls.append(params)
+            return responses[params["action"], params.get("prop") or params.get("list")]
+        with patch.object(wiki, "_get", side_effect=fake_get):
+            return wiki.company_context("NIKE, Inc."), calls
+
+    def test_happy_path(self):
+        responses = {
+            ("query", "search"): {"query": {"search": [{"title": "Nike, Inc."}]}},
+            ("parse", "sections"): {"parse": {"title": "Nike, Inc.", "sections": [
+                {"index": "5", "number": "5", "line": "Controversies"}]}},
+            ("parse", "text"): {"parse": {"text":
+                "<h2>Controversies</h2><p>Sweatshop allegations.</p>"}},
+        }
+        out, _calls = self._run(responses)
+        self.assertEqual(out["title"], "Nike, Inc.")
+        self.assertEqual(out["url"], wiki.PAGE_URL + "Nike,_Inc.")
+        self.assertEqual(len(out["sections"]), 1)
+        self.assertEqual(out["sections"][0]["heading"], "Controversies")
+        blocks = out["sections"][0]["blocks"]
+        self.assertEqual(blocks, [{"t": "p", "s": "Sweatshop allegations."}])
+        self.assertNotIn("error", out)
+
+    def test_no_page_found(self):
+        out, _ = self._run({("query", "search"): {"query": {"search": []}}})
+        self.assertIsNone(out["title"])
+        self.assertEqual(out["sections"], [])
+        self.assertEqual(out["error"], "no Wikipedia page found")
+
+    def test_network_error_is_reported_not_raised(self):
+        import requests as _rq
+        with patch.object(wiki, "_get",
+                          side_effect=_rq.ConnectionError("boom")):
+            out = wiki.company_context("Acme")
+        self.assertIn("Wikipedia unreachable", out["error"])
+        self.assertEqual(out["sections"], [])
+
+
+class TestCompanyProfileEndpoint(unittest.TestCase):
+    def test_company_profile_caches_and_tags_ticker(self):
+        app.clear_cache()
+        fake = {"query": "Acme", "title": "Acme", "url": "u", "sections": []}
+        with patch.object(app, "get_info",
+                          return_value={"shortName": "Acme Inc."}), \
+             patch.object(app.wiki, "company_context",
+                          return_value=dict(fake)) as cc:
+            out1 = app.company_profile("ACME")
+            out2 = app.company_profile("ACME")   # served from cache
+        self.assertEqual(out1["ticker"], "ACME")
+        self.assertEqual(out2, out1)
+        self.assertEqual(cc.call_count, 1)
+        self.assertEqual(cc.call_args[0][0], "Acme Inc.")
+        app.clear_cache()
 
 
 if __name__ == "__main__":

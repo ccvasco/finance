@@ -45,6 +45,7 @@ const API = (() => {
       return get(`/api/calendar${q ? "?" + q : ""}`);
     },
     stockCalendar: (t) => get(`/api/stock_calendar?ticker=${encodeURIComponent(t)}`),
+    companyProfile: (t) => get(`/api/company_profile?ticker=${encodeURIComponent(t)}`),
     async exportXlsx(tickers) {
       await downloadXlsx("/api/export", { tickers },
         `stock-terminal-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -52,6 +53,10 @@ const API = (() => {
     async exportDeepdive(ticker) {
       await downloadXlsx("/api/export_deepdive", { ticker },
         `${ticker}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    },
+    async exportDcf(ticker) {
+      await downloadXlsx("/api/export_dcf", { ticker },
+        `${ticker}-DCF-${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
     clearCache: () => fetch("/api/cache/clear", { method: "POST" }),
     /* POST /api/chat and stream the agent's reply. Calls onEvent for every
@@ -137,6 +142,24 @@ const Fmt = {
     if (!s) return "";
     const d = new Date(s + "T00:00:00");
     return isNaN(d) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+  },
+  /* whole days from today to a date, at local midnight (past = negative) */
+  daysUntil(s) {
+    if (!s) return null;
+    const d = new Date(s + (s.length === 10 ? "T00:00:00" : ""));
+    if (isNaN(d)) return null;
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const t1 = new Date(d); t1.setHours(0, 0, 0, 0);
+    return Math.round((t1 - t0) / 864e5);
+  },
+  /* human countdown to a date: 'today', 'in 12 days', '3 days ago' */
+  countdown(s) {
+    const n = Fmt.daysUntil(s);
+    if (n === null) return null;
+    if (n === 0) return "today";
+    if (n === 1) return "tomorrow";
+    if (n === -1) return "yesterday";
+    return n > 0 ? `in ${n} days` : `${-n} days ago`;
   },
   /* split ratio from Yahoo's old/new share-worth pair -> 'N:M' */
   splitRatio(oldW, newW) {

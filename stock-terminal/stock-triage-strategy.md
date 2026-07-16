@@ -36,17 +36,18 @@ A row failing Stage 0 is not a "bad company" — it's an unanswerable question. 
 
 These are conditions under which further analysis is a waste of time regardless of how cheap or exciting the stock looks. They target the two ways equity holders get wiped out: insolvency and structural value destruction.
 
-| # | Kill-switch | Threshold | Rationale |
-|---|---|---|---|
-| 1 | **Distress risk** | Altman Z-Score < 1.8 | The classic distress zone. Between 1.8–3.0 is the grey zone (flag, don't kill). *Not meaningful for banks/financials.* |
-| 2 | **Fundamental deterioration** | Piotroski F-Score ≤ 3 | Fewer than 4 of 9 basic health signals passing means the business is degrading on multiple fronts simultaneously. |
-| 3 | **Twin-negative earnings** | Net Income < 0 **and** FCF < 0 | Losing money on both an accounting and a cash basis. One negative alone can be a timing artifact; both together is a business that consumes capital. |
-| 4 | **Leverage overload** | Debt/EBITDA > 6, **or** EBITDA ≤ 0 with net debt (debt > cash) | Above ~6 turns of leverage, equity is effectively an option on the debt holders' goodwill. (Threshold can relax to ~4 as a *flag* level; > 6 is the kill level.) The second leg exists because Debt/EBITDA is undefined when EBITDA is negative — carrying more debt than cash while EBITDA is negative is strictly worse than any ratio above 6, and must not slip past the switch on a technicality. |
-| 5 | **Liquidity crunch** | Current Ratio < 1.0 **and** Quick Ratio < 0.5 | Cannot cover near-term obligations even including inventory; without it, coverage is under half. |
-| 6 | **Deep value destruction** | ROIC < 0 **and** Operating Margin < 0 | The core operations destroy capital — not a maturity or cycle problem, an economics problem. |
+| # | Kill-switch | Threshold | Applies to | Rationale |
+|---|---|---|---|---|
+| 1 | **Distress risk** | Altman Z-Score < 1.8 | **capital-intensive only** | The Altman Z-Score is the 1968 *manufacturer* model, so it only disqualifies the asset-heavy businesses it was calibrated on. For asset-light and cyclical names a low Z is surfaced as a non-disqualifying `⚠ Low Altman-Z` context flag instead; REITs and financials ignore it entirely. |
+| 2 | **Fundamental deterioration** | Piotroski F-Score ≤ 3 | **non-financial, non-REIT** | Fewer than 4 of 9 basic health signals passing means the business is degrading on multiple fronts simultaneously. Two of the 9 tests (falling leverage, rising current ratio) are structurally biased against banks and REITs, which run intentionally high, stable leverage and don't have an industrial-style current ratio — so for those archetypes a low score is a `⚠ Low Piotroski F-Score` context flag instead of a kill. |
+| 3 | **Twin-negative earnings** | Net Income < 0 **and** FCF < 0 | all | Losing money on both an accounting and a cash basis. One negative alone can be a timing artifact; both together is a business that consumes capital. |
+| 4 | **Leverage overload** | Debt/EBITDA > 6, **or** EBITDA ≤ 0 with net debt (debt > cash) | non-REIT, non-financial | Above ~6 turns of leverage, equity is effectively an option on the debt holders' goodwill. REITs are *exempt* — property is debt-funded by design. (Threshold can relax to ~4 as a *flag* level; > 6 is the kill level.) The second leg exists because Debt/EBITDA is undefined when EBITDA is negative — carrying more debt than cash while EBITDA is negative is strictly worse than any ratio above 6. |
+| 5 | **Liquidity crunch** | Current Ratio < 1.0 **and** Quick Ratio < 0.5 | non-REIT, non-financial | Cannot cover near-term obligations even including inventory; without it, coverage is under half. REITs run thin current ratios by design and are exempt. |
+| 6 | **Deep value destruction** | ROIC < 0 **and** Operating Margin < 0 | capital-intensive & asset-light | The core operations destroy capital — an economics problem, not a maturity or cycle one. *Exempt for cyclicals* (a cycle trough is not a broken business) *and REITs* (ROIC understates property returns). |
 
-Two design principles behind these:
+Three design principles behind these:
 
+- **Kill-switches are business-type-aware.** A metric that disqualifies one business model is often meaningless for another — the Altman Z-Score is a manufacturer model, ROIC/WACC breaks down for asset-light and property businesses, and REITs are levered by design. See [Business-type archetypes](#business-type-archetypes) below.
 - **Kill-switches are compound where possible.** Negative FCF alone would kill many legitimate heavy-investment-phase companies; negative FCF *plus* negative net income rarely has an innocent explanation.
 - **The thresholds are deliberately loose.** Stage 1 should only remove the clearly broken. The nuanced sorting happens in Stage 2.
 
@@ -58,16 +59,18 @@ Survivors are scored across four pillars. Each metric earns points based on wher
 
 ### Pillar A — Value creation (30 points)
 
-The single most important question in triage: **does the company earn more on its capital than that capital costs?**
+The single most important question in triage: **does the company earn more on its capital than that capital costs?** — *for the businesses this question fits.* See [Business-type archetypes](#business-type-archetypes): the spread is central for capital-intensive names, de-weighted for asset-light ones (where invested capital omits the intangible/human capital base and ROIC is inflated), softened for cyclicals (single-year swings), and replaced entirely for REITs and financials.
 
 | Metric | Full points | Half points | Zero |
 |---|---|---|---|
-| **ROIC − WACC spread** (20 pts) | Spread > +3 pts | Spread between −2 and +3 pts | Spread < −2 pts |
+| **ROIC − WACC spread** (20 pts, capital-intensive & cyclical) | Spread > +3 pts | Spread between −2 and +3 pts | Spread < −2 pts |
+| **ROIC − WACC spread** (10 pts, asset-light — de-weighted) | Spread > +3 pts | Spread between −2 and +3 pts | Spread < −2 pts |
+| **Gross-margin / positive-FCF quality** (10 pts, asset-light only) | Gross > 60% + FCF > 0 | Gross 40–60% | — |
 | **ROE** (10 pts) | > 15% | 8–15% | < 8% |
 
-The ROIC−WACC spread is the framework's centerpiece. A company earning 18% on capital that costs 10% compounds wealth; a company earning 7% on capital that costs 11% destroys it even while reporting "profits." When comparing ROIC to WACC, mind the units — datasets often store one as a decimal (0.186) and the other as a percentage (9.7); normalize before subtracting.
+The ROIC−WACC spread is the framework's centerpiece *for capital-intensive businesses*. A manufacturer earning 18% on capital that costs 10% compounds wealth; one earning 7% on capital that costs 11% destroys it even while reporting "profits." When comparing ROIC to WACC, mind the units — datasets often store one as a decimal (0.186) and the other as a percentage (9.7); normalize before subtracting. For an asset-light firm the same spread is far less meaningful: its "invested capital" (balance-sheet assets) understates the real capital base (R&D, brand, people), so ROIC reads artificially high and its spread over a noisy high-beta WACC is not the value signal it is for a factory. There the spread is halved and the freed points reward gross-margin durability and cash generation instead.
 
-**Secondary gate — negative spread caps the total score at 55.** Pillar A is only 30 of 100 points, so a company with a genuinely *negative* spread (destroying value on its invested capital) could otherwise still reach Advance purely on strong margins, balance sheet, and cash conversion — which contradicts calling the spread "the single most important question." When ROIC − WACC < 0, the Stage 2 score is capped at 55 (Watchlist ceiling) regardless of the other three pillars. The gate triggers only on a *negative* spread, not merely a thin positive one — WACC is a CAPM estimate (beta × equity risk premium plus a proxied cost of debt) and easily off by a point or more, so gating right at the +1–3pt boundary would re-categorize borderline names on estimation noise rather than on demonstrated value destruction.
+**Secondary gate — negative spread caps the total score at 55, scoped by archetype.** Pillar A is only 30 of 100 points, so a company genuinely *destroying value* on its invested capital could otherwise still reach Advance purely on strong margins, balance sheet, and cash conversion. When the spread is negative the Stage 2 score is capped at 55 (Watchlist ceiling) — but the trigger depends on the business type: **capital-intensive** names cap at any negative spread (< 0); **cyclical and asset-light** names cap only on a *deeply* negative spread (< −5), since a single-year WACC (noisy CAPM beta) or a cycle trough shouldn't disqualify on its own. **REITs and financials** are not spread-gated at all.
 
 *Caution on ROE:* it is leverage-amplified. A high ROE sitting on top of Debt/Equity > 1.5 is a leverage artifact, not operating excellence — cap it at half points in that case. And when shareholders' equity is outright **negative** (common in buyback-heavy names), ROE is arithmetic noise — negative income over negative equity even reads as a healthy positive — so it earns zero points, not a cap.
 
@@ -121,21 +124,49 @@ Triage screens business quality, not price — a wonderful business can be a ter
 | Flag | Trigger | What it warns of |
 |---|---|---|
 | 🔺 Priced for perfection | PEG > 3, or P/FCF > 40, or EV/EBITDA > 30 | Any stumble in growth will be punished violently; the deep dive must stress-test the growth assumptions |
-| 🔻 Suspiciously cheap | P/E < 8, or EV/EBITDA < 5, alongside a Stage 2 score < 60 | Cheapness plus mediocrity is usually a value trap — the market may know something the ratios don't |
+| 🔻 Suspiciously cheap | P/E < 8, or EV/EBITDA < 5, alongside a Stage 2 score ≤ 60 | Cheapness plus mediocrity is usually a value trap — the market may know something the ratios don't |
 | ⚠️ Divergent multiples | Forward P/E < 50% of trailing P/E | Either explosive earnings growth is expected or trailing earnings were depressed by one-offs — find out which |
-| 💰 Payout stress | Payout Ratio > 70%, or FCF dividend coverage < 1.5× | The dividend is competing with reinvestment and may be cut |
+| 💰 Payout stress | Payout Ratio > 60%, or FCF dividend coverage < 1.2×. **REITs:** FFO payout > 90% (or FFO coverage < 1.0×). **Mortgage REITs:** payout > 100%. **Banks:** payout > 60%, no FCF leg | The dividend is competing with reinvestment and may be cut. Judged on the payout the business type actually lives on: an equity REIT's earnings payout is meaningless under depreciation (every healthy REIT would fire), while a mortgage REIT distributes nearly all its earnings by design, so only above 100% is it eating book value. Banks and mortgage REITs skip the FCF leg — lending runs through operating cash flow, so a year of loan growth prints a hugely negative GAAP FCF (JPM: −$148B) that tracks the loan book, not the dividend |
 | 📉 Crowded short | Short Interest > 15% of float | Sophisticated money is betting against it — the deep dive must locate and evaluate the bear thesis |
 | 🌀 High beta | Beta > 1.7 | Position-sizing consideration, not a quality signal |
 
 ---
 
-## Sector and lifecycle adjustments
+## Business-type archetypes
 
-Applied blindly, any transversal screen produces systematic errors. Three standing adjustments:
+Applied blindly, a transversal screen selects for a *business model* rather than for quality within a model — and worse, disqualifies healthy companies on metrics that don't fit them (the Altman Z-Score is a manufacturer model; ROIC/WACC breaks down for asset-light and property businesses; REITs are levered by design). Every row is therefore classified into one of six archetypes (by sector, with financials and mortgage REITs caught by industry first), and the kill-switches and Pillar-A weighting adjust accordingly:
 
-**Financials (banks, insurers).** Altman Z, Debt/Equity, Current Ratio, and EV/EBITDA are structurally meaningless for balance-sheet-driven businesses. Score them on ROE, net margin, and Piotroski only, or triage them in a separate bucket. *Classify by industry, not sector:* data vendors' "Financial Services" sector also sweeps in fee businesses — insurance brokers, exchanges and data vendors, asset managers — whose balance sheets are ordinary; those belong on the standard rubric. Lending-adjacent industries (banks, insurance carriers, capital markets, credit services, mortgage finance, conglomerates) take the financial rubric; "credit services" deliberately stays in that bucket even though it mixes fee networks (Visa, Mastercard) with real lenders (Amex, Capital One) — the networks ace the ROE/net-margin rubric anyway, while a lender misrouted onto the industrial rubric would be zeroed by structurally missing EBITDA and current-ratio data.
+| Archetype | Sectors | Altman-Z kill | Piotroski kill | ROIC−WACC gate | Leverage/liquidity kills | Rubric |
+|---|---|---|---|---|---|---|
+| **Capital-intensive** *(default)* | Industrials, Utilities, Consumer, unknown | **kill < 1.8** | **kill ≤ 3** | **full** (cap at spread < 0) | full | standard 4-pillar |
+| **Cyclical** | Energy, Basic Materials | flag only | kill ≤ 3 | softened (cap at spread < −5) | full | standard, cycle-tolerant |
+| **Asset-light** | Technology, Communication Services, Healthcare | flag only | kill ≤ 3 | de-weighted (spread 10 pts; cap at < −5) | full | standard, spread halved |
+| **REIT** (equity) | Real Estate | ignored | flag only | none | **exempt** | FFO-based cash-flow / distribution / valuation |
+| **mREIT** (mortgage) | industry "REIT — Mortgage" | ignored | flag only | none | **exempt** | dividend coverage / P-B / leverage / book-value trend |
+| **Financial** | banks, insurers, lenders *(by industry)* | ignored | flag only | none | exempt | ROE / net-margin / Piotroski (soft) |
 
-**Capital-intensity spread.** Software businesses will structurally ace Pillar B and C thresholds; industrials and autos will structurally sit near the half-point bands. When a batch mixes sectors, compare scores *within* sector before comparing across, or you will simply select for asset-light business models rather than for quality within each model.
+**Financials (banks, insurers, lenders).** Altman Z, Debt/Equity, Current Ratio, and EV/EBITDA are structurally meaningless for balance-sheet-driven businesses; they score on ROE, net margin, and Piotroski only. *Classify by industry, not sector:* the "Financial Services" sector also sweeps in fee businesses — insurance brokers, exchanges and data vendors, asset managers — whose balance sheets are ordinary; those belong on the standard rubric. Lending-adjacent industries (banks, insurance carriers, capital markets, credit services, mortgage finance, conglomerates) take the financial rubric; "credit services" deliberately stays in that bucket even though it mixes fee networks (Visa, Mastercard) with real lenders (Amex, Capital One) — the networks ace the ROE/net-margin rubric anyway, while a lender misrouted onto the industrial rubric would be zeroed by structurally missing EBITDA and current-ratio data. A mortgage *originator* (industry "Mortgage Finance", no "REIT") is a lender and lands here; a mortgage *REIT* (industry "REIT — Mortgage") is its own **mREIT** archetype below. Piotroski's leverage/current-ratio tests don't fit a bank's balance sheet either, so a low F-Score is a flag here too, not a kill.
+
+**REITs (equity, Real Estate).** Property is funded by debt and pays out ~90% of taxable income by law, so Debt/EBITDA, the liquidity kill, Altman-Z and the ROIC−WACC gate are all inapplicable — a REIT graded on the industrial rubric would be wrongly disqualified on leverage. Piotroski's leverage/current-ratio tests are similarly biased against REITs' intentionally high, stable leverage, so a low F-Score is a flag, not a kill.
+
+**Mortgage REITs (mREITs, industry "REIT — Mortgage").** A mREIT is a *leveraged securities portfolio in a REIT wrapper* — it owns mortgage bonds financed with repo, not depreciating buildings. So neither of the other two rubrics fits: the equity-REIT FFO rubric is inapplicable (there's no property depreciation to add back — FFO degenerates to net income), and the bank rubric actively *misleads* — a mREIT's income statement shows a huge "net margin" (net income is a large fraction of net interest income), which the financial rubric rewards with full marks even as the REIT pays out more than it earns and erodes book value. Both the old and the new classifier keep mREITs off Altman-Z, Debt/EBITDA and the liquidity kills (they're leveraged by design). The mREIT rubric grades the four things that actually determine safety:
+
+| Pillar | Metric | Full | Half | Zero |
+|---|---|---|---|---|
+| **Dividend coverage** (35) | Payout ratio (dividends ÷ earnings) | ≤ 100% | ≤ 120% | > 120% |
+| **Price vs book** (25) | P/B | ≤ 0.90 | ≤ 1.10 | > 1.10 |
+| **Leverage** (20) | Debt/Equity | ≤ 800% | ≤ 1000% | > 1000% |
+| **Book-value trend** (20) | Annualized BVPS growth | > 0% | ≥ −5%/yr | < −5%/yr |
+
+*Book-value trend is the headline signal.* A mREIT that holds or grows book value per share while paying its dividend is compounding; one whose book value steadily erodes is paying the dividend out of capital, however high the yield. The leverage bands are deliberately wide — agency mREITs run ~8× on government-guaranteed collateral, which is prudent, not distressed. **S2** reframes for mREITs as "does it preserve book value while paying a sustainable distribution?" (they aren't operating compounders); **S3** rewards a discount to book backed by a covered dividend and non-eroding book value as genuine defensive value. Like all REIT grades, treat these as directional: book-value trend comes from GAAP equity ÷ shares over a handful of annual statements, and coverage uses GAAP net income, which for a mREIT includes volatile mark-to-market swings rather than the "distributable earnings" the dividend is actually set from.
+
+*Cash-flow basis:* REITs are graded on **approximate NAREIT FFO** (Funds From Operations = Net Income + D&A − property-sale gains + impairments) where the cash flow statement provides a D&A line — the measure real REIT investors use, computed instead of relying on GAAP FCF (which understates distributable cash, since reported capex isn't split into maintenance vs. growth/development spend). The gain backout matters: without it a REIT flatters its payout by selling a building, and the sale shrinks the portfolio the next dividend must come from. Both adjustments are read off the cash flow statement's operating reconciliation (see [REITs.md](REITs.md)). **It is still not exact NAREIT FFO, and it is not AFFO.** The residual gap is a data limitation: the gain line is a general non-cash gain/loss adjustment that can carry non-property items, and NAREIT adds back only real estate depreciation where the D&A line also covers intangibles. AFFO is further out of reach — it requires splitting capex into maintenance vs. growth, a split that isn't in any structured financial statement (real analysts pull it from each company's own investor-relations disclosures), and it isn't standardized industry-wide the way NAREIT FFO is, so no single formula could apply universally regardless of data availability. When FFO can't be computed (no D&A line), the rubric falls back to the GAAP-FCF proxy. **Treat REIT grades as directional, not precise** — use them to rule out clearly over-levered or under-covered names, not to fine-rank REIT against REIT.
+
+Distribution is judged on the FFO payout ratio (dividends ÷ FFO) where available: ≤80% is a comfortable cushion, ≤100% is the sustainable norm (REITs must pay out most of taxable income by law), and above 100% means distributing more cash than the business generates — a genuine red flag. Valuation leans on P/FFO (the REIT-standard multiple, mirroring P/E) backed up by P/B.
+
+**Asset-light (tech, communications, healthcare).** These businesses will structurally ace Pillars B and C, and their reported ROIC is inflated because invested capital omits the real (intangible/human) capital base. The ROIC−WACC spread is therefore halved in Pillar A and the freed points reward gross-margin durability and positive FCF; a low Altman-Z becomes a context flag, not a kill. When a batch mixes archetypes, still compare scores *within* type before across.
+
+**Cyclical (energy, materials).** Commodity earnings and ROIC swing violently with the cycle, so a single-year low Altman-Z or negative spread is softened (flag / deep-spread-only cap) rather than disqualifying — a miner at the bottom of the cycle is not a broken business.
 
 **Growth-phase companies.** A company deliberately running at breakeven to capture a market (heavy R&D, land-grab pricing) fails Pillars A/B for reasons that may be strategic rather than structural. The compound kill-switches (Stage 1 #3, #6) already protect the genuinely viable ones; but if a name scores 40–55 purely due to margin metrics while showing strong gross margin (> 60%) and positive FCF, route it to the Watchlist rather than Discard.
 
