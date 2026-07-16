@@ -258,6 +258,53 @@ class TestSeriesFromStmt(unittest.TestCase):
         self.assertIsNone(series[0]["value"])
 
 
+class TestPositiveYearCount(unittest.TestCase):
+    """_positive_year_count — the earnings-stability signal behind S3 Pillar D."""
+
+    def _df(self, values):
+        return _make_df(["Net Income"],
+                        ["2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"],
+                        {"Net Income": values})
+
+    def test_all_positive(self):
+        self.assertEqual(
+            app._positive_year_count(self._df([5e9, 6e9, 7e9, 9e9]), "Net Income"),
+            (4, 4))
+
+    def test_counts_only_positive_periods(self):
+        self.assertEqual(
+            app._positive_year_count(self._df([5e9, -1e9, 7e9, 9e9]), "Net Income"),
+            (3, 4))
+
+    def test_zero_is_not_positive(self):
+        self.assertEqual(
+            app._positive_year_count(self._df([5e9, 0.0, 7e9, 9e9]), "Net Income"),
+            (3, 4))
+
+    def test_blank_period_counts_neither_way(self):
+        # A missing figure shrinks the denominator rather than reading as a loss.
+        self.assertEqual(
+            app._positive_year_count(
+                self._df([5e9, float("nan"), 7e9, 9e9]), "Net Income"),
+            (3, 3))
+
+    def test_absent_line_reports_no_history(self):
+        # (0, 0) means "no history", which the grader must not read as "never
+        # positive" — it falls back to the latest value's sign instead.
+        self.assertEqual(
+            app._positive_year_count(self._df([5e9] * 4), "Nonexistent"), (0, 0))
+
+    def test_none_df(self):
+        self.assertEqual(app._positive_year_count(None, "Net Income"), (0, 0))
+
+    def test_fallback_label(self):
+        df = _make_df(["Net Income Common Stockholders"], ["2024-12-31"],
+                      {"Net Income Common Stockholders": [5e9]})
+        self.assertEqual(
+            app._positive_year_count(df, "Net Income",
+                                     "Net Income Common Stockholders"), (1, 1))
+
+
 # ---------------------------------------------------------------------------
 # 2b. _yoy — year-over-year growth keyed by period
 # ---------------------------------------------------------------------------
@@ -3955,6 +4002,45 @@ class TestStrategyDefensive(unittest.TestCase):
         score_neg, _ = strategies.grade_defensive(_strategy_row(pe=None, income=-1e9))
         score_pos, _ = strategies.grade_defensive(self._value_row())
         self.assertLess(score_neg, score_pos)
+
+    def _hist(self, ni_pos, ni_yrs, fcf_pos, fcf_yrs, **over):
+        return self._value_row() | {
+            "ni_positive_years": ni_pos, "ni_years": ni_yrs,
+            "fcf_positive_years": fcf_pos, "fcf_years": fcf_yrs} | over
+
+    def test_s3_quality_scores_consistency_not_latest_year_sign(self):
+        # The point of the stability legs: a business profitable in 3 of 4 years
+        # that took one loss last year is not the same as a chronic loss-maker,
+        # though the old NI>0 sign test scored them identically (both zero).
+        one_bad = strategies.grade_defensive(self._hist(3, 4, 4, 4, income=-1e9))
+        chronic = strategies.grade_defensive(self._hist(0, 4, 0, 4, income=-1e9))
+        self.assertGreater(one_bad[0], chronic[0])
+
+    def test_s3_quality_one_bad_year_takes_half_not_zero(self):
+        clean, _v, pillars = strategies._grade_defensive(self._hist(4, 4, 4, 4))
+        bad, _v2, pillars_bad = strategies._grade_defensive(self._hist(3, 4, 4, 4))
+        d = next(p for p in pillars if p["k"] == "Earnings quality")
+        d_bad = next(p for p in pillars_bad if p["k"] == "Earnings quality")
+        self.assertEqual(d["p"] - d_bad["p"], 2.5)      # half of the 5-pt NI leg
+        self.assertIn("3/4 yrs", d_bad["d"])
+
+    def test_s3_quality_two_bad_years_zeroes_the_leg(self):
+        _s, _v, pillars = strategies._grade_defensive(self._hist(2, 4, 4, 4))
+        d = next(p for p in pillars if p["k"] == "Earnings quality")
+        self.assertEqual(d["p"], 15.0)                  # 0 NI + 5 FCF + 10 F-score
+
+    def test_s3_quality_falls_back_to_sign_without_history(self):
+        # A young company (one usable period) has no consistency to judge and
+        # must not be zeroed for a track record it cannot yet have.
+        _s, _v, pillars = strategies._grade_defensive(self._hist(1, 1, 1, 1))
+        d = next(p for p in pillars if p["k"] == "Earnings quality")
+        self.assertEqual(d["p"], 20.0)
+        self.assertIn("NI +", d["d"])                   # sign text, not "1/1 yrs"
+
+    def test_s3_quality_history_keys_absent_preserves_sign_behaviour(self):
+        # Rows built before the counts existed (and any row whose statements
+        # lack the line) still score exactly as the sign test scored them.
+        self.assertEqual(strategies.grade_defensive(self._value_row())[0], 100)
 
     def test_negative_equity_loses_debt_equity_points(self):
         # Negative equity -> negative D/E must not read as "low leverage":

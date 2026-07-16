@@ -16,7 +16,10 @@ health, at a defensible price — the intersection the whole framework exists to
 find.
 
 Scores run 0–100. Missing data earns 0 for that metric — an unverifiable
-margin of safety is no margin of safety.
+margin of safety is no margin of safety. The single exception is Pillar D's
+earnings-stability legs, which fall back to a single-year sign test when there
+is no history to count; see the note there for why absent *history* is treated
+differently from an absent *figure*.
 
 ---
 
@@ -73,9 +76,24 @@ A low multiple on bad earnings is a high multiple in disguise.
 
 | Metric | Full points | Half points | Zero |
 |---|---|---|---|
-| **Net Income > 0** (5 pts) | positive | — | negative or missing |
-| **Free Cash Flow > 0** (5 pts) | positive | — | negative or missing |
+| **Net Income positive** (5 pts) | every year | one year negative | two or more negative |
+| **Free Cash Flow positive** (5 pts) | every year | one year negative | two or more negative |
 | **Piotroski F-Score** (10 pts) | ≥ 7 | 4–6 | ≤ 3 |
+
+The two stability legs count positive years across the annual statement history
+(~4 periods on the underlying feed) rather than testing the sign of the latest
+year. Graham's defensive investor wanted positive earnings in *each* of the past
+ten years, and for good reason: a single-year snapshot scores a fortress that
+took one restructuring charge identically to a chronic loss-maker, and rewards a
+dollar of profit exactly like ten billion. One bad year takes half — a bad year
+is not a broken business. Two is a pattern.
+
+Where fewer than two periods carry a usable figure — a young company, or a line
+the filing doesn't break out — there is no consistency to judge and the leg
+falls back to the sign of the latest figure. That is the one place in this
+strategy where absent data doesn't score zero: the alternative punishes a
+company for a track record it has not had time to accumulate, which is a
+statement about its age rather than its safety.
 
 ## Pillar E — Dividend record (15 points)
 

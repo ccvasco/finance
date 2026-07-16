@@ -26,6 +26,10 @@ Unit conventions of screener_row (see SCREENER_COLUMNS.md):
                      quick_ratio, fcf_coverage, ebitda_fcf, p_ffo, ffo_coverage
   absolute currency  ffo (Net Income + D&A − property-sale gains + impairments
                      — equity-REIT-only; see _grade_triage's reit branch)
+  period counts      ni_positive_years / ni_years, fcf_positive_years /
+                     fcf_years — positive annual periods out of those with a
+                     usable figure (~4 on Yahoo's feed); None when the line has
+                     no history rather than 0
 
 Every row is also classified into a business-type archetype (_business_type)
 that changes which kill-switches and pillar weights apply — see its docstring.
@@ -45,10 +49,12 @@ _NON_METRIC_KEYS = {
     "strategy_1_detail", "strategy_2_detail", "strategy_3_detail",
     # Conditional/derived fields — only meaningful for some business types, so
     # their absence must not count toward the Stage-0 "row too empty" quarantine
-    # (a mortgage REIT legitimately has no FFO; a young company no BVPS trend;
-    # financials and REITs are deliberately blanked on the FCFF DCF fields).
+    # (a mortgage REIT legitimately has no FFO; a young company no BVPS trend
+    # and no multi-year positive-year counts; financials and REITs are
+    # deliberately blanked on the FCFF DCF fields).
     "ffo", "p_ffo", "ffo_payout", "ffo_coverage", "bvps_growth",
     "dcf_value", "dcf_upside",
+    "ni_positive_years", "ni_years", "fcf_positive_years", "fcf_years",
 }
 
 # Stage 0 critical fields (triage doc): a row missing any of these can't be
@@ -197,6 +203,27 @@ def _band(v, full_at, half_at, pts, reverse=False):
         if v > half_at:
             return pts / 2.0
     return 0.0
+
+
+def _positive_years(row, pos_key, yrs_key, latest, pts):
+    """(points, detail text) for an earnings or cash-flow line scored on how
+    many of its annual periods were positive rather than on the sign of the
+    latest one. Graham's defensive test was consistency across a decade: a
+    single-year snapshot scores a fortress that took one restructuring charge
+    identically to a chronic loss-maker, and rewards $1 of profit exactly like
+    $10bn. Yahoo's ~4 annual periods are the longest window this data affords.
+
+    One negative year takes half — a bad year is not a broken business. Two or
+    more takes zero. Below two usable periods there is no consistency to judge,
+    so it falls back to the latest value's sign (the old behaviour) rather than
+    scoring a young company zero for a track record it cannot yet have."""
+    pos, yrs = row.get(pos_key), row.get(yrs_key)
+    if not yrs or yrs < 2 or pos is None:
+        return (float(pts) if (latest is not None and latest > 0) else 0.0,
+                "+" if (latest is not None and latest > 0) else "−")
+    neg = yrs - pos
+    p = float(pts) if neg == 0 else (pts / 2.0 if neg == 1 else 0.0)
+    return p, f"{pos}/{yrs} yrs +"
 
 
 def _cagr_pct(total_return_pct, years):
@@ -1135,11 +1162,13 @@ def _grade_defensive(row):
                        f"FFO {'+' if (ffo or 0) > 0 else '−'}, cover {_r(cov, 2, '×')}, "
                        f"payout {_pct(fp * 100, 0) if fp is not None else '—'}"))
     else:
-        d = (5 if (ni is not None and ni > 0) else 0) \
-            + (5 if (fcf is not None and fcf > 0) else 0) \
-            + _band(row.get("piotroski_f"), 6.5, 3.5, 10)
+        # Scored on consistency across the statement history, not the sign of
+        # the latest year — see _positive_years.
+        ni_p, ni_txt = _positive_years(row, "ni_positive_years", "ni_years", ni, 5)
+        fcf_p, fcf_txt = _positive_years(row, "fcf_positive_years", "fcf_years", fcf, 5)
+        d = ni_p + fcf_p + _band(row.get("piotroski_f"), 6.5, 3.5, 10)
         P.append(_pill("Earnings quality", d, 20,
-                       f"NI {'+' if (ni or 0) > 0 else '−'}, FCF {'+' if (fcf or 0) > 0 else '−'}, "
+                       f"NI {ni_txt}, FCF {fcf_txt}, "
                        f"F-score {_r(row.get('piotroski_f'), 0)}"))
 
     # Pillar E — dividend record (15)

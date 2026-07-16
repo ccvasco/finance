@@ -436,6 +436,12 @@ def _screener_row(ticker):
     tax = _stmt_val(inc, "Tax Provision", "Income Tax Expense")
     net_income = _num(info.get("netIncomeToCommon")) or _stmt_val(inc, "Net Income", "Net Income Common Stockholders")
     fcf = _stmt_val(cf, "Free Cash Flow") or _num(info.get("freeCashflow"))
+    # Earnings/cash consistency across the statement history (see S3 Pillar D).
+    # Same labels the scalars above and piotroski_f resolve, so the counts and
+    # the latest-year figures can never disagree about which line they mean.
+    ni_pos_yrs, ni_yrs = _positive_year_count(
+        inc, "Net Income", "Net Income Common Stockholders")
+    fcf_pos_yrs, fcf_yrs = _positive_year_count(cf, "Free Cash Flow")
     div_paid = _stmt_val(cf, "Cash Dividends Paid", "Common Stock Dividend Paid", "Common Stock Dividends Paid")
     bt = _business_type({"sector": info.get("sector"), "industry": info.get("industry")})
     # Approximate NAREIT FFO (Net Income + D&A − property-sale gains + impairments)
@@ -584,6 +590,13 @@ def _screener_row(ticker):
         "operating_margin": _num(info.get("operatingMargins")),
         "ebitda_margin": _num(info.get("ebitdaMargins")),
         "fcf": _num(fcf),
+        # Positive-year counts and the history depth behind them. None (not 0)
+        # when the line has no usable history at all — a young company has no
+        # track record, which is not the same claim as "never profitable".
+        "ni_positive_years": ni_pos_yrs if ni_yrs else None,
+        "ni_years": ni_yrs or None,
+        "fcf_positive_years": fcf_pos_yrs if fcf_yrs else None,
+        "fcf_years": fcf_yrs or None,
         "roa": _num(info.get("returnOnAssets")),
         "roe": _num(info.get("returnOnEquity")),
         "roic": _num(roic),
@@ -707,6 +720,19 @@ def _series_from_stmt(df, *labels):
                 for c in cols
             ]
     return []
+
+
+def _positive_year_count(df, *labels):
+    """(positive periods, usable periods) across a statement line's annual
+    history — the earnings-stability signal S3's quality pillar grades on.
+    Yahoo's free feed carries ~4 annual periods, so this is a shorter window
+    than Graham's ten-year test but the same idea: consistency, not the sign of
+    whichever year happens to be last. Periods where the line is blank count
+    neither way; (0, 0) when the line is absent entirely, which callers must
+    read as "no history available" rather than "never positive"."""
+    usable = [s["value"] for s in _series_from_stmt(df, *labels)
+              if s["value"] is not None]
+    return sum(1 for v in usable if v > 0), len(usable)
 
 
 def _shares_outstanding_series(bal):
