@@ -134,11 +134,11 @@ Triage screens business quality, not price — a wonderful business can be a ter
 
 ## Business-type archetypes
 
-Applied blindly, a transversal screen selects for a *business model* rather than for quality within a model — and worse, disqualifies healthy companies on metrics that don't fit them (the Altman Z-Score is a manufacturer model; ROIC/WACC breaks down for asset-light and property businesses; REITs are levered by design). Every row is therefore classified into one of six archetypes (by sector, with financials and mortgage REITs caught by industry first), and the kill-switches and Pillar-A weighting adjust accordingly:
+Applied blindly, a transversal screen selects for a *business model* rather than for quality within a model — and worse, disqualifies healthy companies on metrics that don't fit them (the Altman Z-Score is a manufacturer model; ROIC/WACC breaks down for asset-light and property businesses; REITs are levered by design). Every row is therefore classified into one of six archetypes (by sector, with financials and mortgage REITs caught by industry first, and a short industry-override list for the cases where the sector label misroutes: semiconductors sit in Technology but a fab is the opposite of asset-light, and telecoms sit in Communication Services beside content businesses while towers, spectrum and fibre are as capital-heavy as any industrial — both grade **capital-intensive**; the override moves fabless designers too, an accepted cost of a string match), and the kill-switches and Pillar-A weighting adjust accordingly:
 
 | Archetype | Sectors | Altman-Z kill | Piotroski kill | ROIC−WACC gate | Leverage/liquidity kills | Rubric |
 |---|---|---|---|---|---|---|
-| **Capital-intensive** *(default)* | Industrials, Utilities, Consumer, unknown | **kill < 1.8** | **kill ≤ 3** | **full** (cap at spread < 0) | full | standard 4-pillar |
+| **Capital-intensive** *(default)* | Industrials, Utilities, Consumer, unknown; industries: semiconductors, telecom | **kill < 1.8** (utilities: flag only) | **kill ≤ 3** | **full** (cap at spread < 0) | full (utilities: Debt/EBITDA kill at 7×) | standard 4-pillar |
 | **Cyclical** | Energy, Basic Materials | flag only | kill ≤ 3 | softened (cap at spread < −5) | full | standard, cycle-tolerant |
 | **Asset-light** | Technology, Communication Services, Healthcare | flag only | kill ≤ 3 | de-weighted (spread 10 pts; cap at < −5) | full | standard, spread halved |
 | **REIT** (equity) | Real Estate | ignored | flag only | none | **exempt** | FFO-based cash-flow / distribution / valuation |

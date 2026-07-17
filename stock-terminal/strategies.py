@@ -135,6 +135,16 @@ def _business_type(row):
         return "mreit"
     if _is_financial(row):
         return "financial"
+    # Industry overrides — the few cases where the sector label genuinely
+    # misroutes. Semiconductors ("Semiconductors", "Semiconductor Equipment &
+    # Materials") sit in Technology but a fab is the opposite of asset-light:
+    # tens of billions in plant, classic Altman/ROIC territory (this also moves
+    # fabless designers — an accepted cost of a string match). Telecoms
+    # ("Telecom Services") sit in Communication Services beside content
+    # businesses, but towers, spectrum and fibre are as capital-heavy as any
+    # industrial. Keep this list short and defensible — it is not a taxonomy.
+    if any(p in ind for p in ("semiconductor", "telecom")):
+        return "capital_intensive"
     sector = (row.get("sector") or "").lower()
     if "real estate" in sector:
         return "reit"

@@ -3598,6 +3598,14 @@ class TestBusinessType(unittest.TestCase):
         self.assertEqual(self._bt("Healthcare", "Biotechnology"), "asset_light")
         self.assertEqual(self._bt("Energy", "Oil & Gas E&P"), "cyclical")
         self.assertEqual(self._bt("Basic Materials", "Copper"), "cyclical")
+        # industry overrides: sectors that misroute these capital-heavy models
+        self.assertEqual(self._bt("Technology", "Semiconductors"),
+                         "capital_intensive")
+        self.assertEqual(self._bt("Technology",
+                                  "Semiconductor Equipment & Materials"),
+                         "capital_intensive")
+        self.assertEqual(self._bt("Communication Services", "Telecom Services"),
+                         "capital_intensive")
         self.assertEqual(self._bt("Real Estate", "REIT—Retail"), "reit")
         # a mortgage REIT is its own archetype (leveraged securities portfolio)
         self.assertEqual(self._bt("Real Estate", "REIT—Mortgage"), "mreit")
