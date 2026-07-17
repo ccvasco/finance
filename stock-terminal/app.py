@@ -1557,6 +1557,11 @@ def deepdive(ticker):
             # the frontend uses it for the DCF Value hover when the trading and
             # reporting currencies differ.
             "dcf_value_native": srow.get("dcf_value_native"),
+            # market cap converted into the reporting currency — the figure
+            # Enterprise Value is built from. Lets the Valuation panel show the
+            # reconciling reporting-currency market cap on hover when the trading
+            # and reporting currencies differ (the Market Cap value tip in views.js).
+            "market_cap_native": _num(market_cap_native),
             # "equity" | "mortgage" | None — which REIT rubric panels.reit holds.
             "reit_kind": reit_kind,
             "panels": {

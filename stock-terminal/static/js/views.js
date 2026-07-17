@@ -2141,6 +2141,16 @@ const DeepDive = (() => {
         `${Fmt.price(d.dcf_value_native, finCur)} in the reporting currency (${finCur}). `
         + `The DCF is computed from ${finCur} statement figures, then converted to ${cur} to compare against Price.`;
     }
+    // Market Cap is shown in the trading currency (${cur}), but Enterprise Value,
+    // Total Cash and Total Debt are all reported in ${finCur}. So the EV bridge
+    // (mkt cap + debt − cash) can't be checked by eye from the on-screen numbers.
+    // Surface the ${finCur}-converted market cap on hover — the figure EV is
+    // actually built from — so the arithmetic reconciles.
+    if (finCur !== cur && d.market_cap_native != null) {
+      valuationValueTips["Market Cap"] =
+        `${Fmt.big(d.market_cap_native, finCur)} in the reporting currency (${finCur}). `
+        + `Enterprise Value is built from this figure: ${finCur} market cap + total debt − total cash.`;
+    }
 
     ov.querySelector(".dd-top").innerHTML = `
       <span class="dd-back" id="dd-back">‹ Back</span>
