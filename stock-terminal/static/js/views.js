@@ -1854,7 +1854,8 @@ const Views = (() => {
   function getChatContext() { return chatContext; }
 
   return { screener, watchlist, dashboard, calendar, settings,
-           getChatContext, COLS, PANEL_TIPS, updateCachedRow, gradePayload };
+           getChatContext, COLS, PANEL_TIPS, updateCachedRow, gradePayload,
+           openStarPicker };
 })();
 
 /* =================== DEEP DIVE OVERLAY ===================== */
@@ -2116,7 +2117,19 @@ const DeepDive = (() => {
     };
     const chg = d.change_pct;
     const chgTxt = chg == null ? "" : `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
-    const star = Store.inWatchlist(ticker);
+
+    // Mirror the table's three-state star so the drilldown button never lies
+    // about ★ Starred vs. a silver "saved elsewhere" list. Clicking opens the
+    // same watchlist picker as the table star (openStarPicker), not a plain
+    // toggle — so you can pick which lists to save into from here too.
+    const ddStarHTML = () => {
+      const starred = Store.inWatchlist(ticker);
+      const other = !starred && Store.inAnyList(ticker);
+      const cls = starred ? "on" : other ? "on-other" : "";
+      const glyph = starred || other ? "★" : "☆";
+      const label = starred ? "Watching" : other ? "Saved" : "Watch";
+      return `<span class="star-btn ${cls}" style="font-size:inherit">${glyph}</span> ${label}`;
+    };
 
     // For a mismatched-currency ticker (trades in `cur`, reports in `finCur`),
     // DCF Value is shown in the trading currency so it sits next to Price — but
@@ -2137,13 +2150,12 @@ const DeepDive = (() => {
       <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>
       ${d.dcf_value != null ? `<button class="btn btn-sm" id="dd-export-dcf" title="Export the full DCF valuation for ${ticker} — every input, the WACC breakdown, the 10-year projection table, and the valuation bridge">⭳ DCF</button>` : ""}
-      <button class="btn btn-sm" id="dd-star">${star ? "★ Watching" : "☆ Watch"}</button>`;
+      <button class="btn btn-sm" id="dd-star" title="Save to watchlists">${ddStarHTML()}</button>`;
     document.getElementById("dd-back").addEventListener("click", close);
     document.getElementById("dd-refresh").addEventListener("click", () => open(ticker, { refresh: true }));
-    document.getElementById("dd-star").addEventListener("click", () => {
-      const now = Store.toggleWatch(ticker);
-      document.getElementById("dd-star").textContent = now ? "★ Watching" : "☆ Watch";
-      App.toast(now ? `★ ${ticker} added` : `${ticker} removed`, "ok");
+    document.getElementById("dd-star").addEventListener("click", async () => {
+      await Views.openStarPicker(ticker, null);
+      document.getElementById("dd-star").innerHTML = ddStarHTML();
     });
     document.getElementById("dd-export").addEventListener("click", async () => {
       const btn = document.getElementById("dd-export");
