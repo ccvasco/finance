@@ -1900,7 +1900,7 @@ const DeepDive = (() => {
   const GROWTH_SERIES = [
     { key: "revenue_growth", label: "Revenue", color: "accent", swatch: "var(--accent)",
       desc: "Year-over-year growth in total revenue." },
-    { key: "eps_growth", label: "Diluted EPS", color: "#2f81f7", swatch: "#2f81f7",
+    { key: "eps_growth", label: "Diluted EPS Growth", color: "#2f81f7", swatch: "#2f81f7",
       desc: "Year-over-year growth in diluted earnings per share (falls back to basic EPS if diluted is unavailable)." },
     { key: "ebitda_growth", label: "EBITDA", color: "#168512", swatch: "#168512",
       desc: "Year-over-year growth in EBITDA (earnings before interest, tax, depreciation & amortization)." },
@@ -1936,7 +1936,7 @@ const DeepDive = (() => {
   const SHARE_LINES = [
     // EPS ($/share) rides its own private scale (indep) so it can sit among the
     // % lines without distorting their right axis; its $ value shows on hover.
-    { key: "eps", label: "Diluted EPS", color: "#a371f7", swatch: "#a371f7", indep: true,
+    { key: "eps", label: "Diluted EPS ($)", color: "#a371f7", swatch: "#a371f7", indep: true,
       desc: "Fiscal-year diluted earnings per share (statement-derived). The counterpart to the dilution bars: EPS rising while the share count holds or falls is per-share earnings compounding; EPS lagging a growing share count is dilution eating into it. Drawn on its own scale (no axis label) — hover for the value." },
     { key: "div_yield", label: "Dividend Yield %", color: "#e3b341", swatch: "#e3b341",
       desc: "Historical dividend yield — annual dividends ÷ year-end price." },
