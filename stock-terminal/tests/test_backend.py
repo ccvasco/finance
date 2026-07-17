@@ -2179,6 +2179,41 @@ class TestFinancials(unittest.TestCase):
         self.assertEqual(result["freq"], "quarterly")
         self.assertGreater(len(result["rows"]), 0)
 
+    def test_phantom_all_nan_column_dropped(self):
+        # Yahoo's timeseries can emit a period slot no line item reports, giving
+        # an entirely-empty column that would render as a full column of N/A.
+        df = _make_df(
+            ["Total Revenue", "Net Income"],
+            ["2025-12-31", "2024-12-31", "2023-12-31"],
+            {
+                "Total Revenue": [1.81e9, float("nan"), 1.12e9],
+                "Net Income":    [141e6,  float("nan"), 121e6],
+            },
+        )
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = df
+        mock_tk.quarterly_income_stmt = pd.DataFrame()
+        with patch("app.yf.Ticker", return_value=mock_tk):
+            result = app.financials("TST", "income", "annual")
+        # The empty 2024 column is gone; real years survive in order.
+        self.assertEqual(result["periods"], ["2025-12-31", "2023-12-31"])
+        for row in result["rows"]:
+            self.assertEqual(len(row["values"]), 2)
+            self.assertNotIn(None, row["values"])
+
+    def test_all_nan_columns_kept_when_nothing_else(self):
+        # Degenerate case: if every column is empty, don't strip the table bare.
+        nan_df = _make_df(
+            ["Total Revenue"], ["2024-12-31", "2023-12-31"],
+            {"Total Revenue": [float("nan"), float("nan")]},
+        )
+        mock_tk = MagicMock()
+        mock_tk.income_stmt = nan_df
+        mock_tk.quarterly_income_stmt = pd.DataFrame()
+        with patch("app.yf.Ticker", return_value=mock_tk):
+            result = app.financials("TST", "income", "annual")
+        self.assertEqual(result["periods"], ["2024-12-31", "2023-12-31"])
+
     def test_nan_values_become_none(self):
         nan_df = _make_df(["Total Revenue"], ["2024-12-31"], {"Total Revenue": [float("nan")]})
         mock_tk = MagicMock()

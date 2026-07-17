@@ -1772,6 +1772,14 @@ def financials(ticker, stmt="income", freq="annual"):
         if df is None or df.empty:
             return {"ticker": ticker, "stmt": stmt, "freq": freq, "periods": [], "rows": []}
         cols = sorted(df.columns, reverse=True)  # newest first
+        # Yahoo's fundamentals timeseries collects columns from the union of every
+        # line item's timestamps but fills cells by each item's asOfDate, so it can
+        # emit a period slot that no line item actually reports — an entirely-empty
+        # column that renders as a full column of N/A (seen on some regional
+        # listings). Drop such phantom columns, but never strip the table bare.
+        non_empty = [c for c in cols if not df[c].isna().all()]
+        if non_empty:
+            cols = non_empty
         periods = [str(getattr(c, "date", lambda: c)()) for c in cols]
         rows = []
         for label in df.index:
