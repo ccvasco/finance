@@ -312,7 +312,8 @@ table.data tbody td.cov-green  { color: var(--up);   background: color-mix(in sr
 table.data tbody td.cov-yellow { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent) !important; font-weight: 700; }
 table.data tbody td.cov-red    { color: var(--down); background: color-mix(in srgb, var(--down) 16%, transparent) !important; font-weight: 700; }
 .star-btn { cursor: pointer; color: var(--text-faint); font-size: 15px; }
-.star-btn.on { color: var(--warn); }
+.star-btn.on { color: var(--warn); }           /* gold — in ★ Starred */
+.star-btn.on-other { color: #aeb6c2; }         /* silver — in a named list, not Starred */
 
 /* filter bar */
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }

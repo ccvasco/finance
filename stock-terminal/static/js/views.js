@@ -789,8 +789,17 @@ const Views = (() => {
   }
 
   function starHTML(t) {
-    const on = Store.inAnyList(t);
-    return `<span class="star-btn ${on ? "on" : ""}" data-star="${t}" title="${on ? "Edit watchlists" : "Save to watchlists"}">${on ? "★" : "☆"}</span>`;
+    // Three states so the glyph never lies about ★ Starred membership:
+    //   gold ★  — in the flat ★ Starred set
+    //   silver ★ — saved to some named list, but NOT Starred
+    //   outline ☆ — in no list at all
+    const starred = Store.inWatchlist(t);
+    const other = !starred && Store.inAnyList(t);
+    const cls = starred ? "on" : other ? "on-other" : "";
+    const title = starred ? "In ★ Starred — edit watchlists"
+      : other ? "Saved to a watchlist (not ★ Starred) — edit"
+      : "Save to watchlists";
+    return `<span class="star-btn ${cls}" data-star="${t}" title="${title}">${starred || other ? "★" : "☆"}</span>`;
   }
 
   /* Star click → checklist popup: pick one or more watchlists (the flat ★
