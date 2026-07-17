@@ -79,17 +79,28 @@ balance sheets are the best case, not missing data.
 
 ## Pillar D — Compounding track record (20 points)
 
-Has the stock actually compounded? Price-only CAGR over long windows (dividends
+Has the *business* actually compounded? Price CAGR embeds valuation swings and
+momentum — "the stock went up" is not "the business grew" — so where the
+statement history is deep enough to show a real trend (≥ 3 fiscal years, ~4 on
+Yahoo's free feed), the pillar leads with **revenue-per-share growth**:
+per-share, so dilution can't fake it (and buyback accretion rightly counts);
+revenue, so it reads the same across business models where EPS and FCF swing
+on accounting or cycle. The 5Y price CAGR stays as confirmation (dividends
 excluded, so payers are modestly understated — acceptable for a growth lens).
 
 | Metric | Full points | Half points | Zero |
 |---|---|---|---|
-| **5Y price CAGR** (10 pts) | ≥ 12%/yr | 6–12%/yr | < 6%/yr |
-| **10Y price CAGR** (10 pts) | ≥ 12%/yr | 6–12%/yr | < 6%/yr |
+| **Revenue/share CAGR** (12 pts) | ≥ 10%/yr | 5–10%/yr | < 5%/yr |
+| **5Y price CAGR** (8 pts) | ≥ 12%/yr | 6–12%/yr | < 6%/yr |
 
-A company without a 10-year history earns 0 on that line: a track record must
-exist to be credited. This deliberately tilts the strategy toward proven
-compounders and away from stories.
+With fewer than 3 comparable fiscal years of revenue and share counts the
+pillar falls back to the price-only legs (5Y and 10Y price CAGR, 10 pts each,
+same bands) — a name never scores worse for having statements. A listing too
+young for either earns 0: a track record must exist to be credited. This
+deliberately tilts the strategy toward proven compounders and away from
+stories — though the statement fallback means a company public only a few
+years is now judged on the fundamental record it *does* have (statements often
+predate the IPO) rather than on price history it cannot have.
 
 ## Pillar E — Valuation sanity (10 points)
 
@@ -149,7 +160,8 @@ runs high by design, so the pillars are rebuilt on **approximate NAREIT FFO** (s
   (FFO payout ≤ 90% → 10, ≤ 100% → 5, 10 pts). Paying out more than FFO is the
   real red flag, not a high Debt/EBITDA.
 - **Pillar E — valuation (10):** P/FFO (< 15× → 10, ≤ 22× → 5).
-- **Pillar D** (5Y/10Y price-compounding track record) is unchanged.
+- **Pillar D** (compounding track record) is unchanged — revenue/share for a
+  REIT is rental income per share, a fine growth line.
 
 REIT grades remain directional — the FFO here approximates NAREIT FFO but is not exact, and is not AFFO.
 
@@ -161,10 +173,12 @@ price-vs-book valuation sanity check (15). A mREIT can only reach the Compounder
 band by genuinely holding book value and covering its payout — rare, and
 correct. See the mREIT section in [stock-triage-strategy.md](stock-triage-strategy.md).
 
-**Young companies.** Anything listed under ~10 years structurally loses up to
-10 points on Pillar D. That is intentional — this strategy is the *proven*
-compounder lens; unproven ones should earn their way in through strategy 1's
-quality score first.
+**Young companies.** With ≥ 3 fiscal years of statements, Pillar D judges the
+fundamental record a young company *does* have (statements often predate the
+IPO), so a genuinely compounding recent listing is no longer zeroed for lacking
+price history. Below that there is nothing trend-shaped to credit, and the
+pillar scores 0 — intentional: this is the *proven* compounder lens; unproven
+names should earn their way in through strategy 1's quality score first.
 
 ---
 

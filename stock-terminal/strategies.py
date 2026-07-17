@@ -56,7 +56,7 @@ _NON_METRIC_KEYS = {
     # (a mortgage REIT legitimately has no FFO; a young company no BVPS trend
     # and no multi-year positive-year counts; financials and REITs are
     # deliberately blanked on the FCFF DCF fields).
-    "ffo", "p_ffo", "ffo_payout", "ffo_coverage", "bvps_growth",
+    "ffo", "p_ffo", "ffo_payout", "ffo_coverage", "bvps_growth", "rps_growth",
     "dcf_value", "dcf_upside",
     "ni_positive_years", "ni_years", "fcf_positive_years", "fcf_years",
 }
@@ -1046,12 +1046,25 @@ def _grade_compounder(row):
         P.append(_pill("Capital discipline", c, 20,
                        f"Debt/EBITDA {de_txt}, FCF/NI {fcf_ni}"))
 
-    # Pillar D — compounding track record (20)
+    # Pillar D — compounding track record (20). Fundamental growth first: price
+    # CAGR embeds valuation swings and momentum ("the stock went up" is not
+    # "the business compounded"), so where the statement history is deep enough
+    # to show a real trend (≥3 fiscal years — rps_growth is None below that),
+    # the pillar scores revenue-per-share growth (per-share, so dilution can't
+    # fake it and buybacks rightly count) with 5Y price CAGR as confirmation.
+    # Shorter histories fall back to the price-only legs, so a name never
+    # scores worse for having statements.
     cagr5 = _cagr_pct(row.get("perf_5y"), 5)
     cagr10 = _cagr_pct(row.get("perf_10y"), 10)
-    d = _band(cagr5, 12, 6, 10) + _band(cagr10, 12, 6, 10)
-    P.append(_pill("Track record", d, 20,
-                   f"5Y CAGR {_pct(cagr5, 1)}/yr, 10Y {_pct(cagr10, 1)}/yr"))
+    rps_g = row.get("rps_growth")
+    if rps_g is not None:
+        d = _band(rps_g, 10, 5, 12) + _band(cagr5, 12, 6, 8)
+        d_txt = f"RPS {_r(rps_g, 1, '%/yr')}, 5Y price {_pct(cagr5, 1)}/yr"
+    else:
+        d = _band(cagr5, 12, 6, 10) + _band(cagr10, 12, 6, 10)
+        d_txt = (f"5Y CAGR {_pct(cagr5, 1)}/yr, 10Y {_pct(cagr10, 1)}/yr "
+                 f"(no revenue/share history)")
+    P.append(_pill("Track record", d, 20, d_txt))
 
     # Pillar E — valuation sanity (10)
     peg, p_fcf = row.get("peg"), row.get("p_fcf")

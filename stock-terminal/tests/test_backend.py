@@ -1052,6 +1052,48 @@ class TestBvpsGrowth(unittest.TestCase):
         self.assertIsNone(app._bvps_growth(bal))
 
 
+class TestRpsGrowth(unittest.TestCase):
+    """Annualized revenue-per-share trend (S2's fundamental-compounding
+    signal). Needs ≥3 comparable periods — a single YoY interval is a data
+    point, not a track record."""
+
+    def _stmts(self, revenue, shares, dates):
+        inc = _make_df(["Total Revenue"], dates, {"Total Revenue": revenue})
+        bal = _make_df(["Ordinary Shares Number"], dates,
+                       {"Ordinary Shares Number": shares})
+        return inc, bal
+
+    def test_growing_revenue_per_share_is_positive(self):
+        # RPS 8 -> 10 over 2 year-gaps: (10/8)^(1/2)-1 ≈ +11.8%/yr
+        inc, bal = self._stmts([1000.0, 900.0, 800.0], [100.0, 100.0, 100.0],
+                               ["2024-12-31", "2023-12-31", "2022-12-31"])
+        g = app._rps_growth(inc, bal)
+        self.assertAlmostEqual(g, ((10.0 / 8.0) ** 0.5 - 1) * 100, places=4)
+
+    def test_buyback_counts_as_per_share_growth(self):
+        # Flat revenue, shares 100 -> 80: RPS compounds without sales growth.
+        inc, bal = self._stmts([1000.0, 1000.0, 1000.0], [80.0, 90.0, 100.0],
+                               ["2024-12-31", "2023-12-31", "2022-12-31"])
+        self.assertGreater(app._rps_growth(inc, bal), 0)
+
+    def test_dilution_erodes_per_share_growth(self):
+        # Revenue +10%/yr but shares +30%/yr: per-share trend is negative.
+        inc, bal = self._stmts([1210.0, 1100.0, 1000.0], [169.0, 130.0, 100.0],
+                               ["2024-12-31", "2023-12-31", "2022-12-31"])
+        self.assertLess(app._rps_growth(inc, bal), 0)
+
+    def test_none_below_three_periods(self):
+        inc, bal = self._stmts([1000.0, 900.0], [100.0, 100.0],
+                               ["2024-12-31", "2023-12-31"])
+        self.assertIsNone(app._rps_growth(inc, bal))
+
+    def test_none_without_share_counts(self):
+        inc, _ = self._stmts([1000.0, 900.0, 800.0], [100.0, 100.0, 100.0],
+                             ["2024-12-31", "2023-12-31", "2022-12-31"])
+        empty_bal = _make_df(["Total Assets"], ["2024-12-31"], {"Total Assets": [1.0]})
+        self.assertIsNone(app._rps_growth(inc, empty_bal))
+
+
 class TestFcfCagr(unittest.TestCase):
     """Annualized FCF growth from the cash-flow statement (DCF stage-1 input)."""
 
@@ -4136,6 +4178,34 @@ class TestStrategyCompounder(unittest.TestCase):
         self.assertEqual(strategies._cagr_pct(-100.0, 5), -100.0)
         # +300% over 10y -> 4^(1/10) - 1 ~ 14.87%/yr
         self.assertAlmostEqual(strategies._cagr_pct(300.0, 10), 14.87, places=2)
+
+    def test_track_record_prefers_fundamental_growth(self):
+        # With ≥3 fiscal years of history (rps_growth set) the pillar is
+        # RPS (12) + 5Y price (8) and the 10Y price leg is dropped. The
+        # fixture's 5Y CAGR ≈ 17%/yr takes the full 8 either way.
+        _, _, pillars = strategies._grade_compounder(
+            _strategy_row(rps_growth=12.0))
+        pill = next(p for p in pillars if p["k"] == "Track record")
+        self.assertEqual(pill["p"], 20)
+        _, _, p2 = strategies._grade_compounder(_strategy_row(rps_growth=2.0))
+        # slow fundamental growth caps the pillar at the price-confirmation leg
+        self.assertEqual(next(p for p in p2 if p["k"] == "Track record")["p"], 8)
+
+    def test_track_record_falls_back_to_price_without_history(self):
+        # No rps_growth (fewer than 3 fiscal years): legacy 5Y/10Y price legs.
+        _, _, pillars = strategies._grade_compounder(_strategy_row())
+        pill = next(p for p in pillars if p["k"] == "Track record")
+        self.assertEqual(pill["p"], 20)
+        self.assertIn("no revenue/share history", pill["d"])
+
+    def test_young_listing_scored_on_statements_not_price(self):
+        # A recent IPO: no 5Y/10Y price history, but statements predate the
+        # listing — the fundamental record still earns the RPS leg (12/20)
+        # where the old pillar scored a flat 0.
+        row = _strategy_row(perf_5y=None, perf_10y=None, rps_growth=12.0)
+        _, _, pillars = strategies._grade_compounder(row)
+        self.assertEqual(
+            next(p for p in pillars if p["k"] == "Track record")["p"], 12)
 
     def test_thin_margins_with_strong_returns_floor_moat(self):
         # Same escape hatch as S1's profitability pillar: the fixture's ROIC 18

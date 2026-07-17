@@ -466,6 +466,8 @@ def _screener_row(ticker):
            if (bt == "reit" and net_income is not None and d_and_a is not None) else None)
     # Book value per share trend — the mortgage-REIT quality signal (see grader).
     bvps_growth = _bvps_growth(bal)
+    # Revenue per share trend — S2's fundamental-compounding signal (see grader).
+    rps_growth = _rps_growth(inc, bal)
 
     # Derived ratios -----------------------------------------------------
     # Uses market_cap_native (not market_cap) so a mismatched-currency ticker
@@ -637,6 +639,8 @@ def _screener_row(ticker):
         "ffo_coverage": _num(ffo / abs(div_paid)) if (ffo is not None and div_paid) else None,
         # book value per share trend (annualized %), the mortgage-REIT signal
         "bvps_growth": _num(bvps_growth),
+        # revenue per share trend (annualized %), S2's fundamental-growth signal
+        "rps_growth": _num(rps_growth),
         # dividend
         "div_yield": _num(div_yield),
         "five_year_avg_yield": _num(info.get("fiveYearAvgDividendYield")),
@@ -805,6 +809,33 @@ def _bvps_growth(bal):
     if len(periods) < 2:
         return None
     first, last = eq[periods[0]] / sh[periods[0]], eq[periods[-1]] / sh[periods[-1]]
+    if first <= 0 or last <= 0:
+        return None
+    n = len(periods) - 1          # annual statements ≈ one year apart
+    return ((last / first) ** (1 / n) - 1) * 100
+
+
+def _rps_growth(inc, bal):
+    """Annualized growth (%) of revenue per share across the income-statement
+    history (revenue ÷ shares outstanding, per period).
+
+    The fundamental-compounding signal S2's track-record pillar scores:
+    per-share so dilution can't fake growth (and buybacks rightly show up),
+    revenue so it works across business models where EPS/FCF swing on
+    accounting or cycle. Unlike _bvps_growth this requires ≥3 comparable
+    periods (2 intervals): the pillar reads it as a *trend*, and a single
+    year-over-year interval is a data point, not a track record. None when the
+    history is shorter (the grader then falls back to price CAGR) or an
+    endpoint is non-positive."""
+    rev = {s["period"]: s["value"] for s in _series_from_stmt(
+        inc, "Total Revenue", "TotalRevenue") if s["value"]}
+    # Outstanding, not issued — see _bvps_growth on why treasury shares would
+    # hide exactly the buyback accretion a per-share series exists to catch.
+    sh = {s["period"]: s["value"] for s in _shares_outstanding_series(bal)[0] if s["value"]}
+    periods = sorted(p for p in rev if p in sh)
+    if len(periods) < 3:
+        return None
+    first, last = rev[periods[0]] / sh[periods[0]], rev[periods[-1]] / sh[periods[-1]]
     if first <= 0 or last <= 0:
         return None
     n = len(periods) - 1          # annual statements ≈ one year apart
