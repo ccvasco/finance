@@ -158,6 +158,27 @@ it cheap?** Cheapness plus deteriorating fundamentals (low strategy 1 score)
 is the classic value trap; cheapness with health intact is what this screen
 exists to surface.
 
+**A known gap, deliberately left open.** Pillar C is 25 of 100, so the other
+four pillars sum to 75 — meaning a name with *zero* financial strength could in
+principle reach 70 and be called a candidate on cheapness alone. Unlike S2,
+this strategy has no solvency guard capping that.
+
+The obvious fix was tried against 118 names and rejected, because it does more
+harm than good on the evidence. Of the 10 names scoring ≥ 70, none failed debt
+service — the weakest covered its interest 4.4×. Every threshold that vetoed
+anything vetoed the same three levered-but-cash-generative subscription
+businesses (all covering interest 4.4–6.8× on large positive FCF, two of them
+independently rated healthy by S1), because Pillar C's current-ratio and Altman
+Z′ legs both read low for that business model. A guard gated on Altman fails
+worse: it is a manufacturer model, which is exactly why S1 treats a low Z as a
+soft flag rather than a kill for asset-light names.
+
+So the mitigation is the paragraph above, not a cap: **cross-check S1 before
+trusting any Value candidate.** A cheap name that is genuinely fragile shows it
+there, in a lens built to measure health, rather than here in one built to
+measure price. Revisit if a real value trap ever clears 70 — the check above
+found none.
+
 ---
 
 ## Sector adjustments
