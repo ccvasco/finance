@@ -1461,6 +1461,9 @@ const Views = (() => {
     hydrateFlagLegend(root);
     root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
     const set = wl.length ? wl : last;
+    // ⭳ Export must cover every row the table shows, which is the watchlist
+    // whenever there is one — not the last-analyzed set App would fall back to.
+    App.setExportTickers(set);
     const tableEl = root.querySelector("#dash-table");
     const cardsEl = root.querySelector("#dash-cards");
     const statusEl = root.querySelector("#dash-status");

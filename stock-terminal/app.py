@@ -1831,24 +1831,27 @@ def company_profile(ticker):
 # --------------------------------------------------------------------------- #
 # Excel export                                                                 #
 # --------------------------------------------------------------------------- #
+# Metrics-sheet columns, mirroring the screener table's COLS (views.js) key for
+# key and in its order, so an exported row reads like the row on screen. The
+# screener's star and mini-chart columns have nothing to write to a cell and are
+# skipped; DCF Upside, which the screener folds into the DCF Value tooltip
+# rather than giving a column, is kept here beside the fair value it qualifies.
+# Labels are the unabbreviated forms — a sheet has no narrow-column budget to
+# spend, so "Market Cap" over the table's "Mkt Cap".
 _METRIC_COLS = [
-    ("ticker", "Ticker"), ("name", "Name"), ("sector", "Sector"),
+    ("ticker", "Ticker"),
+    ("price", "Price"),
+    ("dcf_value", "DCF Value"), ("dcf_upside", "DCF Upside"),
+    ("market_cap", "Market Cap"), ("enterprise_value", "Enterprise Value"),
     ("industry", "Industry"),
     # strategy grades (0-100; see the strategy .md docs in this directory)
     ("strategy_1", "S1 Triage"), ("strategy_2", "S2 Compounder"),
     ("strategy_3", "S3 Defensive"), ("strategy_min", "Strat Min"),
     ("strategy_1_flags", "S1 Flags"),
-    # performance (price only) — right after Industry so returns read first,
-    # longest window (10Y) leftmost down to YTD
-    ("perf_10y", "Perf 10Y"), ("perf_5y", "Perf 5Y"),
-    ("perf_3y", "Perf 3Y"), ("perf_1y", "Perf 1Y"), ("perf_ytd", "Perf YTD"),
-    ("price", "Price"), ("market_cap", "Market Cap"),
-    ("enterprise_value", "Enterprise Value"),
     # valuation
     ("pe", "P/E"), ("forward_pe", "Forward P/E"), ("peg", "PEG"),
     ("ps", "P/S"), ("pb", "P/B"), ("ev_ebitda", "EV/EBITDA"),
     ("p_fcf", "P/FCF"), ("pc", "P/C"),
-    ("dcf_value", "DCF Value"), ("dcf_upside", "DCF Upside"),
     ("eps", "Diluted EPS"), ("eps_basic", "Basic EPS"),
     # profitability
     ("profit_margin", "Net Margin"), ("gross_margin", "Gross Margin"),
@@ -1873,6 +1876,9 @@ _METRIC_COLS = [
     ("beta", "Beta"), ("short_interest", "Short Interest"),
     ("days_to_cover", "Days to Cover"), ("altman_z", "Altman Z-Score"),
     ("piotroski_f", "Piotroski F-Score"),
+    # performance (price only), YTD out to 10Y
+    ("perf_ytd", "Perf YTD"), ("perf_1y", "Perf 1Y"), ("perf_3y", "Perf 3Y"),
+    ("perf_5y", "Perf 5Y"), ("perf_10y", "Perf 10Y"),
 ]
 
 # screener_row keys whose value is in percentage points. Excel exports normalize

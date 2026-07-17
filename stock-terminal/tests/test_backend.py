@@ -21,6 +21,8 @@ import io
 import json
 import math
 import os
+import pathlib
+import re
 import sys
 import tempfile
 import threading
@@ -2243,10 +2245,32 @@ class TestWorkbook(unittest.TestCase):
         headers = [c.value for c in ws[1]]
         self.assertEqual(len(headers), len(app._METRIC_COLS))
 
+    def test_metrics_cols_mirror_screener_cols(self):
+        """The Metrics sheet must stay a mirror of the screener table: the same
+        keys in the same order, minus the star/mini-chart columns that hold no
+        exportable value, plus DCF Upside beside the DCF Value it qualifies."""
+        views = (pathlib.Path(app.__file__).parent / "static" / "js" / "views.js").read_text()
+        block = re.search(r"const COLS = \[(.*?)\n  \];", views, re.S)
+        self.assertIsNotNone(block, "could not locate COLS in views.js")
+        skip = {"star", "spark_5y", "spark_1y", "spark_6mo"}
+        expected = []
+        for key in re.findall(r'\{ key: "([a-z0-9_]+)"', block.group(1)):
+            if key in skip:
+                continue
+            expected.append(key)
+            if key == "dcf_value":
+                expected.append("dcf_upside")
+        self.assertEqual([k for k, _ in app._METRIC_COLS], expected)
+
     def test_metrics_has_data_rows(self):
         wb = self._build(("TST",))
         ws = wb["Metrics"]
         self.assertEqual(ws.max_row, 2)   # 1 header + 1 data row
+
+    def test_metrics_row_per_ticker(self):
+        wb = self._build(("TST", "TST2"))
+        ws = wb["Metrics"]
+        self.assertEqual([ws.cell(row=r, column=1).value for r in (2, 3)], ["TST", "TST2"])
 
     def test_metrics_ticker_column(self):
         wb = self._build(("TST",))
@@ -3284,9 +3308,10 @@ class TestScreenerRowSparklines(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class TestPerfColumnOrder(unittest.TestCase):
 
-    def test_perf_block_follows_industry_longest_first(self):
-        # After Industry come the strategy grades and flags, then the
-        # performance block (longest window first).
+    def test_perf_block_closes_sheet_shortest_first(self):
+        # The Metrics sheet mirrors the screener table: after Industry come
+        # the strategy grades and flags, and the performance block closes the
+        # sheet, shortest window first (YTD out to 10Y) — same as on screen.
         keys = [k for k, _ in app._METRIC_COLS]
         i = keys.index("industry")
         self.assertEqual(
@@ -3295,8 +3320,8 @@ class TestPerfColumnOrder(unittest.TestCase):
              "strategy_1_flags"],
         )
         self.assertEqual(
-            keys[i + 6:i + 11],
-            ["perf_10y", "perf_5y", "perf_3y", "perf_1y", "perf_ytd"],
+            keys[-5:],
+            ["perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y"],
         )
 
     def test_perf_columns_appear_once(self):
