@@ -13,6 +13,7 @@ import argparse
 import datetime as _dt
 import io
 import json
+import math
 import os
 import sys
 import threading
@@ -788,9 +789,40 @@ def _shares_outstanding_series(bal):
             for s in series], "derived"
 
 
+def _trend_growth_pct(values, min_periods):
+    """Annualized growth (%) from a least-squares fit of log(value) against
+    time across an annual series (oldest → newest, one value per period).
+
+    The per-share trend fields (_bvps_growth, _rps_growth) used to be
+    endpoint-to-endpoint CAGR — which reads only the first and last year, so
+    with the ~4 annual periods Yahoo's free feed carries, one anomalous base
+    year (a 2021 trough) controlled the entire number: a company that merely
+    rebounded printed the same "growth" as one that compounded. The fitted
+    slope uses every period, so an endpoint loses much of that leverage (and
+    with 2–3 evenly spaced points it degenerates to exactly the endpoint CAGR
+    it replaces — the estimators only diverge once there are ≥4 points for the
+    middle years to pull on). Deliberately NOT used for the DCF's FCF growth
+    input: FCF is lumpy enough that its endpoint guard plus the DCF's 0–20%
+    clamp is the better regularizer there.
+
+    None when fewer than min_periods values exist or any value is non-positive
+    (a log-trend has no meaning through zero — and a per-share figure that went
+    negative mid-window is not a growth story to extrapolate)."""
+    if len(values) < min_periods or any(v is None or v <= 0 for v in values):
+        return None
+    n = len(values)
+    ys = [math.log(v) for v in values]
+    x_bar = (n - 1) / 2
+    y_bar = sum(ys) / n
+    sxx = sum((x - x_bar) ** 2 for x in range(n))
+    sxy = sum((x - x_bar) * (y - y_bar) for x, y in enumerate(ys))
+    return (math.exp(sxy / sxx) - 1) * 100    # annual statements ≈ 1 yr apart
+
+
 def _bvps_growth(bal):
-    """Annualized growth (%) of book value per share across the balance-sheet
-    history (BVPS = shareholders' equity ÷ shares outstanding, per period).
+    """Annualized trend (%) of book value per share across the balance-sheet
+    history (BVPS = shareholders' equity ÷ shares outstanding, per period) —
+    a log-linear fit over all periods, see _trend_growth_pct.
 
     The headline quality signal for a mortgage REIT: a mREIT that grows or holds
     book value while paying its dividend is compounding; one that erodes book
@@ -806,18 +838,13 @@ def _bvps_growth(bal):
     # outstanding falls), which is exactly the signal this metric exists to catch.
     sh = {s["period"]: s["value"] for s in _shares_outstanding_series(bal)[0] if s["value"]}
     periods = sorted(p for p in eq if p in sh)
-    if len(periods) < 2:
-        return None
-    first, last = eq[periods[0]] / sh[periods[0]], eq[periods[-1]] / sh[periods[-1]]
-    if first <= 0 or last <= 0:
-        return None
-    n = len(periods) - 1          # annual statements ≈ one year apart
-    return ((last / first) ** (1 / n) - 1) * 100
+    return _trend_growth_pct([eq[p] / sh[p] for p in periods], 2)
 
 
 def _rps_growth(inc, bal):
-    """Annualized growth (%) of revenue per share across the income-statement
-    history (revenue ÷ shares outstanding, per period).
+    """Annualized trend (%) of revenue per share across the income-statement
+    history (revenue ÷ shares outstanding, per period) — a log-linear fit over
+    all periods, see _trend_growth_pct.
 
     The fundamental-compounding signal S2's track-record pillar scores:
     per-share so dilution can't fake growth (and buybacks rightly show up),
@@ -825,21 +852,14 @@ def _rps_growth(inc, bal):
     accounting or cycle. Unlike _bvps_growth this requires ≥3 comparable
     periods (2 intervals): the pillar reads it as a *trend*, and a single
     year-over-year interval is a data point, not a track record. None when the
-    history is shorter (the grader then falls back to price CAGR) or an
-    endpoint is non-positive."""
+    history is shorter (the grader then falls back to price CAGR)."""
     rev = {s["period"]: s["value"] for s in _series_from_stmt(
         inc, "Total Revenue", "TotalRevenue") if s["value"]}
     # Outstanding, not issued — see _bvps_growth on why treasury shares would
     # hide exactly the buyback accretion a per-share series exists to catch.
     sh = {s["period"]: s["value"] for s in _shares_outstanding_series(bal)[0] if s["value"]}
     periods = sorted(p for p in rev if p in sh)
-    if len(periods) < 3:
-        return None
-    first, last = rev[periods[0]] / sh[periods[0]], rev[periods[-1]] / sh[periods[-1]]
-    if first <= 0 or last <= 0:
-        return None
-    n = len(periods) - 1          # annual statements ≈ one year apart
-    return ((last / first) ** (1 / n) - 1) * 100
+    return _trend_growth_pct([rev[p] / sh[p] for p in periods], 3)
 
 
 # --- DCF fair value ---------------------------------------------------------

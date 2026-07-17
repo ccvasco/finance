@@ -1021,6 +1021,35 @@ class TestPiotroskiF(unittest.TestCase):
         self.assertLess(s, 9)
 
 
+class TestTrendGrowthPct(unittest.TestCase):
+    """Log-linear trend fit behind the per-share growth fields."""
+
+    def test_two_and_three_points_equal_endpoint_cagr(self):
+        # With ≤3 evenly spaced points the OLS slope is exactly the endpoint
+        # CAGR (the middle point has zero leverage on the slope).
+        self.assertAlmostEqual(app._trend_growth_pct([8.0, 10.0], 2),
+                               25.0, places=6)
+        self.assertAlmostEqual(app._trend_growth_pct([8.0, 9.0, 10.0], 2),
+                               ((10.0 / 8.0) ** 0.5 - 1) * 100, places=6)
+
+    def test_trough_base_year_loses_leverage(self):
+        # [5, 10, 10, 10]: a rebound off a depressed base. Endpoint CAGR reads
+        # (10/5)^(1/3)-1 ≈ 26%/yr of "growth"; the fit, seeing three flat
+        # years, reads less. Every period matters, not just the ends.
+        endpoint = ((10.0 / 5.0) ** (1 / 3) - 1) * 100
+        fitted = app._trend_growth_pct([5.0, 10.0, 10.0, 10.0], 3)
+        self.assertLess(fitted, endpoint)
+        self.assertGreater(fitted, 0)
+
+    def test_none_below_min_periods(self):
+        self.assertIsNone(app._trend_growth_pct([8.0, 10.0], 3))
+
+    def test_none_on_any_nonpositive_value(self):
+        # A log-trend has no meaning through zero — even mid-window.
+        self.assertIsNone(app._trend_growth_pct([8.0, -1.0, 10.0], 2))
+        self.assertIsNone(app._trend_growth_pct([0.0, 9.0, 10.0], 2))
+
+
 class TestBvpsGrowth(unittest.TestCase):
     """Annualized book-value-per-share trend (mortgage-REIT quality signal)."""
 
@@ -1049,6 +1078,13 @@ class TestBvpsGrowth(unittest.TestCase):
     def test_none_on_nonpositive_equity(self):
         bal = self._bal([-500.0, 900.0], [100.0, 100.0],
                         ["2024-12-31", "2023-12-31"])
+        self.assertIsNone(app._bvps_growth(bal))
+
+    def test_none_on_mid_window_negative_equity(self):
+        # The trend fit reads every period, so a book value that went negative
+        # mid-window invalidates the trend — not just a negative endpoint.
+        bal = self._bal([1000.0, -50.0, 800.0], [100.0, 100.0, 100.0],
+                        ["2024-12-31", "2023-12-31", "2022-12-31"])
         self.assertIsNone(app._bvps_growth(bal))
 
 
@@ -1092,6 +1128,17 @@ class TestRpsGrowth(unittest.TestCase):
                              ["2024-12-31", "2023-12-31", "2022-12-31"])
         empty_bal = _make_df(["Total Assets"], ["2024-12-31"], {"Total Assets": [1.0]})
         self.assertIsNone(app._rps_growth(inc, empty_bal))
+
+    def test_rebound_off_trough_reads_below_endpoint_cagr(self):
+        # COVID-trough base year, then three flat years: endpoint CAGR would
+        # print ≈26%/yr of "growth" for a business that isn't growing; the
+        # fitted trend reads meaningfully less (see _trend_growth_pct).
+        inc, bal = self._stmts([1000.0, 1000.0, 1000.0, 500.0],
+                               [100.0] * 4,
+                               ["2024-12-31", "2023-12-31", "2022-12-31",
+                                "2021-12-31"])
+        endpoint = ((10.0 / 5.0) ** (1 / 3) - 1) * 100
+        self.assertLess(app._rps_growth(inc, bal), endpoint)
 
 
 class TestFcfCagr(unittest.TestCase):

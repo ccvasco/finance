@@ -90,8 +90,15 @@ excluded, so payers are modestly understated — acceptable for a growth lens).
 
 | Metric | Full points | Half points | Zero |
 |---|---|---|---|
-| **Revenue/share CAGR** (12 pts) | ≥ 10%/yr | 5–10%/yr | < 5%/yr |
+| **Revenue/share trend** (12 pts) | ≥ 10%/yr | 5–10%/yr | < 5%/yr |
 | **5Y price CAGR** (8 pts) | ≥ 12%/yr | 6–12%/yr | < 6%/yr |
+
+The revenue/share figure is a least-squares trend fitted across *all* the
+available fiscal years, not endpoint-to-endpoint CAGR. With only ~4 periods on
+Yahoo's feed, endpoint CAGR hands one anomalous base year total control of the
+number — a company that merely rebounded off a 2021 trough would print the
+same "growth" as one that genuinely compounded. The fitted slope reads every
+year, so a trough endpoint loses most of that leverage.
 
 With fewer than 3 comparable fiscal years of revenue and share counts the
 pillar falls back to the price-only legs (5Y and 10Y price CAGR, 10 pts each,
