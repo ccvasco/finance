@@ -55,8 +55,16 @@ that can wait out a bad decade.
 |---|---|---|---|
 | **Interest coverage** — EBIT ÷ interest (8 pts) | > 8× (or debt-free) | 4–8× | < 4×, or unavailable while carrying debt |
 | **FCF ÷ net debt** (7 pts) | net cash, or > 0.25× | 0.10–0.25× | < 0.10×, or negative FCF |
-| **Current Ratio** (5 pts) | > 2.0 | 1.5–2.0 | < 1.5 |
+| **Current Ratio** (5 pts) | > 1.5 | 1.0–1.5 | < 1.0 |
 | **Altman Z′** (5 pts) | ≥ 2.9 | 1.23–2.9 | < 1.23 |
+
+**The current ratio is banded at 1.5/1.0, not Graham's 2.0/1.5.** He wrote for
+1949 balance sheets, which carried inventory and receivables a modern large cap
+does not: the median across a 118-name check is **1.10**, and on his bands 80%
+of the universe scored zero on this leg. A test the whole population fails is a
+flat tax, not a measurement — and it fell hardest on businesses whose model
+simply holds no inventory, which is a fact about their industry rather than
+their solvency. The looser bands restore a real spread (20% full, 37% half).
 
 **Interest coverage leads** because it is the question the rest of a balance
 sheet never asks. Companies do not fail because a ratio crossed a threshold;

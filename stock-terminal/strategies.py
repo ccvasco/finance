@@ -1165,8 +1165,16 @@ def _grade_defensive(row):
         # Near-term liquidity (5) — Graham's own test, kept but demoted: it
         # catches what a cash-flow ratio misses, though a high current ratio is
         # also bloated inventory, so it no longer anchors the pillar.
+        #
+        # Banded at 1.5/1.0, not Graham's 2.0/1.5. He calibrated on 1949
+        # balance sheets carrying heavy inventory and receivables; a modern
+        # large cap runs working capital lean, and the median across a 118-name
+        # check is 1.10. On the old bands 80% of the universe scored zero here
+        # — a leg the whole population fails is a flat tax, not a measurement,
+        # and it read hardest against businesses whose model simply has no
+        # inventory. These bands restore a spread (20% full / 37% half).
         cr = row.get("current_ratio")
-        c += _band(cr, 2.0, 1.5, 5)
+        c += _band(cr, 1.5, 1.0, 5)
         # Altman Z' (5) — a validated composite, demoted to a cross-check
         # because this strategy already scores most of what goes into it:
         # working capital right here, profitability in Pillar D, and its X5 is

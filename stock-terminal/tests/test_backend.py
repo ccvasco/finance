@@ -4130,6 +4130,21 @@ class TestStrategyDefensive(unittest.TestCase):
         self.assertEqual(cov_pts(1.5), 17.0)    # thin  -> 0
         self.assertEqual(cov_pts(None), 17.0)   # missing earns 0, per the doc
 
+    def test_s3_current_ratio_bands_are_modern_not_graham(self):
+        # Graham's 2.0/1.5 zeroed 80% of a 118-name universe — a leg the whole
+        # population fails measures nothing. Banded at 1.5/1.0 the median large
+        # cap (~1.1) now scores, and only a genuinely tight balance sheet zeroes.
+        def cr_pts(cr):
+            _s, _v, pillars = strategies._grade_defensive(
+                self._value_row() | {"current_ratio": cr})
+            return next(p for p in pillars
+                        if p["k"] == "Financial strength")["p"]
+        self.assertEqual(cr_pts(2.5), 25.0)     # > 1.5 -> full 5
+        self.assertEqual(cr_pts(1.6), 25.0)     # > 1.5 -> full 5
+        self.assertEqual(cr_pts(1.1), 22.5)     # > 1.0 -> half 2.5 (the median)
+        self.assertEqual(cr_pts(0.9), 20.0)     # <= 1.0 -> 0
+        self.assertEqual(cr_pts(None), 20.0)    # missing earns 0
+
     def test_s3_debt_free_takes_full_coverage_points(self):
         # Nothing to cover -> the leg cannot be failed for a blank coupon.
         row = self._value_row() | {"total_debt": 0.0, "interest_coverage": None}
