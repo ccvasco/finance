@@ -634,6 +634,35 @@ const Views = (() => {
      column's sticky `left` offset is hardcoded to match. */
   const STAR_COL_W = 40;      // must match the sticky offsets in styles.css
   const COL_DEFAULT_W = 96;   // fallback for a column with no stored width
+  // Star + ticker lead every table and are never reordered: styles.css freezes
+  // them with :nth-child(1)/(2) rules, so they only stay pinned while they stay
+  // put. Everything after them is the user's to arrange.
+  const PINNED_COLS = 2;
+
+  /* COLS in the user's saved order. The stored key list is never trusted as-is:
+     columns since added to COLS are missing from it and columns since removed
+     linger in it, so it's reconciled on every read. A newly added column is
+     spliced in after whichever of its COLS neighbours it followed originally,
+     landing where its author put it rather than at the far right. */
+  function orderedCols() {
+    const saved = Store.getColOrder();
+    if (!saved.length) return COLS.slice();
+    const byKey = new Map(COLS.map((c) => [c.key, c]));
+    const out = saved.map((k) => byKey.get(k)).filter(Boolean);   // drops stale keys
+    const have = new Set(out.map((c) => c.key));
+    COLS.forEach((c, i) => {
+      if (have.has(c.key)) return;
+      let at = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        const idx = out.findIndex((o) => o.key === COLS[j].key);
+        if (idx >= 0) { at = idx + 1; break; }
+      }
+      out.splice(at, 0, c);
+      have.add(c.key);
+    });
+    const pinned = COLS.slice(0, PINNED_COLS);
+    return pinned.concat(out.filter((c) => !pinned.includes(c)));
+  }
 
   /* Pinned width for one column. Under fixed layout a column with no width
      collapses to nothing, so a column added to COLS after the user last saved
@@ -646,10 +675,10 @@ const Views = (() => {
     return widths[c.key] || COL_DEFAULT_W;
   }
 
-  function colgroupHTML() {
+  function colgroupHTML(cols) {
     const w = Store.getColWidths();
     const sized = Object.keys(w).length;
-    return `<colgroup>${COLS.map((c) => {
+    return `<colgroup>${cols.map((c) => {
       const px = sized ? colWidth(c, w) : (c.kind === "star" ? STAR_COL_W : null);
       return `<col data-col="${c.key}"${px ? ` style="width:${px}px"` : ""}>`;
     }).join("")}</colgroup>`;
@@ -666,7 +695,8 @@ const Views = (() => {
   }
 
   function tableHTML(rows, { withSort = true } = {}) {
-    const head = COLS.map((c) => {
+    const cols = orderedCols();
+    const head = cols.map((c) => {
       if (c.kind === "star") return `<th data-col="star"></th>`;
       const sortable = withSort && c.kind !== "spark";  // sparkline arrays aren't sortable
       const active = sortable && sort.key === c.key;
@@ -679,20 +709,20 @@ const Views = (() => {
       return `<th data-col="${c.key}" class="${cls}"${tipAttr}>${c.label}${arrow}${grip}</th>`;
     }).join("");
 
-    const body = rows.map((r) => rowHTML(r)).join("");
+    const body = rows.map((r) => rowHTML(r, cols)).join("");
     const total = sizedTableWidth();
     const attrs = total ? ` class="data sized" style="width:${total}px"` : ` class="data"`;
-    return `<table${attrs}>${colgroupHTML()}` +
+    return `<table${attrs}>${colgroupHTML(cols)}` +
       `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
 
-  function rowHTML(r) {
+  function rowHTML(r, cols) {
     if (r.error) {
       return `<tr><td>${starHTML(r.ticker)}</td>` +
         `<td class="ticker-cell" data-ticker="${escHTML(r.ticker)}">${escHTML(r.ticker)}</td>` +
-        `<td colspan="${COLS.length - 2}" class="na">— ${escHTML(r.error)} —</td></tr>`;
+        `<td colspan="${cols.length - PINNED_COLS}" class="na">— ${escHTML(r.error)} —</td></tr>`;
     }
-    const cells = COLS.map((c) => {
+    const cells = cols.map((c) => {
       if (c.kind === "ticker") {
         // hover blurb: what the company is/does (absent on rows cached
         // before the field existed — reappears after a ↻ Refresh)
@@ -873,6 +903,87 @@ const Views = (() => {
     document.addEventListener("pointerup", onUp);
   }
 
+  /* ---------- column reordering ---------- */
+  const REORDER_SLOP = 5;   // px of travel before a header press becomes a drag
+
+  /* The header under `x`. DOM order matters: the star and ticker headers are
+     sticky and float over their neighbours once scrolled right, so hit-testing
+     them first is what keeps a drop onto the frozen pair from resolving to the
+     column hidden underneath. */
+  function headerAt(table, x) {
+    const ths = Array.from(table.querySelectorAll("thead th[data-col]"));
+    return ths.find((th) => {
+      const r = th.getBoundingClientRect();
+      return x >= r.left && x <= r.right;
+    }) || null;
+  }
+
+  const clearDropMarks = (table) =>
+    table.querySelectorAll(".drop-before, .drop-after")
+      .forEach((el) => el.classList.remove("drop-before", "drop-after"));
+
+  /* Header drag -> column reorder. Only commits past REORDER_SLOP px, so a
+     plain click still falls through to the sort handler untouched. */
+  function startColReorder(e, table, rerender) {
+    const th = e.target.closest("thead th[data-col]");
+    if (!th) return;
+    const key = th.dataset.col;
+    const keys = orderedCols().map((c) => c.key);
+    if (keys.indexOf(key) < PINNED_COLS) return;   // star + ticker don't move
+
+    const startX = e.clientX;
+    let dragging = false, dropKey = null, dropAfter = false;
+
+    const onMove = (ev) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) < REORDER_SLOP) return;
+        dragging = true;
+        document.body.classList.add("col-reordering");
+        th.classList.add("col-drag-src");
+      }
+      clearDropMarks(table);
+      dropKey = null;
+      const target = headerAt(table, ev.clientX);
+      if (!target || target === th) return;
+      const tKey = target.dataset.col;
+      if (keys.indexOf(tKey) < PINNED_COLS) return;   // can't drop ahead of the frozen pair
+      const r = target.getBoundingClientRect();
+      dropKey = tKey;
+      dropAfter = ev.clientX > r.left + r.width / 2;
+      target.classList.add(dropAfter ? "drop-after" : "drop-before");
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("col-reordering");
+      th.classList.remove("col-drag-src");
+      clearDropMarks(table);
+      if (!dragging) return;
+      // the drag's trailing click lands on a header — never treat it as a sort
+      dragJustEnded = true;
+      if (!dropKey) return;
+      // pull the column out first, so the target's index below is already the
+      // one it will have in the final array
+      keys.splice(keys.indexOf(key), 1);
+      keys.splice(keys.indexOf(dropKey) + (dropAfter ? 1 : 0), 0, key);
+      Store.setColOrder(keys);
+      rerender();
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }
+
+  /* Drop any custom column layout — widths and order both — for the ⇔ button
+     the Screener and Watchlist share. */
+  function resetCols(rerender) {
+    const custom = Object.keys(Store.getColWidths()).length || Store.getColOrder().length;
+    if (!custom) { App.toast("Columns are already at their default layout", "ok"); return; }
+    Store.resetColWidths();
+    Store.resetColOrder();
+    rerender();
+    App.toast("Columns reset to default order and widths", "ok");
+  }
+
   /* wires sticky header sort + star toggles + row->deepdive for a rendered table */
   function wireTable(container, rows, rerender) {
     // Attach the delegated handler once per container. paint() replaces the
@@ -882,13 +993,17 @@ const Views = (() => {
     // all subsequent re-renders.
     if (container.__wired) return;
     container.__wired = true;
-    // --- column resize (must run before the click handler below sees it) ---
+    // --- column resize + reorder (must run before the click handler below
+    // sees it) — the grip resizes its own column, the rest of the header drags
+    // the column to a new position ---
     container.addEventListener("pointerdown", (e) => {
       // every click is preceded by a pointerdown, so clearing here keeps a
       // drag that ended off-table from swallowing an unrelated later click
       dragJustEnded = false;
       const table = e.target.closest("table.data");
-      if (table) startColDrag(e, table);
+      if (!table) return;
+      if (e.target.closest(".col-grip")) startColDrag(e, table);
+      else startColReorder(e, table, rerender);
     });
     container.addEventListener("dblclick", (e) => {
       const grip = e.target.closest(".col-grip");
@@ -948,7 +1063,7 @@ const Views = (() => {
         <span class="scr-status" id="scr-status"></span>
         <div class="spacer"></div>
         <button class="btn btn-sm" id="scr-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
-        <button class="btn btn-sm" id="scr-cols" title="Drop custom column widths and go back to auto-fit">⇔ Reset columns</button>
+        <button class="btn btn-sm" id="scr-cols" title="Restore the default column order and auto-fit widths">⇔ Reset columns</button>
         <button class="btn btn-sm" id="scr-save">💾 Save as watchlist</button>
         <button class="btn btn-sm" id="scr-addall">★ Add all to stars</button>
       </div>
@@ -965,12 +1080,7 @@ const Views = (() => {
       if (!tickers.length) { App.toast("Analyze some tickers first", "err"); return; }
       screener(root, tickers, { force: true });
     });
-    root.querySelector("#scr-cols").addEventListener("click", () => {
-      if (!Object.keys(Store.getColWidths()).length) { App.toast("Columns are already auto-fit", "ok"); return; }
-      Store.resetColWidths();
-      paint();
-      App.toast("Column widths reset", "ok");
-    });
+    root.querySelector("#scr-cols").addEventListener("click", () => resetCols(paint));
     root.querySelector("#scr-addall").addEventListener("click", () => {
       (lastRows || []).forEach((r) => { if (!r.error && !Store.inWatchlist(r.ticker)) Store.toggleWatch(r.ticker); });
       App.toast("Added to stars", "ok"); paint();
@@ -1120,12 +1230,14 @@ const Views = (() => {
                title="Type one or more tickers (comma or space separated), then Add or Remove">
         <button class="btn btn-sm" id="wl-add" title="Add these tickers to the list">+ Add</button>
         <button class="btn btn-sm btn-ghost" id="wl-del" title="Remove these tickers from the list">− Remove</button>
+        <button class="btn btn-sm" id="wl-cols" title="Restore the default column order and auto-fit widths">⇔ Reset columns</button>
         <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       </div>
       ${legendBox()}
       <div class="table-wrap" id="wl-table"></div>`;
     hydrateFlagLegend(detail);
     detail.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
+    detail.querySelector("#wl-cols").addEventListener("click", () => resetCols(paint));
 
     // Bulk add/remove: parse the input like the top search box, mutate the
     // list (stars for ★ Starred, the saved list otherwise) and re-render.
@@ -1175,6 +1287,7 @@ const Views = (() => {
     }
     let lastRows = null;
     function paint() {
+      if (!lastRows) return;   // ⇔ Reset columns can fire before the first load lands
       const view = applyView(lastRows);
       tableEl.innerHTML = tableHTML(view);
       wireTable(tableEl, view, paint);

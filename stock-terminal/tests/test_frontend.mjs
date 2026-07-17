@@ -874,6 +874,52 @@ test("column widths tolerate junk in localStorage", () => {
   assert.deepEqual(Store.getColWidths(), {});
 });
 
+section("Store — column order");
+
+test("column order starts empty and round-trips through localStorage", () => {
+  localStorage.removeItem("st.colOrder");
+  Store.resetColOrder();
+  assert.deepEqual(Store.getColOrder(), []);
+  Store.setColOrder(["star", "ticker", "pe", "price"]);
+  assert.deepEqual(Store.getColOrder(), ["star", "ticker", "pe", "price"]);
+  assert.deepEqual(JSON.parse(localStorage.getItem("st.colOrder")),
+                   ["star", "ticker", "pe", "price"]);
+});
+
+test("setColOrder replaces the order outright — it is a sequence, not a merge", () => {
+  Store.setColOrder(["star", "ticker", "pe", "price"]);
+  Store.setColOrder(["star", "ticker", "price"]);
+  assert.deepEqual(Store.getColOrder(), ["star", "ticker", "price"]);
+});
+
+test("getColOrder hands back a copy — mutating it can't corrupt the store", () => {
+  Store.setColOrder(["star", "ticker", "pe"]);
+  const got = Store.getColOrder();
+  got.push("price");
+  got[0] = "nope";
+  assert.deepEqual(Store.getColOrder(), ["star", "ticker", "pe"]);
+});
+
+test("setColOrder snapshots the caller's array rather than aliasing it", () => {
+  const keys = ["star", "ticker", "pe"];
+  Store.setColOrder(keys);
+  keys.push("price");
+  assert.deepEqual(Store.getColOrder(), ["star", "ticker", "pe"]);
+});
+
+test("resetColOrder clears everything", () => {
+  Store.setColOrder(["star", "ticker", "pe"]);
+  Store.resetColOrder();
+  assert.deepEqual(Store.getColOrder(), []);
+  assert.deepEqual(JSON.parse(localStorage.getItem("st.colOrder")), []);
+});
+
+test("column order tolerates junk in localStorage", () => {
+  localStorage.setItem("st.colOrder", "[not json");
+  loadJS("store.js");   // Store hydrates on load — re-run that read path
+  assert.deepEqual(Store.getColOrder(), []);
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

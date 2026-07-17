@@ -4,7 +4,7 @@ const Store = (() => {
   const KEYS = {
     wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
     lists: "st.lists", rows: "st.rowsCache", chat: "st.chatHistory",
-    colw: "st.colWidths",
+    colw: "st.colWidths", colorder: "st.colOrder",
   };
   const CHAT_MAX = 60;   // keep the last N messages (agent context is capped too)
 
@@ -38,6 +38,11 @@ const Store = (() => {
   // Empty until the user first drags a header edge, which freezes every
   // column's then-current width at once (see Views' column-resize wiring).
   let colWidths = read(KEYS.colw, {});
+  // Screener/watchlist column order as a list of COLS keys: ["ticker", "pe", ...].
+  // Empty until the user first drags a header, and never authoritative on its
+  // own — Views reconciles it against COLS, which may have gained or dropped
+  // columns since it was saved.
+  let colOrder = read(KEYS.colorder, []);
   // Named watchlists: [{ id, name, tickers:[...], createdAt, updatedAt }]
   let lists = read(KEYS.lists, []);
 
@@ -168,6 +173,11 @@ const Store = (() => {
       notify();
     },
     resetColWidths() { colWidths = {}; write(KEYS.colw, colWidths); notify(); },
+
+    // -- column order ------------------------------------------------------
+    getColOrder: () => colOrder.slice(),
+    setColOrder(keys) { colOrder = keys.slice(); write(KEYS.colorder, colOrder); notify(); },
+    resetColOrder() { colOrder = []; write(KEYS.colorder, colOrder); notify(); },
 
     // -- settings ----------------------------------------------------------
     getSettings: () => Object.assign({}, settings),

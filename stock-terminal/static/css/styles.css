@@ -279,6 +279,15 @@ table.data thead th:hover .col-grip::after { background: var(--border-2); }
    the pointer runs outside the header */
 body.col-resizing { cursor: col-resize; user-select: none; }
 body.col-resizing .col-grip::after { background: var(--accent); }
+/* --- drag-to-reorder ----------------------------------------------------
+   Dragging a header anywhere but its grip moves the column. The insertion
+   marker is an inset shadow rather than a positioned ::before: the th is
+   sticky and already hosts the absolutely-positioned grip, so an edge drawn
+   this way needs no containing block of its own and can't disturb either. */
+body.col-reordering { cursor: grabbing; user-select: none; }
+table.data thead th.col-drag-src { opacity: .4; }
+table.data thead th.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+table.data thead th.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 table.data tbody td {
   text-align: right; padding: 10px 13px; border-bottom: 1px solid var(--panel-2);
   font-family: var(--mono); white-space: nowrap; background: var(--panel);
