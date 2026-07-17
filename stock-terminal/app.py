@@ -128,8 +128,43 @@ def _epoch_to_iso(v):
         return None
 
 
+# Company-profile fields (currency-independent) that a regional listing may be
+# missing but that live on the primary Xetra listing — backfilled by _fetch_info.
+_PROFILE_FIELDS = ("longBusinessSummary", "sector", "industry", "sectorKey",
+                   "industryKey", "website", "city", "state", "country")
+
+# German regional exchanges that return only a bare quote (name + price) with no
+# company profile. The profile lives on the primary Xetra (.DE) listing, with
+# Frankfurt (.F) as a secondary source.
+_REGIONAL_DE_SUFFIXES = ("MU", "HM", "DU", "SG", "BE", "HA", "BM", "F")
+
+
+def _fetch_info(ticker):
+    info = yf.Ticker(ticker).info or {}
+    # Regional German listings (.MU Munich, .HM Hamburg, …) carry no company
+    # profile — no business summary, sector, or industry — so the ticker cell
+    # would show no hover legend and blank sector/industry columns. Backfill
+    # those descriptive fields from the primary Xetra (.DE) / Frankfurt (.F)
+    # listing of the same symbol. Cached with the rest of the info payload.
+    base, _, suffix = ticker.rpartition(".")
+    if base and suffix.upper() in _REGIONAL_DE_SUFFIXES and not info.get("longBusinessSummary"):
+        for alt_suffix in ("DE", "F"):
+            if alt_suffix == suffix.upper():
+                continue
+            try:
+                alt = yf.Ticker(f"{base}.{alt_suffix}").info or {}
+            except Exception:
+                continue
+            if alt.get("longBusinessSummary"):
+                for f in _PROFILE_FIELDS:
+                    if not info.get(f) and alt.get(f):
+                        info[f] = alt[f]
+                break
+    return info
+
+
 def get_info(ticker):
-    return cached(f"info:{ticker}", 300, lambda: yf.Ticker(ticker).info or {})
+    return cached(f"info:{ticker}", 300, lambda: _fetch_info(ticker))
 
 
 def _brief_summary(text, limit=320):
