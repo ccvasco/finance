@@ -58,6 +58,13 @@ Sustained pricing power shows up as margin.
 | **Operating Margin** (12 pts) | > 15% | 8–15% | < 8% |
 | **Gross Margin** (8 pts) | > 40% | 25–40% | < 25% |
 
+*Thin-margin escape hatch:* a moat can be margin × turnover, not margin alone —
+absolute bands read a superb grocer or distributor as moat-less. When the
+pillar sums below half, strong returns on capital floor it at half (10/20):
+ROIC ≥ 12%, or ROE ≥ 15% on positive equity without the leverage that would
+make ROE an artifact (D/E ≤ 1.0, or debt-free). Half, never full — the escape
+stops the bands taxing a business *model*; it cannot inflate a weak business.
+
 ## Pillar C — Capital discipline (20 points)
 
 Compounding is interrupted by balance-sheet accidents and fictitious earnings.

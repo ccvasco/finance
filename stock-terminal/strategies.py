@@ -251,6 +251,25 @@ def _positive_years(row, pos_key, yrs_key, latest, pts):
     return p, f"{pos}/{yrs} yrs +"
 
 
+def _strong_returns(row, neg_eq):
+    """True when returns on capital are strong enough to vouch for a thin-margin
+    business model. Absolute margin bands read a great grocer or distributor —
+    2% net margin, high turnover — as low-quality, when DuPont says the quality
+    shows up as margin × turnover, a product ROIC/ROE already capture. The
+    margin pillars use this as an escape hatch: margins that miss the bands
+    still earn half the pillar when ROIC ≥ 12, or ROE ≥ 15 on real (positive)
+    equity without the leverage that would make ROE an artifact (D/E ≤ 100%,
+    or debt-free). Half, not full — the escape can't inflate a weak business,
+    only stop the bands taxing a business model."""
+    if _gt(row.get("roic"), 12):                    # pct points; capital-structure-aware
+        return True
+    roe = row.get("roe")                            # fraction
+    if neg_eq or roe is None or roe * 100 < 15:
+        return False
+    d_eq = row.get("debt_to_equity")                # pct points
+    return (d_eq is not None and d_eq <= 100) or _effective_debt(row) == 0
+
+
 def _cagr_pct(total_return_pct, years):
     """Annualized % from a cumulative price return in percentage points."""
     if total_return_pct is None:
@@ -622,12 +641,18 @@ def _grade_triage(row):
                            f"ROIC−WACC {_r(spread, 1, ' pts')} (+{spread_p:g}); "
                            f"ROE {_pct(roe_pct)} (+{roe_pts:g})"
                            + (" · neg equity" if neg_eq else "")))
-        # Pillar B — profitability (25)
+        # Pillar B — profitability (25). Thin-margin escape hatch: high-turnover
+        # models (grocers, distributors) fail absolute margin bands however good
+        # they are, so strong returns on capital floor the pillar at half — see
+        # _strong_returns.
         nm = None if row.get("profit_margin") is None else row["profit_margin"] * 100
         om = None if opm is None else opm * 100
         b = _band(nm, 15, 5, 10) + _band(om, 20, 8, 10) + _band(gm, 40, 25, 5)
+        b_note = ""
+        if b < 12.5 and _strong_returns(row, neg_eq):
+            b, b_note = 12.5, " · thin margins, strong returns → floored at half"
         P.append(_pill("Profitability", b, 25,
-                       f"net {_pct(nm)}, op {_pct(om)}, gross {_pct(gm)}"))
+                       f"net {_pct(nm)}, op {_pct(om)}, gross {_pct(gm)}" + b_note))
         # Pillar C — balance sheet (25)
         debt_free = debt == 0
         c = float(10) if (debt_free and de_ratio is None) else _band(de_ratio, 1.5, 3.0, 10, reverse=True)
@@ -968,9 +993,15 @@ def _grade_compounder(row):
         b = _band(om_pct, 25, 15, 20)
         P.append(_pill("Margin moat", b, 20, f"op margin {_pct(om_pct)}"))
     else:
+        # Thin-margin escape hatch, as in S1's profitability pillar: a moat can
+        # be margin × turnover, not margin alone — strong returns on capital
+        # floor the pillar at half (see _strong_returns).
         b = _band(om_pct, 15, 8, 12) + _band(gm_pct, 40, 25, 8)
+        b_note = ""
+        if b < 10 and _strong_returns(row, neg_eq):
+            b, b_note = 10, " · thin margins, strong returns → floored at half"
         P.append(_pill("Margin moat", b, 20,
-                       f"op margin {_pct(om_pct)}, gross {_pct(gm_pct)}"))
+                       f"op margin {_pct(om_pct)}, gross {_pct(gm_pct)}" + b_note))
 
     # Pillar C — capital discipline (20)
     if fin:

@@ -84,6 +84,8 @@ The ROIC−WACC spread is the framework's centerpiece *for capital-intensive bus
 
 Gross margin gets the smallest weight because it varies most by industry (a distributor at 20% gross can be a superb business). Operating margin is the cleanest single indicator of pricing power plus cost discipline.
 
+**Thin-margin escape hatch.** Absolute margin bands read a high-turnover model — a superb grocer or distributor at 2% net margin — as low-quality, when DuPont says the quality shows up as margin × turnover, a product the returns-on-capital metrics already capture. So when the pillar sums below half, strong returns floor it at half (12.5/25): ROIC ≥ 12%, or ROE ≥ 15% on positive equity without the leverage that would make ROE an artifact (D/E ≤ 1.0, or debt-free). Half, never full — the escape stops the bands taxing a business *model*; it cannot inflate a weak business.
+
 ### Pillar C — Balance sheet (25 points)
 
 | Metric | Full points | Half points | Zero |

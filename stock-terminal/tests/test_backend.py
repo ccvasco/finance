@@ -3549,6 +3549,32 @@ class TestStrategyTriage(unittest.TestCase):
         self.assertEqual(score, 100)
         self.assertEqual(verdict, "Advance")
 
+    def test_thin_margins_with_strong_returns_floor_profitability(self):
+        # High-turnover model (grocer/distributor): every margin misses its
+        # band, but the fixture's ROIC 18 vouches for the model — the pillar is
+        # floored at half (12.5/25) instead of 0.
+        thin = dict(profit_margin=0.02, operating_margin=0.04, gross_margin=0.20)
+        _, _, pillars = strategies._grade_triage(_strategy_row(**thin))
+        pill = next(p for p in pillars if p["k"] == "Profitability")
+        self.assertEqual(pill["p"], 12.5)
+        self.assertIn("floored", pill["d"])
+        # weak returns: same margins score what they score — nothing vouches
+        _, _, p2 = strategies._grade_triage(
+            _strategy_row(roic=5.0, roe=0.10, **thin))
+        self.assertEqual(next(p for p in p2 if p["k"] == "Profitability")["p"], 0.0)
+
+    def test_margin_floor_roe_leg_requires_modest_leverage(self):
+        # Without ROIC, the ROE ≥ 15 leg only vouches when the ROE isn't a
+        # leverage artifact: D/E ≤ 100% qualifies, 200% doesn't.
+        thin = dict(profit_margin=0.02, operating_margin=0.04, gross_margin=0.20,
+                    roic=5.0, roe=0.20)
+        _, _, ok = strategies._grade_triage(
+            _strategy_row(debt_to_equity=80.0, **thin))
+        self.assertEqual(next(p for p in ok if p["k"] == "Profitability")["p"], 12.5)
+        _, _, lev = strategies._grade_triage(
+            _strategy_row(debt_to_equity=200.0, **thin))
+        self.assertEqual(next(p for p in lev if p["k"] == "Profitability")["p"], 0.0)
+
 
 class TestFinancialClassification(unittest.TestCase):
     """_is_financial matches balance-sheet businesses by industry — Yahoo's
@@ -4085,6 +4111,18 @@ class TestStrategyCompounder(unittest.TestCase):
         self.assertEqual(strategies._cagr_pct(-100.0, 5), -100.0)
         # +300% over 10y -> 4^(1/10) - 1 ~ 14.87%/yr
         self.assertAlmostEqual(strategies._cagr_pct(300.0, 10), 14.87, places=2)
+
+    def test_thin_margins_with_strong_returns_floor_moat(self):
+        # Same escape hatch as S1's profitability pillar: the fixture's ROIC 18
+        # floors the moat pillar at half (10/20) for a thin-margin model.
+        thin = dict(profit_margin=0.02, operating_margin=0.04, gross_margin=0.20)
+        _, _, pillars = strategies._grade_compounder(_strategy_row(**thin))
+        pill = next(p for p in pillars if p["k"] == "Margin moat")
+        self.assertEqual(pill["p"], 10)
+        self.assertIn("floored", pill["d"])
+        _, _, p2 = strategies._grade_compounder(
+            _strategy_row(roic=5.0, roe=0.10, **thin))
+        self.assertEqual(next(p for p in p2 if p["k"] == "Margin moat")["p"], 0.0)
 
 
 class TestStrategyDefensive(unittest.TestCase):
