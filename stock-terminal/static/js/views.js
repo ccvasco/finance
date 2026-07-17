@@ -2114,8 +2114,8 @@ const DeepDive = (() => {
 
         <div class="col-6"><div class="panel">
           <div class="panel-head"><span class="dot"></span>Price
-            <div class="range-tabs" id="dd-smas" style="margin-left:auto"></div>
-            <div class="range-tabs" id="dd-ranges"></div></div>
+            <div class="range-tabs" id="dd-ranges" style="margin-left:auto"></div></div>
+          <div class="chart-toolbar"><div class="range-tabs" id="dd-smas"></div></div>
           <div class="chart-box" id="dd-price"><div class="loading-box"><span class="spinner"></span></div></div>
         </div></div>
 
