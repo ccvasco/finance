@@ -4308,13 +4308,40 @@ class TestStrategyDefensive(unittest.TestCase):
         self.assertEqual(score, 93)
 
     def test_financials_use_roa_for_strength(self):
+        # Pillar A for a financial is P/E (15) + P/B-vs-ROE (10): pe 10 and
+        # pb 0.9 on the fixture's 25% ROE take the full 25.
         row = _strategy_row(sector="Financial Services",
                             industry="Insurance—Diversified", current_ratio=None,
                             debt_to_equity=None, altman_z=None, roa=0.02,
-                            pe=10.0, pb=1.2, p_fcf=12.0, ev_ebitda=8.0,
+                            pe=10.0, pb=0.9, p_fcf=12.0, ev_ebitda=8.0,
                             div_yield=3.0, payout_ratio=0.4, fcf_coverage=2.0)
         score, _ = strategies.grade_defensive(row)
         self.assertEqual(score, 100)
+
+    def _bank_row(self, **over):
+        base = dict(sector="Financial Services", industry="Banks—Diversified",
+                    current_ratio=None, debt_to_equity=None, altman_z=None,
+                    roa=0.02, pe=10.0, pb=0.9, div_yield=3.0,
+                    payout_ratio=0.4, fcf_coverage=2.0)
+        base.update(over)
+        return _strategy_row(**base)
+
+    def test_financial_cheapness_ignores_fcf_and_ebitda(self):
+        # A bank's FCF tracks the loan book and its EBITDA is meaningless, so
+        # Pillar A must not move however those fields read — a deeply negative
+        # P/FCF (JPM-style origination year) scores the same as a pretty one.
+        pretty, _ = strategies.grade_defensive(
+            self._bank_row(p_fcf=8.0, ev_ebitda=6.0))
+        ugly, _ = strategies.grade_defensive(
+            self._bank_row(p_fcf=-30.0, ev_ebitda=None))
+        self.assertEqual(pretty, ugly)
+
+    def test_financial_pb_discount_requires_real_roe(self):
+        # Below book with a real ROE is cheap; below book earning nothing is a
+        # value trap — the P/B leg (10 pts at pb<1) must pay only with ROE ≥ 8%.
+        cheap, _ = strategies.grade_defensive(self._bank_row(roe=0.12))
+        trap, _ = strategies.grade_defensive(self._bank_row(roe=0.03))
+        self.assertEqual(cheap - trap, 10)
 
 
 class TestGradeRowComposite(unittest.TestCase):

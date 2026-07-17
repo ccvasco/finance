@@ -1132,6 +1132,25 @@ def _grade_defensive(row):
                 (12 if (p_fcf is not None and 0 < p_fcf <= 25) else 0)
             a_txt = f"P/FCF {_r(p_fcf, 1)} (no FFO data)"
         P.append(_pill("Earnings/cash yield", a, 25, a_txt))
+    elif fin:
+        # Balance-sheet financials: P/FCF and EV/EBITDA are artifacts here — a
+        # bank's loan originations run through operating cash flow, so FCF
+        # tracks the loan book, and there is no meaningful EBITDA line above
+        # interest for a business whose raw material is interest. Cheapness is
+        # P/E plus price-to-book read against the ROE that justifies it: a bank
+        # below book *earning a real return* on that book is cheap; below book
+        # because it earns nothing is a value trap, so the P/B leg requires
+        # ROE ≥ 8% to pay at all.
+        roe_pct = None if row.get("roe") is None else row["roe"] * 100
+        a = 0.0
+        if pe is not None and pe > 0:
+            a += 15 if pe < 15 else (7.5 if pe <= 25 else 0)
+        if not neg_eq and pb is not None and pb > 0 \
+                and roe_pct is not None and roe_pct >= 8:
+            a += 10 if pb < 1.0 else (5 if pb <= 1.5 else 0)
+        P.append(_pill("Earnings/cash yield", a, 25,
+                       f"P/E {_r(pe, 1)}, P/B {_r(pb, 2)} vs ROE {_pct(roe_pct)}"
+                       + (" · neg equity" if neg_eq else "")))
     else:
         a = 0.0
         if pe is not None and pe > 0:

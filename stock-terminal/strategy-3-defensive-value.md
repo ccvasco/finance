@@ -33,6 +33,19 @@ Cheapness against what the business actually produces.
 | **P/FCF** (10 pts) | < 15 | 15–25 | > 25 or FCF ≤ 0 |
 | **EV/EBITDA** (5 pts) | 0 < EV/EBITDA < 10 | 10–14 | > 14 |
 
+*Financials* score this pillar on their own two legs — a bank's P/FCF and
+EV/EBITDA are artifacts (lending runs through operating cash flow, so FCF
+tracks the loan book; there is no meaningful EBITDA line above interest for a
+business whose raw material is interest):
+
+| Metric (financials) | Full points | Half points | Zero |
+|---|---|---|---|
+| **P/E** (15 pts) | 0 < P/E < 15 | 15–25 | > 25 or loss-making |
+| **P/B vs ROE** (10 pts) | P/B < 1.0 with ROE ≥ 8% | P/B ≤ 1.5 with ROE ≥ 8% | P/B > 1.5, ROE < 8%, or negative equity |
+
+The ROE condition is the value-trap guard: a bank below book *earning a real
+return* on that book is cheap; below book because it earns nothing is not.
+
 ## Pillar B — Asset backing (15 points)
 
 The classic anchor: what is the claim on real net assets worth?
@@ -201,7 +214,9 @@ mortgage finance, conglomerates); fee businesses in the "Financial Services"
 sector — insurance brokers, exchanges/data vendors, asset managers — score on
 the standard rubric. For financials,
 Pillar C is scored on ROA instead: ≥ 1.5% full (25 pts), 0.8–1.5% half.
-Pillars A, B, D, E apply unchanged — P/E and P/B are, if anything, *more*
+Pillar A drops the P/FCF and EV/EBITDA legs (artifacts for a lender) in favour
+of P/E (15 pts) plus a P/B-vs-ROE test (10 pts) — see the Pillar A table.
+Pillars B, D, E apply unchanged — P/E and P/B are, if anything, *more*
 informative for banks than for industrials.
 
 **REITs (Real Estate).** P/E, EV/EBITDA, net income and Piotroski are all
