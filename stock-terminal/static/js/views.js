@@ -766,6 +766,15 @@ const Views = (() => {
           tip = `DCF Upside ${sign}${up.toFixed(1)}% — price is ${read}.\n`
               + `10y two-stage FCFF discounted at WACC. A screen, not a target price.`;
         }
+        // Mismatched-currency ticker: DCF Value is shown in the trading currency
+        // (next to Price), but the model runs on reporting-currency figures —
+        // spell out the unconverted figure so it isn't misread.
+        const finCcy = r.financial_currency || r.currency;
+        if (finCcy && r.currency && finCcy !== r.currency && r.dcf_value_native != null) {
+          tip = (tip ? tip + "\n" : "")
+              + `${Fmt.price(r.dcf_value_native, finCcy)} in the reporting currency (${finCcy}), `
+              + `converted to ${r.currency} to compare against Price.`;
+        }
         const tipAttr = tip ? ` data-tip="${escHTML(tip)}"` : "";
         const hasTip = tip ? " has-tip" : "";
         return `<td class="${(cls + hasTip).trim()}"${tipAttr}>${disp}</td>`;
@@ -1964,7 +1973,7 @@ const DeepDive = (() => {
   // `hint` renders small print under the title — for a panel whose *contents*
   // need explaining, not just its rows (the mortgage-REIT panel, whose whole
   // point is which metrics are deliberately absent).
-  function panel(title, obj, fmtMap, hint) {
+  function panel(title, obj, fmtMap, hint, valueTips) {
     const rows = Object.entries(obj).map(([k, v]) => {
       let disp;
       if (v === null || v === undefined) disp = Fmt.na;
@@ -1991,7 +2000,12 @@ const DeepDive = (() => {
       const tip = Views.PANEL_TIPS[k];
       const tipAttr = tip ? ` data-tip="${tip.replace(/"/g, "&quot;")}"` : "";
       const kCls = tip ? "k has-tip" : "k";
-      return `<div class="kv-row"><span class="${kCls}"${tipAttr}>${k}</span><span class="v ${cls}">${disp}</span></div>`;
+      // Optional hover on the value itself (not the label) — e.g. the reporting-
+      // currency DCF figure behind an FX-converted DCF Value.
+      const vTip = valueTips && valueTips[k];
+      const vAttr = vTip ? ` data-tip="${vTip.replace(/"/g, "&quot;")}"` : "";
+      const vCls = "v " + cls + (vTip ? " has-tip" : "");
+      return `<div class="kv-row"><span class="${kCls}"${tipAttr}>${k}</span><span class="${vCls.trim()}"${vAttr}>${disp}</span></div>`;
     }).join("");
     const noteHTML = hint ? `<div class="panel-note">${hint}</div>` : "";
     return `<div class="panel"><div class="panel-head"><span class="dot"></span>${title}</div>${noteHTML}<div class="kv">${rows}</div></div>`;
@@ -2104,6 +2118,17 @@ const DeepDive = (() => {
     const chgTxt = chg == null ? "" : `<span class="${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
     const star = Store.inWatchlist(ticker);
 
+    // For a mismatched-currency ticker (trades in `cur`, reports in `finCur`),
+    // DCF Value is shown in the trading currency so it sits next to Price — but
+    // the model runs on `finCur` statement figures. Hover the value to see the
+    // unconverted reporting-currency figure, so it isn't mistaken for one.
+    const valuationValueTips = {};
+    if (finCur !== cur && d.dcf_value_native != null) {
+      valuationValueTips["DCF Value"] =
+        `${Fmt.price(d.dcf_value_native, finCur)} in the reporting currency (${finCur}). `
+        + `The DCF is computed from ${finCur} statement figures, then converted to ${cur} to compare against Price.`;
+    }
+
     ov.querySelector(".dd-top").innerHTML = `
       <span class="dd-back" id="dd-back">‹ Back</span>
       <span class="dd-title">${ticker}</span>
@@ -2141,7 +2166,7 @@ const DeepDive = (() => {
 
     ov.querySelector(".dd-body").innerHTML = `
       <div class="dd-grid">
-        <div class="col-3">${panel("Valuation", d.panels.valuation, fmtMaps.valuation)}</div>
+        <div class="col-3">${panel("Valuation", d.panels.valuation, fmtMaps.valuation, undefined, valuationValueTips)}</div>
         <div class="col-3">${panel("Dividend", d.panels.dividend, fmtMaps.dividend)}</div>
         <div class="col-3">${panel("Profitability", d.panels.profitability, fmtMaps.profitability)}</div>
         <div class="col-3">${panel("Financial Health", d.panels.health, fmtMaps.health)}</div>

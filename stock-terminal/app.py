@@ -538,16 +538,20 @@ def _screener_row(ticker):
     shares = _num(info.get("sharesOutstanding"))
     if not shares and market_cap and price:
         shares = market_cap / price      # both trading-ccy -> currency cancels
-    dcf_value = dcf_upside = None
+    dcf_value = dcf_upside = dcf_value_native = None
     if bt not in ("financial", "reit", "mreit") and shares:
         dcf_equity = _dcf_equity_value(fcf, _fcf_cagr(cf), wacc, total_debt, total_cash)
         if dcf_equity is not None:
             # equity value is in the reporting currency; convert the per-share
             # figure into the trading currency so it compares against Price
-            # (fx = 1.0 when the currencies match — the common case).
+            # (fx = 1.0 when the currencies match — the common case). Keep the
+            # unconverted per-share figure too (dcf_value_native, in the
+            # reporting currency) so a mismatched-currency ticker can show what
+            # the model actually produced before the FX step, as a hover.
             fx = _fx_rate(fin_ccy, mkt_ccy) if fx_mismatch else 1.0
             if fx:
-                dcf_value = dcf_equity / shares * fx
+                dcf_value_native = dcf_equity / shares
+                dcf_value = dcf_value_native * fx
                 if price:
                     dcf_upside = (dcf_value / price - 1) * 100
 
@@ -590,6 +594,12 @@ def _screener_row(ticker):
         # points. None for financials and REITs (FCFF doesn't fit), FCF <= 0,
         # or when WACC is unavailable / too close to the terminal growth rate.
         "dcf_value": _num(dcf_value),
+        # same DCF fair value per share, but left in the reporting currency
+        # (financial_currency) — equals dcf_value when the trading and reporting
+        # currencies match. The frontend surfaces it as a hover on the DCF Value
+        # cell for mismatched-currency tickers, so the FX-converted figure isn't
+        # read as a native reporting-currency number.
+        "dcf_value_native": _num(dcf_value_native),
         "dcf_upside": _num(dcf_upside),
         "eps": _num(info.get("trailingEps")),       # diluted EPS TTM
         "eps_basic": _num(basic_eps),               # basic EPS TTM
@@ -1492,6 +1502,10 @@ def deepdive(ticker):
             # the "⭳ DCF" export button only when this is non-null (financials
             # and REITs are blanked by design; see _screener_row).
             "dcf_value": srow.get("dcf_value"),
+            # DCF fair value left in the reporting currency (see _screener_row) —
+            # the frontend uses it for the DCF Value hover when the trading and
+            # reporting currencies differ.
+            "dcf_value_native": srow.get("dcf_value_native"),
             # "equity" | "mortgage" | None — which REIT rubric panels.reit holds.
             "reit_kind": reit_kind,
             "panels": {
