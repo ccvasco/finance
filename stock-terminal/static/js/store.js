@@ -58,6 +58,12 @@ const Store = (() => {
     // -- watchlist ---------------------------------------------------------
     getWatchlist: () => watchlist.slice(),
     inWatchlist: (t) => watchlist.includes(t.toUpperCase()),
+    // True if the ticker sits in ANY list — the flat ★ Starred set or any
+    // named watchlist. Drives whether the row's star renders filled.
+    inAnyList: (t) => {
+      t = t.toUpperCase();
+      return watchlist.includes(t) || lists.some((l) => l.tickers.includes(t));
+    },
     toggleWatch(t) {
       t = t.toUpperCase();
       const i = watchlist.indexOf(t);

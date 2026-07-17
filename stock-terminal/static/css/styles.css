@@ -472,6 +472,22 @@ svg.chart { width: 100%; display: block; }
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 18px; border-top: 1px solid var(--border); background: var(--panel-2);
 }
+/* Checklist modal (star → pick watchlists) */
+.modal-checks {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 260px; overflow-y: auto; margin-bottom: 10px;
+}
+.modal-check {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--text);
+}
+.modal-check:hover { background: var(--panel-2); }
+.modal-check input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+.modal-check-label { flex: 1; }
+.modal-newrow { display: flex; gap: 8px; align-items: center; }
+.modal-newrow .modal-input { flex: 1; }
+.modal-newrow .btn { white-space: nowrap; }
 
 /* ===== Watchlist cards ================================================== */
 .wl-cards {

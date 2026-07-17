@@ -115,6 +115,100 @@ const App = (() => {
     });
   }
 
+  /* Styled modal with a checklist of options plus an optional "add new" row.
+     `items`: [{ id, label, checked }]. Resolves with the final item state
+     ([{ id, label, checked, isNew }]) — new items carry id:null and isNew:true —
+     or null if cancelled/escaped. */
+  function modalChecklist({ title = "", label = "", items = [], confirmText = "Save",
+                           allowNew = true, newPlaceholder = "New watchlist name" } = {}) {
+    return new Promise((resolve) => {
+      const rootEl = document.getElementById("modal-root");
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const rowHTML = (it, i) => `
+        <label class="modal-check">
+          <input type="checkbox" data-i="${i}"${it.checked ? " checked" : ""}>
+          <span class="modal-check-label">${esc(it.label)}</span>
+        </label>`;
+
+      rootEl.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-head">${esc(title)}</div>
+            <div class="modal-body">
+              ${label ? `<div class="modal-label">${esc(label)}</div>` : ""}
+              <div class="modal-checks" id="modal-checks">
+                ${items.map((it, i) => rowHTML(it, i)).join("")}
+              </div>
+              ${allowNew ? `
+              <div class="modal-newrow">
+                <input class="modal-input" id="modal-new" type="text" autocomplete="off"
+                       spellcheck="false" placeholder="${esc(newPlaceholder)}">
+                <button class="btn btn-sm btn-ghost" id="modal-add" type="button">＋ Add</button>
+              </div>` : ""}
+              <div class="modal-err" id="modal-err"></div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-sm btn-ghost" id="modal-cancel">Cancel</button>
+              <button class="btn btn-sm btn-primary" id="modal-ok">${esc(confirmText)}</button>
+            </div>
+          </div>
+        </div>`;
+      rootEl.classList.remove("hidden");
+
+      const checksEl = document.getElementById("modal-checks");
+      const newInput = document.getElementById("modal-new");
+      const errEl = document.getElementById("modal-err");
+      // Mirror of the rendered rows; checkbox state is synced from the DOM on save.
+      const state = items.map((it) => ({ id: it.id, label: it.label, checked: !!it.checked, isNew: false }));
+
+      function addNew() {
+        const name = (newInput.value || "").trim();
+        if (!name) { newInput.focus(); return; }
+        if (state.some((s) => s.label.toLowerCase() === name.toLowerCase())) {
+          errEl.textContent = `"${name}" is already listed.`; newInput.select(); return;
+        }
+        errEl.textContent = "";
+        const i = state.length;
+        state.push({ id: null, label: name, checked: true, isNew: true });
+        const wrap = document.createElement("div");
+        wrap.innerHTML = rowHTML({ label: name, checked: true }, i);
+        checksEl.appendChild(wrap.firstElementChild);
+        newInput.value = "";
+        newInput.focus();
+      }
+
+      function done(val) {
+        rootEl.classList.add("hidden");
+        rootEl.innerHTML = "";
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      }
+      function submit() {
+        checksEl.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+          const i = Number(cb.dataset.i);
+          if (state[i]) state[i].checked = cb.checked;
+        });
+        done(state);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); done(null); }
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          if (newInput && document.activeElement === newInput && newInput.value.trim()) addNew();
+          else submit();
+        }
+      }
+      if (newInput) document.getElementById("modal-add").addEventListener("click", addNew);
+      document.getElementById("modal-ok").addEventListener("click", submit);
+      document.getElementById("modal-cancel").addEventListener("click", () => done(null));
+      rootEl.querySelector(".modal-overlay").addEventListener("click", (e) => {
+        if (e.target.classList.contains("modal-overlay")) done(null);
+      });
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
   let toastTimer;
   function toast(msg, kind = "") {
     const el = document.getElementById("toast");
@@ -284,7 +378,7 @@ const App = (() => {
   }
 
   const tip = { html: (t, h) => Tooltip.showHTML(t, h), hide: () => Tooltip.hide() };
-  return { go, refreshCurrent, toast, applyAccent, setExportTickers, modalPrompt, parseTickers, tip, init };
+  return { go, refreshCurrent, toast, applyAccent, setExportTickers, modalPrompt, modalChecklist, parseTickers, tip, init };
 })();
 
 document.addEventListener("DOMContentLoaded", App.init);

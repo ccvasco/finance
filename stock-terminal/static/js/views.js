@@ -789,8 +789,48 @@ const Views = (() => {
   }
 
   function starHTML(t) {
-    const on = Store.inWatchlist(t);
-    return `<span class="star-btn ${on ? "on" : ""}" data-star="${t}" title="${on ? "Remove from" : "Add to"} watchlist">${on ? "★" : "☆"}</span>`;
+    const on = Store.inAnyList(t);
+    return `<span class="star-btn ${on ? "on" : ""}" data-star="${t}" title="${on ? "Edit watchlists" : "Save to watchlists"}">${on ? "★" : "☆"}</span>`;
+  }
+
+  /* Star click → checklist popup: pick one or more watchlists (the flat ★
+     Starred set plus every named list) to save/remove the ticker from, or type
+     a name to create a new list. Applies the diff and refreshes the glyph. */
+  async function openStarPicker(t, starEl) {
+    t = t.toUpperCase();
+    const lists = Store.getLists();
+    const items = [
+      { id: STARRED_ID, label: "★ Starred", checked: Store.inWatchlist(t) },
+      ...lists.map((l) => ({ id: l.id, label: l.name, checked: l.tickers.includes(t) })),
+    ];
+    const result = await App.modalChecklist({
+      title: `Save ${t} to watchlists`,
+      label: "Pick one or more lists — check to add, uncheck to remove.",
+      items,
+      confirmText: "Save",
+    });
+    if (!result) return;   // cancelled
+
+    let count = 0;
+    result.forEach((it) => {
+      if (it.isNew) {
+        if (it.checked) { Store.saveList(it.label, [t]); count++; }
+        return;
+      }
+      if (it.id === STARRED_ID) {
+        const now = Store.inWatchlist(t);
+        if (it.checked && !now) Store.toggleWatch(t);
+        else if (!it.checked && now) Store.removeWatch(t);
+      } else if (it.checked) {
+        Store.addToList(it.id, [t]);
+      } else {
+        Store.removeFromList(it.id, [t]);
+      }
+      if (it.checked) count++;
+    });
+
+    if (starEl) starEl.outerHTML = starHTML(t);
+    App.toast(count ? `★ ${t} saved to ${count} list${count > 1 ? "s" : ""}` : `${t} removed from all lists`, "ok");
   }
 
   function applyView(rows) {
@@ -1033,13 +1073,8 @@ const Views = (() => {
       const star = e.target.closest("[data-star]");
       if (star) {
         e.stopPropagation();
-        const t = star.dataset.star;
-        const now = Store.toggleWatch(t);
-        // Reflect the new state immediately — Store doesn't trigger a
-        // re-render on its own, so without this the glyph/color only caught
-        // up after some later, unrelated redraw (e.g. a sort or refresh).
-        star.outerHTML = starHTML(t);
-        App.toast(now ? `★ ${t} added to watchlist` : `${t} removed from watchlist`, "ok");
+        // Opens the list picker; it refreshes this star's glyph on save.
+        openStarPicker(star.dataset.star, star);
         return;
       }
       // --- row deep-dive ---

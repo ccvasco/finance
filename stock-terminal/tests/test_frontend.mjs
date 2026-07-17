@@ -429,6 +429,38 @@ test("deleteList removes it", () => {
   assert.equal(Store.getLists().length, 0);
 });
 
+// ---------------------------------------------------------------------------
+// Store.inAnyList — star fills for the flat ★ Starred set OR any named list
+// ---------------------------------------------------------------------------
+section("Store — inAnyList (star membership across lists)");
+
+test("false when in no list", () => {
+  localStorage.clear();
+  loadJS("store.js");
+  assert.equal(Store.inAnyList("AAPL"), false);
+});
+
+test("true when only in flat starred set", () => {
+  Store.toggleWatch("AAPL");
+  assert.equal(Store.inAnyList("AAPL"), true);
+});
+
+test("true when only in a named list (not starred)", () => {
+  Store.saveList("Tech", ["MSFT"]);
+  assert.equal(Store.inWatchlist("MSFT"), false);
+  assert.equal(Store.inAnyList("MSFT"), true);
+});
+
+test("normalizes case", () => {
+  assert.equal(Store.inAnyList("msft"), true);
+});
+
+test("false again once removed from every list", () => {
+  const id = Store.findListByName("Tech").id;
+  Store.removeFromList(id, ["MSFT"]);
+  assert.equal(Store.inAnyList("MSFT"), false);
+});
+
 test("named lists are independent of the star watchlist", () => {
   localStorage.clear();
   loadJS("store.js");
