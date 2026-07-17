@@ -70,13 +70,23 @@ _CACHE = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def cached(key, ttl, producer):
+def cached(key, ttl, producer, cache_none=True):
+    """Memoize producer() under `key` for `ttl` seconds.
+
+    cache_none=False skips storing a None result, so a transient upstream
+    failure is retried on the next call rather than pinned for the whole TTL.
+    Use it for shared inputs whose momentary absence poisons many rows at once
+    — e.g. the risk-free rate, which gates WACC and therefore every DCF: one
+    failed ^TNX fetch would otherwise blank the DCF column across the table for
+    an hour."""
     now = time.time()
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit and now - hit[0] < ttl:
             return hit[1]
     value = producer()  # produce outside the lock (network call)
+    if value is None and not cache_none:
+        return None
     with _CACHE_LOCK:
         _CACHE[key] = (now, value)
     return value
@@ -193,7 +203,10 @@ def get_risk_free_rate():
             return _num(info.get("regularMarketPrice") or info.get("previousClose"))
         except Exception:
             return None
-    return cached("rfr:^TNX", 3600, produce)
+    # Don't negatively-cache a failed fetch: the risk-free rate gates WACC for
+    # every ticker, so pinning a None here would blank the whole DCF column for
+    # an hour off a single transient ^TNX hiccup.
+    return cached("rfr:^TNX", 3600, produce, cache_none=False)
 
 
 def get_risk_free_history():
@@ -241,7 +254,10 @@ def _fx_rate(base, quote):
             return _num(info.get("regularMarketPrice") or info.get("previousClose"))
         except Exception:
             return None
-    return cached(f"fx:{base}{quote}", 3600, produce)
+    # Same reasoning as the risk-free rate: a failed FX fetch blanks the DCF and
+    # the recomputed valuation ratios for every foreign-reporting ticker, so
+    # retry next call rather than pinning the None for an hour.
+    return cached(f"fx:{base}{quote}", 3600, produce, cache_none=False)
 
 
 def _native_market_cap(market_cap, mkt_ccy, fin_ccy):
