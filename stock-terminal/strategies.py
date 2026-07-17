@@ -145,6 +145,17 @@ def _business_type(row):
     return "capital_intensive"
 
 
+def _is_utility(row):
+    """Regulated utilities stay on the capital-intensive rubric, but two of its
+    kill-switches misfire on them: Altman himself excluded utilities from his
+    sample, and their leverage-heavy, low-asset-turnover balance sheets put a
+    healthy utility's Z routinely below the 1.8 'distress' line; likewise a
+    normal regulated utility runs Debt/EBITDA at 4.5–5.5×, so the generic 6×
+    kill leaves no headroom for an ordinary capex year. Both switches are
+    softened for this sector (see _grade_triage / the S2 solvency guard)."""
+    return "utilit" in (row.get("sector") or "").lower()
+
+
 def _neg_equity(row):
     """True when reported shareholders' equity is zero or negative (common in
     buyback-heavy names). Leverage ratios built on negative equity flip sign —
@@ -394,10 +405,14 @@ def _grade_triage(row):
     opm = row.get("operating_margin")                        # fraction
     kills = []
     # Altman-Z is the 1968 manufacturer model, so it only disqualifies the
-    # asset-heavy businesses it was calibrated on. Asset-light and cyclical
-    # names instead get a non-disqualifying "low Altman-Z" context flag (see
-    # TRIAGE_FLAGS 'low_altman'); REITs and financials ignore it entirely.
-    if bt == "capital_intensive" and z is not None and z < 1.8:
+    # asset-heavy businesses it was calibrated on. Asset-light, cyclical and
+    # utility names instead get a non-disqualifying "low Altman-Z" context flag
+    # (see TRIAGE_FLAGS 'low_altman'); REITs and financials ignore it entirely.
+    # Utilities are exempt even though they grade capital_intensive: Altman
+    # excluded them from his sample, and a healthy regulated utility's Z sits
+    # below 1.8 as a matter of course (see _is_utility).
+    util = _is_utility(row)
+    if bt == "capital_intensive" and not util and z is not None and z < 1.8:
         kills.append("Altman Z distress")
     # Two of the 9 Piotroski tests (leverage decreasing, current-ratio
     # improving) are structurally biased against financials and REITs: a
@@ -414,8 +429,12 @@ def _grade_triage(row):
     # mortgage) are structurally debt-funded and run thin current ratios by
     # design, so they are exempt; financials have their own rubric.
     levered_rubric = bt not in ("financial", "reit", "mreit")
-    if levered_rubric and de_ratio is not None and de_ratio > 6:
-        kills.append("Debt/EBITDA > 6")
+    # Regulated utilities run 4.5–5.5× in the normal course, so the generic 6×
+    # line would kill a healthy utility after one ordinary capex year; their
+    # kill fires at 7× instead (see _is_utility).
+    de_kill_at = 7 if util else 6
+    if levered_rubric and de_ratio is not None and de_ratio > de_kill_at:
+        kills.append(f"Debt/EBITDA > {de_kill_at}")
     # Companion to the Debt/EBITDA kill: when EBITDA is negative the ratio is
     # undefined (screener stores None), which would let a heavily indebted
     # company with negative EBITDA slip past the leverage switch entirely.
@@ -780,12 +799,16 @@ TRIAGE_FLAGS = [
         "id": "low_altman",
         "icon": "⚠",
         "name": "Low Altman-Z (non-manufacturer)",
-        "threshold": "Altman-Z < 1.8 for an asset-light or cyclical business",
+        "threshold": "Altman-Z < 1.8 for an asset-light, cyclical or utility "
+                     "business",
         "why": "The Altman Z-score is calibrated on manufacturers, so a low "
-               "reading for an asset-light or commodity business is a soft "
-               "caution to check leverage and cash flow — not the automatic "
-               "disqualifier it is for a capital-intensive name.",
-        "test": lambda r, s: (_business_type(r) in ("asset_light", "cyclical")
+               "reading for an asset-light, commodity or utility business is a "
+               "soft caution to check leverage and cash flow — not the "
+               "automatic disqualifier it is for a capital-intensive name. "
+               "(Altman excluded utilities from his sample; a healthy regulated "
+               "utility's Z sits below 1.8 as a matter of course.)",
+        "test": lambda r, s: ((_business_type(r) in ("asset_light", "cyclical")
+                               or _is_utility(r))
                               and _lt(r.get("altman_z"), 1.8)),
     },
     {
@@ -1014,10 +1037,13 @@ def _grade_compounder(row):
 
     score = a + b + c + d + e
     # Solvency guard: a compounder must survive. The Altman-Z leg fires only for
-    # capital-intensive names (the manufacturers the score was built for); the
-    # twin-negative-earnings leg is business-agnostic and applies to all.
+    # capital-intensive names (the manufacturers the score was built for) and
+    # spares utilities, whose healthy Z sits below 1.8 by construction (see
+    # _is_utility); the twin-negative-earnings leg is business-agnostic and
+    # applies to all.
     z = row.get("altman_z")
-    if (bt == "capital_intensive" and z is not None and z < 1.8) or \
+    if (bt == "capital_intensive" and not _is_utility(row)
+            and z is not None and z < 1.8) or \
        (ni is not None and fcf is not None and ni < 0 and fcf < 0):
         capped = min(score, 35)
         if capped != score:

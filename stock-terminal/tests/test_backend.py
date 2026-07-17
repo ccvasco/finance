@@ -3644,6 +3644,42 @@ class TestBusinessTypeGrading(unittest.TestCase):
         self.assertFalse(any("Low Altman-Z" in f for f in
                              strategies.triage_flags(self._distressed(sector="Real Estate"), 70)))
 
+    def test_utility_not_killed_by_low_altman(self):
+        # Altman excluded utilities from his sample; a healthy regulated
+        # utility's Z sits below 1.8 by construction — soft flag, not a kill.
+        row = self._distressed(sector="Utilities",
+                               industry="Utilities—Regulated Electric")
+        score, verdict = strategies.grade_triage(row)
+        self.assertNotIn("Altman", verdict)
+        self.assertNotEqual(score, 0)
+        flags = strategies.triage_flags(row, score)
+        self.assertTrue(any("Low Altman-Z" in f for f in flags))
+
+    def test_utility_debt_ebitda_kill_at_7(self):
+        # Regulated utilities run 4.5–5.5× in the normal course — the kill
+        # line moves from 6× to 7× for them, and only for them.
+        util = dict(sector="Utilities", industry="Utilities—Regulated Electric")
+        ok, v_ok = strategies.grade_triage(_strategy_row(debt_ebitda=6.5, **util))
+        self.assertNotIn("Debt/EBITDA", v_ok)
+        killed, v_kill = strategies.grade_triage(
+            _strategy_row(debt_ebitda=7.5, **util))
+        self.assertEqual(killed, 0)
+        self.assertIn("Debt/EBITDA > 7", v_kill)
+        # an industrial at 6.5× is still killed on the generic 6× line
+        ind_killed, v_ind = strategies.grade_triage(_strategy_row(debt_ebitda=6.5))
+        self.assertEqual(ind_killed, 0)
+        self.assertIn("Debt/EBITDA > 6", v_ind)
+
+    def test_utility_low_altman_spared_by_s2_solvency_guard(self):
+        # The S2 solvency guard's Altman leg is also a manufacturer test.
+        row = _strategy_row(sector="Utilities",
+                            industry="Utilities—Regulated Electric",
+                            altman_z=1.2)
+        score, _ = strategies.grade_compounder(row)
+        self.assertGreater(score, 35)
+        ind, _ = strategies.grade_compounder(_strategy_row(altman_z=1.2))
+        self.assertLessEqual(ind, 35)
+
     def test_reit_not_killed_by_leverage_or_liquidity(self):
         # a REIT with heavy debt and thin liquidity that would sink an industrial
         row = _strategy_row(sector="Real Estate", industry="REIT—Residential",

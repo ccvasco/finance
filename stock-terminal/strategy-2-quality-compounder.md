@@ -25,7 +25,7 @@ A compounder must first survive. Before scoring, two guards apply:
 
 | Guard | Condition | Effect |
 |---|---|---|
-| Distress | Altman Z-Score < 1.8 (**capital-intensive only** — the Altman model is calibrated on manufacturers) | Score capped at 35 (Pass) |
+| Distress | Altman Z-Score < 1.8 (**capital-intensive only, except utilities** — the Altman model is calibrated on manufacturers; Altman excluded utilities from his sample, and a healthy regulated utility's Z sits below 1.8 as a matter of course) | Score capped at 35 (Pass) |
 | Capital consumption | Net Income < 0 **and** FCF < 0 (all archetypes) | Score capped at 35 (Pass) |
 
 These are caps, not kills — the pillar breakdown stays visible for the audit
