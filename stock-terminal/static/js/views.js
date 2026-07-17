@@ -2419,45 +2419,63 @@ const DeepDive = (() => {
       `<div class="dd-wiki-src">${link}</div></div>`;
   }
 
-  // Next results delivery date: a single confirmed date, or an estimated
-  // window (Yahoo returns two dates when the exact day isn't locked in). Adds a
-  // weekday, a "estimated" tag and a live countdown so the next report's timing
-  // reads at a glance.
-  function nextEarningsHTML(u) {
-    const ds = (u.earnings_dates || []).filter(Boolean);
-    if (!ds.length) return Fmt.na;
-    const first = ds[0], last = ds[ds.length - 1];
-    const estimated = last !== first;                  // 2-date window = estimate
-    let dateTxt;
-    if (estimated) {
-      // "Apr 24 – Apr 28, 2025" (drop the repeated year/month on the low end)
-      const a = new Date(first + "T00:00:00"), b = new Date(last + "T00:00:00");
-      const optLow = { month: "short", day: "2-digit" };
-      const lowTxt = (!isNaN(a) && a.getFullYear() === b.getFullYear())
-        ? a.toLocaleDateString(undefined, optLow) : Fmt.date(first);
-      dateTxt = `${lowTxt} – ${Fmt.date(last)}`;
-    } else {
-      dateTxt = Fmt.date(first);
-    }
-    const parts = [dateTxt];
-    const wd = !estimated ? Fmt.weekday(first) : "";
-    if (wd) parts.push(wd);
-    let out = parts.join(" · ");
-    if (estimated) out += ` <span class="cal-est">estimated</span>`;
-    const days = Fmt.daysUntil(first);
-    const cd = Fmt.countdown(first);
+  // A single confirmed date, with weekday and a live countdown.
+  function confirmedEarningsHTML(d) {
+    const days = Fmt.daysUntil(d);
+    const cd = Fmt.countdown(d);
+    let out = [Fmt.date(d), Fmt.weekday(d)].filter(Boolean).join(" · ");
     if (cd) {
-      // upcoming/imminent stand out; a past-due date (stale data) is muted
-      const cls = days < 0 ? "cal-countdown past"
-        : (days <= 7 ? "cal-countdown soon" : "cal-countdown");
+      const cls = days <= 7 ? "cal-countdown soon" : "cal-countdown";
       out += ` <span class="${cls}">${cd}</span>`;
     }
     return out;
   }
 
+  // Next results delivery date. Yahoo's calendar gives either a single confirmed
+  // date or an estimated window (two dates, when the exact day isn't locked in) —
+  // but that date is often stale: once it slips into the past Yahoo simply hasn't
+  // published the next one yet. So we only trust the calendar window while its
+  // late edge is still ahead of today; otherwise we fall back to the soonest
+  // genuinely-future date in the earnings-date history, and failing that we show
+  // the last known date plainly rather than counting down to a date that's gone.
+  function nextEarningsHTML(u, history) {
+    const ds = (u.earnings_dates || []).filter(Boolean);
+    const first = ds[0], last = ds[ds.length - 1];
+    const calCurrent = ds.length && Fmt.daysUntil(last) >= 0;
+
+    if (calCurrent) {
+      const estimated = last !== first;                // 2-date window = estimate
+      if (!estimated) return confirmedEarningsHTML(first);
+      // "Apr 24 – Apr 28, 2025" (drop the repeated year/month on the low end)
+      const a = new Date(first + "T00:00:00"), b = new Date(last + "T00:00:00");
+      const optLow = { month: "short", day: "2-digit" };
+      const lowTxt = (!isNaN(a) && a.getFullYear() === b.getFullYear())
+        ? a.toLocaleDateString(undefined, optLow) : Fmt.date(first);
+      let out = `${lowTxt} – ${Fmt.date(last)} <span class="cal-est">estimated</span>`;
+      const cd = Fmt.countdown(first);
+      if (cd) out += ` <span class="${Fmt.daysUntil(first) <= 7 ? "cal-countdown soon" : "cal-countdown"}">${cd}</span>`;
+      return out;
+    }
+
+    // Calendar has no upcoming date — take the soonest future date the earnings
+    // history knows about (get_earnings_dates carries Yahoo's scheduled dates).
+    const histDates = (history || []).map((r) => r.date).filter(Boolean);
+    const future = histDates.filter((d) => Fmt.daysUntil(d) >= 0).sort();
+    if (future.length) return confirmedEarningsHTML(future[0]);
+
+    // Nothing upcoming anywhere: the only date Yahoo has is already in the past,
+    // so the next report isn't scheduled. Flag it as unconfirmed instead of
+    // presenting a stale past date as the next one.
+    const lastKnown = last || histDates.sort().pop();
+    if (!lastKnown) return Fmt.na;
+    return `${[Fmt.date(lastKnown), Fmt.weekday(lastKnown)].filter(Boolean).join(" · ")} `
+      + `<span class="cal-est">unconfirmed</span> `
+      + `<span class="cal-countdown past">${Fmt.countdown(lastKnown)}</span>`;
+  }
+
   // Hover descriptions for the Earnings & Splits Calendar rows.
   const CAL_TIPS = {
-    "Next Earnings": "Next results delivery date. A single confirmed date, or an estimated window when Yahoo hasn't locked the exact day; the countdown is days from today.",
+    "Next Earnings": "Next results delivery date. A single confirmed date, or an estimated window when Yahoo hasn't locked the exact day; the countdown is days from today. When Yahoo's only date is already in the past — the next report isn't scheduled yet — it's flagged \"unconfirmed\".",
     "EPS Estimate (avg)": "Analysts' average earnings-per-share estimate for the upcoming report.",
     "EPS Estimate range": "Low–high spread of analyst EPS estimates for the upcoming report.",
     "Revenue Estimate (avg)": "Analysts' average revenue estimate for the upcoming report.",
@@ -2474,7 +2492,7 @@ const DeepDive = (() => {
 
   function calendarHTML(c, cur) {
     const u = c.upcoming || {};
-    const nextE = nextEarningsHTML(u);
+    const nextE = nextEarningsHTML(u, c.earnings_history);
     const epsRange = (u.eps_low != null && u.eps_high != null)
       ? `${Fmt.num(u.eps_low)} – ${Fmt.num(u.eps_high)}` : Fmt.na;
     const upcoming =
