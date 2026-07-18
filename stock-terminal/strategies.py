@@ -1096,13 +1096,17 @@ def _grade_compounder(row):
     # _is_utility); the twin-negative-earnings leg is business-agnostic and
     # applies to all.
     z = row.get("altman_z")
+    guard_reasons = []
     if (bt == "capital_intensive" and not _is_utility(row)
-            and z is not None and z < 1.8) or \
-       (ni is not None and fcf is not None and ni < 0 and fcf < 0):
+            and z is not None and z < 1.8):
+        guard_reasons.append(f"Altman Z {_r(z, 2)} < 1.8")
+    if ni is not None and fcf is not None and ni < 0 and fcf < 0:
+        guard_reasons.append("negative NI and FCF")
+    if guard_reasons:
         capped = min(score, 35)
         if capped != score:
             P.append(_pill("Solvency guard", capped - score, 0,
-                           "distress / twin-negative earnings → capped at 35"))
+                           " · ".join(guard_reasons) + " → capped at 35"))
         score = capped
 
     score = _round_score(score)
