@@ -147,6 +147,21 @@ space separated) and hit **+ Add** or **− Remove** to bulk-edit the list in
 place — Enter adds. Works for named lists and the ★ Starred list alike;
 newly added tickers are fetched automatically.
 
+### Portfolio & trades
+The Dashboard doubles as a portfolio tracker. **＋ Trade** (top right) logs a
+buy or sell — ticker, side, shares, price per share, date — and the stat cards
+show **Market Value**, **Cost Basis**, **Unrealized P&L** and **Day P&L** for
+the open positions, with realized P&L alongside. A **Portfolio** panel lists
+each position (shares held, average cost, live price, market value,
+unrealized / day / realized P&L); click a position to see its individual
+trades, and ✕ deletes a mis-entered one — everything recomputes. Positions use
+the **average-cost** method: a sell realizes (price − average cost) × shares
+and shrinks the basis proportionally, and selling more than is held is clamped
+to the held quantity (the log never goes short). Tickers you trade are fetched
+with the dashboard even when they're not on the watchlist. The trade log lives
+in the server's `state.json` like every other setting — on your own disk,
+included in **Settings → Download backup**, and never sent anywhere.
+
 ### Analyst Chat
 A chat agent (Claude, via the official `anthropic` SDK) that analyses **your**
 data, available as a **floating ✦ bubble on every tab** (bottom-right) rather
@@ -183,8 +198,8 @@ Export any set of tickers to `.xlsx` with three sheets:
 - **Batch interval** — pause between batches in milliseconds (default 400); raise it to be gentler on the server/Yahoo.
 - **Cached result sets** — how many analyzed ticker-sets to keep in memory (default 25); *each set caches all of its tickers*, so a 500-ticker analysis is one fully-cached set.
 - **Clear cache** — clears both the server-side Yahoo cache and this browser's cached results.
-- **Download backup** — saves every watchlist, starred ticker, setting and column
-  layout to a JSON file. Contents come from the server, so the file matches what
+- **Download backup** — saves every watchlist, starred ticker, trade, setting and
+  column layout to a JSON file. Contents come from the server, so the file matches what
   every browser sees, not just the tab you clicked in.
 - **Restore from backup** — loads such a file back, replacing what's in the app.
   The file is validated before anything changes (a non-backup is rejected with an
@@ -332,8 +347,8 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   otherwise N/A).
 - **Performance** — price-only returns (split-adjusted, dividend-unadjusted).
   Total return for dividend payers is higher than shown.
-- **Watchlist and settings** — the server's `state.json` is the shared source of
-  truth, mirrored into each browser's `localStorage` as a cache. Every write
+- **Watchlists, trades and settings** — the server's `state.json` is the shared
+  source of truth, mirrored into each browser's `localStorage` as a cache. Every write
   snapshots the previous state into `state-backups/` (newest 20). Both paths are
   gitignored and live on one disk, so use **Settings → Download backup** for
   anything you'd hate to lose.

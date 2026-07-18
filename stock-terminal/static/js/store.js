@@ -14,7 +14,7 @@ const Store = (() => {
   const KEYS = {
     wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
     lists: "st.lists", rows: "st.rowsCache", chat: "st.chatHistory",
-    colw: "st.colWidths", colorder: "st.colOrder",
+    colw: "st.colWidths", colorder: "st.colOrder", trades: "st.trades",
   };
   const CHAT_MAX = 60;   // keep the last N messages (agent context is capped too)
 
@@ -23,7 +23,7 @@ const Store = (() => {
   // make *this* browser's reloads fast.
   const SYNCED = new Set([
     KEYS.wl, KEYS.settings, KEYS.last, KEYS.lists, KEYS.chat,
-    KEYS.colw, KEYS.colorder,
+    KEYS.colw, KEYS.colorder, KEYS.trades,
   ]);
   const PUSH_DEBOUNCE = 400;   // ms
 
@@ -95,6 +95,9 @@ const Store = (() => {
   let colOrder = read(KEYS.colorder, []);
   // Named watchlists: [{ id, name, tickers:[...], createdAt, updatedAt }]
   let lists = read(KEYS.lists, []);
+  // Trade log: [{ id, ticker, side:"buy"|"sell", shares, price, date }] in
+  // insertion order. Positions and P&L are derived from it in Views.
+  let trades = read(KEYS.trades, []);
 
   const genId = () => "wl_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const cloneList = (l) => ({ ...l, tickers: l.tickers.slice() });
@@ -110,6 +113,7 @@ const Store = (() => {
     if (has(KEYS.last)) lastTickers = state[KEYS.last] || [];
     if (has(KEYS.colw)) colWidths = state[KEYS.colw] || {};
     if (has(KEYS.colorder)) colOrder = state[KEYS.colorder] || [];
+    if (has(KEYS.trades)) trades = state[KEYS.trades] || [];
     if (has(KEYS.settings)) settings = Object.assign(settings, state[KEYS.settings] || {});
     // Mirror into localStorage so a later offline load still has it, but skip
     // write() — these values came *from* the server, pushing them back is noise.
@@ -157,12 +161,12 @@ const Store = (() => {
      than it helps. */
   const BACKUP_KIND = "bibes-terminal-state";
   const BACKUP_VERSION = 1;
-  const BACKUP_KEYS = [KEYS.wl, KEYS.lists, KEYS.settings, KEYS.last, KEYS.colw, KEYS.colorder];
+  const BACKUP_KEYS = [KEYS.wl, KEYS.lists, KEYS.settings, KEYS.last, KEYS.colw, KEYS.colorder, KEYS.trades];
   // What a key falls back to when a backup omits it — restoring has to be able
   // to clear a value, not just overwrite one.
   const BACKUP_EMPTY = {
     [KEYS.wl]: [], [KEYS.lists]: [], [KEYS.settings]: {},
-    [KEYS.last]: [], [KEYS.colw]: {}, [KEYS.colorder]: [],
+    [KEYS.last]: [], [KEYS.colw]: {}, [KEYS.colorder]: [], [KEYS.trades]: [],
   };
 
   /* Build a backup document from the *server's* state rather than this tab's
@@ -234,7 +238,7 @@ const Store = (() => {
   // Serialized view of everything hydrate() can change — cheap way to tell
   // whether a resync actually brought anything new in.
   const snapshot = () =>
-    JSON.stringify([watchlist, lists, lastTickers, colWidths, colOrder, settings]);
+    JSON.stringify([watchlist, lists, lastTickers, colWidths, colOrder, settings, trades]);
 
   /* Re-pull shared state when this tab returns to the foreground.
 
@@ -360,6 +364,29 @@ const Store = (() => {
       return cloneList(l);
     },
     deleteList(id) { lists = lists.filter((x) => x.id !== id); write(KEYS.lists, lists); notify(); },
+
+    // -- trades (portfolio) ------------------------------------------------
+    getTrades: () => trades.map((t) => ({ ...t })),
+    addTrade({ ticker, side, shares, price, date }) {
+      const t = {
+        id: "tr_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        ticker: String(ticker).trim().toUpperCase(),
+        side: side === "sell" ? "sell" : "buy",
+        shares: Number(shares),
+        price: Number(price),
+        date,
+      };
+      trades.push(t);
+      write(KEYS.trades, trades);
+      notify();
+      return { ...t };
+    },
+    deleteTrade(id) {
+      trades = trades.filter((t) => t.id !== id);
+      write(KEYS.trades, trades);
+      notify();
+    },
+    tradeTickers: () => [...new Set(trades.map((t) => t.ticker))],
 
     // -- persisted screener rows (so cached tables survive page reloads) ----
     // entries: [[setKey, rows], ...] in oldest→newest order.

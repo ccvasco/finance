@@ -1598,18 +1598,253 @@ const Views = (() => {
   }
 
   /* =================== DASHBOARD ===================== */
+
+  /* Build positions from the trade log using the average-cost method: buys
+     raise shares and cost basis; sells realize (price − avg cost) × qty and
+     shrink the basis proportionally. A sell of more shares than are held is
+     clamped to the held quantity — the log never goes short. Prices come from
+     the dashboard's already-loaded screener rows; a position whose row hasn't
+     loaded (or errored) shows its cost side only. */
+  function computePortfolio(trades, rowByTicker) {
+    const byT = new Map();
+    trades.slice()
+      .sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : (a.date || "") > (b.date || "") ? 1 : 0))
+      .forEach((tr) => {
+        let p = byT.get(tr.ticker);
+        if (!p) { p = { ticker: tr.ticker, shares: 0, cost: 0, realized: 0, trades: [] }; byT.set(tr.ticker, p); }
+        p.trades.push(tr);
+        const qty = Number(tr.shares) || 0, px = Number(tr.price) || 0;
+        if (tr.side === "sell") {
+          const sold = Math.min(qty, p.shares);
+          const avg = p.shares > 0 ? p.cost / p.shares : 0;
+          p.realized += sold * (px - avg);
+          p.cost -= sold * avg;
+          p.shares -= sold;
+        } else {
+          p.shares += qty;
+          p.cost += qty * px;
+        }
+      });
+    const positions = [...byT.values()].map((p) => {
+      const row = rowByTicker.get(p.ticker);
+      const held = p.shares > 1e-9;
+      const price = row ? row.price : null;
+      const mv = price != null && held ? p.shares * price : null;
+      const unreal = mv != null ? mv - p.cost : null;
+      // Back out the previous close from today's % change for a day P&L.
+      const chg = row ? row.change_pct : null;
+      const day = mv != null && chg != null ? p.shares * (price - price / (1 + chg / 100)) : null;
+      return {
+        ...p, held, price, mv, unreal, day,
+        avgCost: held ? p.cost / p.shares : null,
+        currency: (row && row.currency) || "USD",
+      };
+    });
+    const held = positions.filter((p) => p.held);
+    const priced = held.filter((p) => p.mv != null);
+    const sum = (arr, f) => arr.reduce((s, p) => s + f(p), 0);
+    return {
+      positions,
+      totals: {
+        mv: sum(priced, (p) => p.mv),
+        cost: sum(held, (p) => p.cost),
+        costPriced: sum(priced, (p) => p.cost),
+        unreal: sum(priced, (p) => p.unreal),
+        day: sum(priced.filter((p) => p.day != null), (p) => p.day),
+        realized: sum(positions, (p) => p.realized),
+        held: held.length,
+        priced: priced.length,
+      },
+    };
+  }
+
+  function signedMoney(v, fmt) {
+    if (v == null) return "—";
+    return `<span class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : ""}${fmt(v)}</span>`;
+  }
+
+  function portfolioCards(pf) {
+    if (!pf.positions.length) {
+      return `
+        ${card("Market Value", "—", "no trades logged yet")}
+        ${card("Cost Basis", "—", "press ＋ Trade to log one")}
+        ${card("Unrealized P&L", "—", "")}
+        ${card("Day P&L", "—", "")}`;
+    }
+    const t = pf.totals;
+    const money = (v) => Fmt.big(v, "USD");
+    const pnlPct = t.costPriced > 0 ? (t.unreal / t.costPriced) * 100 : null;
+    const loading = t.held > t.priced ? ` · ${t.held - t.priced} loading` : "";
+    return `
+      ${card("Market Value", t.priced ? money(t.mv) : "—", `${t.held} position${t.held === 1 ? "" : "s"}${loading}`)}
+      ${card("Cost Basis", money(t.cost), "open positions")}
+      ${card("Unrealized P&L", signedMoney(t.unreal, money),
+        pnlPct == null ? "" : `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% of cost`)}
+      ${card("Day P&L", signedMoney(t.day, money),
+        `today · realized ${t.realized >= 0 ? "+" : ""}${money(t.realized)}`)}`;
+  }
+
+  // Tickers whose trade sub-rows are expanded; survives repaints and nav.
+  const pfOpen = new Set();
+
+  function positionsPanelHTML(pf) {
+    if (!pf.positions.length) return "";
+    const qty = (v) => Fmt.num(v, Math.abs(v % 1) > 1e-9 ? 4 : 0);
+    const cell = (v, cur, pct) => {
+      if (v == null) return "<td>—</td>";
+      // Sign goes before the currency symbol — Fmt.price would render $-30.30.
+      const body = `${v >= 0 ? "+" : "-"}${Fmt.price(Math.abs(v), cur)}` +
+        (pct != null ? ` (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)` : "");
+      return `<td class="${v >= 0 ? "pos" : "neg"}">${body}</td>`;
+    };
+    const rows = pf.positions.slice()
+      .sort((a, b) => (b.mv || 0) - (a.mv || 0))
+      .map((p) => {
+        const t = escHTML(p.ticker);
+        const open = pfOpen.has(p.ticker);
+        const pct = p.unreal != null && p.cost > 0 ? (p.unreal / p.cost) * 100 : null;
+        const tradeRows = p.trades.slice().reverse().map((tr) => `
+          <tr class="trade-row${open ? "" : " hidden"}" data-for="${t}">
+            <td></td>
+            <td class="text-cell">${Fmt.date(tr.date) || "—"}</td>
+            <td class="${tr.side === "buy" ? "pos" : "neg"}">${tr.side === "buy" ? "Buy" : "Sell"}</td>
+            <td>${qty(tr.shares)}</td>
+            <td>${Fmt.price(tr.price, p.currency)}</td>
+            <td>${Fmt.price(tr.shares * tr.price, p.currency)}</td>
+            <td colspan="2"></td>
+            <td><button class="btn btn-sm btn-ghost trade-del" data-id="${escHTML(tr.id)}"
+                        title="Delete this trade">✕</button></td>
+          </tr>`).join("");
+        return `
+          <tr class="pf-row" data-t="${t}" title="Click to show this position's trades">
+            <td class="pf-caret">${open ? "▾" : "▸"}</td>
+            <td class="ticker-cell">${t}${p.held ? "" : ' <span class="sub">closed</span>'}</td>
+            <td>${p.held ? qty(p.shares) : "—"}</td>
+            <td>${p.avgCost != null ? Fmt.price(p.avgCost, p.currency) : "—"}</td>
+            <td>${p.price != null ? Fmt.price(p.price, p.currency) : "—"}</td>
+            <td>${p.mv != null ? Fmt.price(p.mv, p.currency) : "—"}</td>
+            ${cell(p.unreal, p.currency, pct)}
+            ${cell(p.day, p.currency)}
+            ${cell(p.realized !== 0 ? p.realized : null, p.currency)}
+          </tr>${tradeRows}`;
+      }).join("");
+    return `
+      <div class="panel">
+        <div class="panel-head"><span class="dot"></span>Portfolio</div>
+        <div class="table-wrap" style="border:0">
+          <table class="data pf-table">
+            <thead><tr><th class="nosort"></th><th class="nosort">Ticker</th><th class="nosort">Shares</th>
+              <th class="nosort">Avg Cost</th><th class="nosort">Price</th><th class="nosort">Mkt Value</th>
+              <th class="nosort">Unrealized</th><th class="nosort">Day</th><th class="nosort">Realized</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div style="height:20px"></div>`;
+  }
+
+  function wirePortfolio(el, repaint) {
+    el.querySelectorAll(".pf-row").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const t = tr.dataset.t;
+        const open = !pfOpen.has(t);
+        if (open) pfOpen.add(t); else pfOpen.delete(t);
+        tr.querySelector(".pf-caret").textContent = open ? "▾" : "▸";
+        el.querySelectorAll(`.trade-row[data-for="${CSS.escape(t)}"]`)
+          .forEach((r) => r.classList.toggle("hidden", !open));
+      });
+    });
+    el.querySelectorAll(".trade-del").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        Store.deleteTrade(btn.dataset.id);
+        App.toast("Trade deleted", "ok");
+        preserveScroll(repaint);
+      });
+    });
+  }
+
+  /* Modal form for logging a buy or sell. Resolves with
+     { ticker, side, shares, price, date }, or null if cancelled. */
+  function tradeModal() {
+    return new Promise((resolve) => {
+      const rootEl = document.getElementById("modal-root");
+      const today = new Date().toISOString().slice(0, 10);
+      rootEl.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-head">Add trade</div>
+            <div class="modal-body">
+              <div class="modal-grid">
+                <div><label class="modal-label" for="tr-ticker">Ticker</label>
+                  <input class="modal-input" id="tr-ticker" type="text" autocomplete="off"
+                         spellcheck="false" placeholder="AAPL"></div>
+                <div><label class="modal-label" for="tr-side">Side</label>
+                  <select class="modal-input" id="tr-side">
+                    <option value="buy">Buy</option><option value="sell">Sell</option>
+                  </select></div>
+                <div><label class="modal-label" for="tr-shares">Shares</label>
+                  <input class="modal-input" id="tr-shares" type="number" min="0" step="any" placeholder="10"></div>
+                <div><label class="modal-label" for="tr-price">Price / share</label>
+                  <input class="modal-input" id="tr-price" type="number" min="0" step="any" placeholder="182.50"></div>
+                <div><label class="modal-label" for="tr-date">Date</label>
+                  <input class="modal-input" id="tr-date" type="date" value="${today}"></div>
+              </div>
+              <div class="modal-err" id="modal-err"></div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-sm btn-ghost" id="modal-cancel">Cancel</button>
+              <button class="btn btn-sm btn-primary" id="modal-ok">Add</button>
+            </div>
+          </div>
+        </div>`;
+      rootEl.classList.remove("hidden");
+      const $ = (id) => document.getElementById(id);
+      $("tr-ticker").focus();
+      function done(val) {
+        rootEl.classList.add("hidden");
+        rootEl.innerHTML = "";
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      }
+      function submit() {
+        const ticker = $("tr-ticker").value.trim().toUpperCase();
+        const shares = Number($("tr-shares").value);
+        const price = Number($("tr-price").value);
+        const err = !ticker ? "Enter a ticker."
+          : !(shares > 0) ? "Shares must be a positive number."
+          : $("tr-price").value === "" || !(price >= 0) ? "Enter the price per share."
+          : null;
+        if (err) { $("modal-err").textContent = err; return; }
+        done({ ticker, side: $("tr-side").value, shares, price, date: $("tr-date").value || today });
+      }
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); done(null); }
+        else if (e.key === "Enter" && e.target.tagName !== "SELECT") { e.preventDefault(); submit(); }
+      }
+      $("modal-ok").addEventListener("click", submit);
+      $("modal-cancel").addEventListener("click", () => done(null));
+      rootEl.querySelector(".modal-overlay").addEventListener("click", (e) => {
+        if (e.target.classList.contains("modal-overlay")) done(null);
+      });
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
   async function dashboard(root, opts = {}) {
     render(root);
     const wl = Store.getWatchlist();
     const last = Store.getLastTickers();
     root.innerHTML = `
       <div class="view-head"><div class="view-title">Dashboard</div>
-        <div class="view-sub">Market snapshot</div>
+        <div class="view-sub">Portfolio</div>
         <span class="scr-status" id="dash-status"></span>
         <div class="spacer"></div>
+        <button class="btn btn-sm" id="dash-trade" title="Log a buy or sell">＋ Trade</button>
         <button class="btn btn-sm" id="dash-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button></div>
       <div class="cards" id="dash-cards"></div>
       <div style="height:20px"></div>
+      <div id="dash-pf"></div>
       ${(wl.length || last.length) ? legendBox() : ""}
       <div class="panel fill">
         <div class="panel-head"><span class="dot"></span>${wl.length ? "Watchlist" : "Recently analyzed"}</div>
@@ -1617,7 +1852,19 @@ const Views = (() => {
       </div>`;
     hydrateFlagLegend(root);
     root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
-    const set = wl.length ? wl : last;
+    root.querySelector("#dash-trade").addEventListener("click", async () => {
+      const tr = await tradeModal();
+      if (!tr) return;
+      Store.addTrade(tr);
+      App.toast(`Logged: ${tr.side} ${tr.shares} ${tr.ticker} @ ${tr.price}`, "ok");
+      // Full re-render: a trade on a new ticker changes the fetch set, and the
+      // cache-first path below pulls just that ticker.
+      dashboard(root);
+    });
+    // The table (and fetch set) covers the watchlist — or the last-analyzed
+    // fallback — plus every ticker the trade log mentions, so portfolio
+    // positions always get prices even when they're not on the watchlist.
+    const set = [...new Set([...(wl.length ? wl : last), ...Store.tradeTickers()])];
     // ⭳ Export must cover every row the table shows, which is the watchlist
     // whenever there is one — not the last-analyzed set App would fall back to.
     App.setExportTickers(set);
@@ -1629,17 +1876,16 @@ const Views = (() => {
       tableEl.innerHTML = `<div class="empty"><div class="big">◧</div>Welcome to Bibes Terminal.<div class="hint">Type tickers up top and press Analyze, or build a watchlist.</div></div>`;
       return;
     }
+    const pfEl = root.querySelector("#dash-pf");
     let lastRows = null;
     function paint() {
-      const ok = lastRows.filter((r) => !r.error);
-      const totalMcap = ok.reduce((s, r) => s + (r.market_cap || 0), 0);
-      const gainers = ok.filter((r) => (r.change_pct || 0) > 0).length;
-      const avgPe = (() => { const v = ok.map((r) => r.pe).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; })();
-      cardsEl.innerHTML = `
-        ${card("Tracked", ok.length, "stocks")}
-        ${card("Total Mkt Cap", Fmt.big(totalMcap, "USD"), "combined")}
-        ${card("Advancing", `${gainers}/${ok.length}`, "positive today")}
-        ${card("Avg P/E", avgPe != null ? avgPe.toFixed(1) : "N/A", "trailing")}`;
+      const rowByTicker = new Map(
+        lastRows.filter((r) => !r.error).map((r) => [r.ticker, r]));
+      // Trades re-read on every repaint so a delete recomputes in place.
+      const pf = computePortfolio(Store.getTrades(), rowByTicker);
+      cardsEl.innerHTML = portfolioCards(pf);
+      pfEl.innerHTML = positionsPanelHTML(pf);
+      wirePortfolio(pfEl, paint);
       const view = applyView(lastRows);
       tableEl.innerHTML = tableHTML(view);
       wireTable(tableEl, view, paint);
