@@ -199,7 +199,7 @@ Settings persist server-side in `state.json`, cached in `localStorage`.
 ## Quick start
 
 ```bash
-source /home/vc/yfinance/venv/bin/activat
+source /home/vc/yfinance/venv/bin/activate
 # 1. Install dependencies (from the repo root)
 pip install yfinance openpyxl lxml
 
@@ -214,6 +214,12 @@ Options:
 
 ```bash
 python stock-terminal/app.py --port 9000 --host 0.0.0.0
+```
+
+Server already in use:
+```bash
+sudo ss -ltnp | grep ':8765'
+sudo kill <PID>
 ```
 
 > The backend serves both the static frontend **and** the JSON API. Opening
