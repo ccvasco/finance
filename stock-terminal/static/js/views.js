@@ -2563,7 +2563,25 @@ const DeepDive = (() => {
     elOverlay().classList.add("hidden");
     elOverlay().innerHTML = "";
     document.removeEventListener("keydown", escClose);
+    // refreshCurrent() rebuilds the view's DOM (to reflect any watchlist stars
+    // toggled in the deep-dive), which would otherwise snap the list back to the
+    // top. Snapshot the scroll offsets — the view scroller (.view-root, used by
+    // the dashboard) and any inner table scroller (.table-wrap, used by the
+    // screener) — and restore them after the cache-backed re-render so the user
+    // lands right where they left off.
+    const scroller = document.querySelector(".view-root");
+    const y = scroller ? scroller.scrollTop : 0;
+    const wraps = [...document.querySelectorAll(".table-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
     App.refreshCurrent();   // reflect any watchlist changes
+    const restore = () => {
+      const s = document.querySelector(".view-root");
+      if (s) s.scrollTop = y;
+      document.querySelectorAll(".table-wrap").forEach((w, i) => {
+        if (wraps[i]) { w.scrollTop = wraps[i][0]; w.scrollLeft = wraps[i][1]; }
+      });
+    };
+    restore();
+    requestAnimationFrame(restore);   // re-apply after layout settles
   }
 
   return { open, close };
