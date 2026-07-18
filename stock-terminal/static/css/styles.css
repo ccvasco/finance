@@ -507,41 +507,54 @@ svg.chart { width: 100%; display: block; }
 .modal-newrow .modal-input { flex: 1; }
 .modal-newrow .btn { white-space: nowrap; }
 
-/* ===== Watchlist cards ================================================== */
-.wl-cards {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px; margin-bottom: 22px;
+/* ===== Watchlist picker ================================================== */
+/* The lists live in a dropdown, not on the page: one header row of chrome, and
+   the table below gets everything else. */
+.wl-head { align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.wl-picker { position: relative; }
+.wl-picker-btn {
+  display: flex; align-items: center; gap: 9px;
+  background: var(--panel); border: 1px solid var(--border-2); border-radius: 9px;
+  padding: 7px 11px; cursor: pointer; color: var(--text);
+  font-size: 14px; font-weight: 700; min-width: 200px; text-align: left;
 }
-.wl-card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 14px 15px; cursor: pointer; transition: border-color .12s;
-  display: flex; flex-direction: column; gap: 9px;
+.wl-picker-btn:hover { border-color: var(--text-faint); }
+.wl-picker-btn[aria-expanded="true"] { border-color: var(--accent); }
+.wl-picker-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-picker-name.placeholder { color: var(--text-dim); font-weight: 500; }
+.wl-picker-count {
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 20px;
+  padding: 1px 8px; font-size: 11px; font-family: var(--mono); font-weight: 500; color: var(--text-dim);
 }
-.wl-card:hover { border-color: var(--border-2); }
-.wl-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.wl-card-top { display: flex; align-items: center; gap: 8px; }
-.wl-card-name { font-weight: 700; font-size: 13.5px; color: var(--text); }
-.wl-card-count {
-  margin-left: auto; background: var(--panel-2); border: 1px solid var(--border-2);
-  border-radius: 20px; padding: 1px 9px; font-size: 11px; font-family: var(--mono); color: var(--text-dim);
+.wl-picker-count:empty { display: none; }
+.wl-picker-caret { color: var(--text-dim); font-size: 11px; }
+
+.wl-menu {
+  position: absolute; z-index: 60; top: calc(100% + 5px); left: 0;
+  min-width: 280px; max-height: 55vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--border-2); border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .45); padding: 5px;
 }
-.wl-card-tickers {
-  font-family: var(--mono); font-size: 11.5px; color: var(--text-dim);
-  line-height: 1.5; max-height: 36px; overflow: hidden;
+.wl-menu-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 13px;
 }
-.wl-card-foot { display: flex; align-items: center; min-height: 22px; }
-.wl-card-tag { font-size: 11px; color: var(--text-faint); }
-.wl-card-actions { margin-left: auto; display: flex; gap: 6px; }
+.wl-menu-item:hover, .wl-menu-item:focus-visible { background: var(--row-hover); outline: none; }
+.wl-menu-item.active { color: var(--accent); font-weight: 700; }
+.wl-menu-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-menu-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+/* Rename/delete stay out of the way until you're on the row. Faded rather than
+   `visibility: hidden` so they remain focusable — hiding them outright takes
+   them out of the tab order and puts editing out of reach of the keyboard. */
+.wl-menu-acts { display: flex; gap: 5px; opacity: 0; transition: opacity .12s; }
+.wl-menu-item:hover .wl-menu-acts,
+.wl-menu-item:focus-within .wl-menu-acts { opacity: 1; }
+.wl-menu-empty { padding: 12px 11px; font-size: 12px; line-height: 1.55; color: var(--text-dim); }
 .wl-act {
   background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-  border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; line-height: 1;
+  border-radius: 6px; padding: 2px 7px; font-size: 11.5px; cursor: pointer; line-height: 1.35;
 }
 .wl-act:hover { border-color: var(--text-faint); color: var(--text); }
-/* The open list's table is nested one level down, so the detail block is the
-   flex column that reaches the bottom and passes the height on to it. */
-#wl-detail:not(:empty) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 240px; }
-.wl-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.wl-detail-name { font-size: 15px; font-weight: 700; }
 .wl-edit { width: 230px; }
 
 /* ===== Tooltip bubble ==================================================== */

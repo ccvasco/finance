@@ -1256,23 +1256,24 @@ const Views = (() => {
   // navigating away and back keeps your selection; null = nothing loaded (and so
   // no API call is made until a list is explicitly selected).
   let wlSelected = null;
+  // Repaints the table of the load currently on screen (set by loadSelected).
+  let wlPaint = null;
+  let wlDismissBound = false;
 
-  function listCardHTML(l, isStarred) {
-    const preview = l.tickers.slice(0, 8).join(" · ") + (l.tickers.length > 8 ? " …" : "");
-    const foot = isStarred
-      ? `<span class="wl-card-tag">from ☆ stars</span>`
-      : `<span class="wl-card-actions">
-           <button class="wl-act" data-rename="${l.id}" title="Rename">✎</button>
-           <button class="wl-act" data-delete="${l.id}" title="Delete">🗑</button>
-         </span>`;
+  /* One row of the picker dropdown: just the name and its size, so the menu
+     stays a scannable list. Editing lives on the row's own buttons (revealed on
+     hover/focus) rather than on always-visible cards — the table below is what
+     the view is for, and the lists themselves shouldn't cost it any height. */
+  function listItemHTML(l, isStarred) {
+    const acts = isStarred ? "" : `
+      <span class="wl-menu-acts">
+        <button class="wl-act" data-rename="${escHTML(l.id)}" title="Rename">✎</button>
+        <button class="wl-act" data-delete="${escHTML(l.id)}" title="Delete">🗑</button>
+      </span>`;
     return `
-      <div class="wl-card" data-list="${escHTML(l.id)}">
-        <div class="wl-card-top">
-          <span class="wl-card-name">${escHTML(l.name)}</span>
-          <span class="wl-card-count">${l.tickers.length}</span>
-        </div>
-        <div class="wl-card-tickers">${escHTML(preview) || "—"}</div>
-        <div class="wl-card-foot">${foot}</div>
+      <div class="wl-menu-item${wlSelected === l.id ? " active" : ""}" data-list="${escHTML(l.id)}" role="option" tabindex="0">
+        <span class="wl-menu-name">${escHTML(l.name)}</span>
+        <span class="wl-menu-count">${l.tickers.length}</span>${acts}
       </div>`;
   }
 
@@ -1287,75 +1288,21 @@ const Views = (() => {
   }
 
   async function loadSelected(root, opts = {}) {
-    const detail = root.querySelector("#wl-detail");
-    if (!detail) return;
+    const tableEl = root.querySelector("#wl-table");
+    const statusEl = root.querySelector("#wl-status");
+    if (!tableEl) return;
     const sel = selectedSet();
-    if (!sel) { detail.innerHTML = ""; return; }
+    if (!sel) {
+      syncPicker(root);
+      if (statusEl) statusEl.innerHTML = "";
+      tableEl.innerHTML = pickerLists().length
+        ? `<div class="empty"><div class="big">★</div>Pick a watchlist above to load it.</div>`
+        : `<div class="empty"><div class="big">★</div>No watchlists yet.<div class="hint">Analyze tickers in the <b>Screener</b>, then click <b>💾 Save as watchlist</b> — or star ☆ individual stocks.</div></div>`;
+      return;
+    }
     const id = wlSelected;
     App.setExportTickers(sel.tickers);
-    detail.innerHTML = `
-      <div class="wl-detail-head">
-        <span class="wl-detail-name">${escHTML(sel.name)}</span>
-        <span class="view-sub">${sel.tickers.length} tickers</span>
-        <span class="scr-status" id="wl-status"></span>
-        <div class="spacer"></div>
-        <input class="input wl-edit" id="wl-edit" placeholder="Tickers — e.g. AAPL, MSFT"
-               title="Type one or more tickers (comma or space separated), then Add or Remove">
-        <button class="btn btn-sm" id="wl-add" title="Add these tickers to the list">+ Add</button>
-        <button class="btn btn-sm btn-ghost" id="wl-del" title="Remove these tickers from the list">− Remove</button>
-        <button class="btn btn-sm" id="wl-cols" title="Restore the default column order and auto-fit widths">⇔ Reset columns</button>
-        <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
-      </div>
-      ${legendBox()}
-      <div class="table-wrap fill" id="wl-table"></div>`;
-    hydrateFlagLegend(detail);
-    detail.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
-    detail.querySelector("#wl-cols").addEventListener("click", () => resetCols(paint));
-
-    // Bulk add/remove: parse the input like the top search box, mutate the
-    // list (stars for ★ Starred, the saved list otherwise) and re-render.
-    function editList(mode) {
-      const input = detail.querySelector("#wl-edit");
-      const arr = App.parseTickers(input.value);
-      if (!arr.length) { App.toast("Enter one or more tickers", "err"); return; }
-      const before = sel.tickers.slice();
-      let after;
-      if (id === STARRED_ID) {
-        if (mode === "add") arr.forEach((t) => { if (!Store.inWatchlist(t)) Store.toggleWatch(t); });
-        else arr.forEach((t) => Store.removeWatch(t));
-        after = Store.getWatchlist();
-      } else {
-        const l = mode === "add" ? Store.addToList(id, arr) : Store.removeFromList(id, arr);
-        if (!l) return;
-        after = l.tickers;
-      }
-      // Carry cached rows over to the new set signature so the table stays
-      // usable without a re-fetch; freshly added tickers are then fetched
-      // automatically by the cache-first load below.
-      const prev = peekRows(before);
-      if (prev && after.length) {
-        const byTicker = new Map(prev.map((r) => [r.ticker, r]));
-        cacheSet(after.join(","), after.map((t) =>
-          byTicker.get(t) || { ticker: t, error: "Not loaded — press ↻ Refresh" }));
-      }
-      const delta = Math.abs(after.length - before.length);
-      if (delta) {
-        App.toast(`${mode === "add" ? "Added" : "Removed"} ${delta} ticker${delta > 1 ? "s" : ""}`, "ok");
-      } else {
-        App.toast(mode === "add" ? "Already in the list" : "None of those are in the list", "err");
-      }
-      // re-render cards (counts) and restore the selection, without losing the
-      // reader's place — editing tickers is a routine edit to a long list
-      preserveScroll(() => watchlist(root));
-    }
-    detail.querySelector("#wl-add").addEventListener("click", () => editList("add"));
-    detail.querySelector("#wl-del").addEventListener("click", () => editList("remove"));
-    detail.querySelector("#wl-edit").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); editList("add"); }
-    });
-
-    const tableEl = detail.querySelector("#wl-table");
-    const statusEl = detail.querySelector("#wl-status");
+    syncPicker(root);
     if (!sel.tickers.length) {
       tableEl.innerHTML = `<div class="empty"><div class="hint">This watchlist is empty — add tickers above.</div></div>`;
       return;
@@ -1368,6 +1315,9 @@ const Views = (() => {
       wireTable(tableEl, view, paint);
       setChatContext("Watchlist · " + sel.name, lastRows);
     }
+    // The toolbar is wired once on the shell, so ⇔ Reset columns needs a handle
+    // on whichever load is currently on screen.
+    wlPaint = paint;
     const spin = spinHTML;
     const finishStatus = (fetched, fromCache, failedBatches) => {
       statusEl.innerHTML = doneStatusHTML(sel.tickers.length, fetched, fromCache, failedBatches);
@@ -1454,35 +1404,60 @@ const Views = (() => {
     }
   }
 
-  async function watchlist(root) {
-    render(root);
-    const lists = Store.getLists();
+  /* Every list the picker offers: ★ Starred first (when non-empty), then the
+     saved ones in Store order. */
+  function pickerLists() {
+    const out = [];
     const starred = Store.getWatchlist();
-    const cards = [];
-    if (starred.length) cards.push(listCardHTML({ id: STARRED_ID, name: "★ Starred", tickers: starred }, true));
-    lists.forEach((l) => cards.push(listCardHTML(l, false)));
+    if (starred.length) out.push({ id: STARRED_ID, name: "★ Starred", tickers: starred, starred: true });
+    Store.getLists().forEach((l) => out.push({ id: l.id, name: l.name, tickers: l.tickers, starred: false }));
+    return out;
+  }
 
-    root.innerHTML = `
-      <div class="view-head">
-        <div class="view-title">Watchlists</div>
-        <div class="view-sub">${lists.length} saved · select one to load</div>
-        <div class="spacer"></div>
-      </div>
-      ${cards.length
-        ? `<div class="wl-cards">${cards.join("")}</div>`
-        : `<div class="empty"><div class="big">★</div>No watchlists yet.<div class="hint">Analyze tickers in the <b>Screener</b>, then click <b>💾 Save as watchlist</b> — or star ☆ individual stocks.</div></div>`}
-      <div id="wl-detail"></div>`;
+  // Refresh the picker button's label + count to match the selection.
+  function syncPicker(root) {
+    const nameEl = root.querySelector("#wl-pick-name");
+    const countEl = root.querySelector("#wl-pick-count");
+    if (!nameEl) return;
+    const sel = selectedSet();
+    nameEl.textContent = sel ? sel.name : "Select a watchlist";
+    nameEl.classList.toggle("placeholder", !sel);
+    countEl.textContent = sel ? sel.tickers.length : "";
+  }
 
-    // Select + load on card click (ignoring clicks on the action buttons).
-    root.querySelectorAll(".wl-card").forEach((card) => {
-      card.addEventListener("click", (e) => {
+  function closeWlMenu(root) {
+    const menu = root.querySelector("#wl-menu");
+    if (menu) menu.classList.add("hidden");
+    const btn = root.querySelector("#wl-pick");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  /* Build (or rebuild) the dropdown's contents and wire its rows. Called on
+     open and after any rename/delete, so counts and names stay honest. */
+  function renderWlMenu(root) {
+    const menu = root.querySelector("#wl-menu");
+    if (!menu) return;
+    const lists = pickerLists();
+    menu.innerHTML = lists.length
+      ? lists.map((l) => listItemHTML(l, l.starred)).join("")
+      : `<div class="wl-menu-empty">No watchlists yet. Analyze tickers in the <b>Screener</b>, then <b>💾 Save as watchlist</b> — or star ☆ individual stocks.</div>`;
+
+    const select = (id) => {
+      wlSelected = id;
+      closeWlMenu(root);
+      syncPicker(root);
+      loadSelected(root);
+    };
+    menu.querySelectorAll(".wl-menu-item").forEach((item) => {
+      item.addEventListener("click", (e) => {
         if (e.target.closest("[data-rename],[data-delete]")) return;
-        wlSelected = card.dataset.list;
-        root.querySelectorAll(".wl-card").forEach((c) => c.classList.toggle("active", c === card));
-        loadSelected(root);
+        select(item.dataset.list);
+      });
+      item.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(item.dataset.list); }
       });
     });
-    root.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", async (e) => {
+    menu.querySelectorAll("[data-rename]").forEach((b) => b.addEventListener("click", async (e) => {
       e.stopPropagation();
       const id = b.dataset.rename;
       const l = Store.getList(id);
@@ -1492,27 +1467,128 @@ const Views = (() => {
       const dup = Store.findListByName(name);
       if (dup && dup.id !== id) { App.toast(`A watchlist named "${name}" already exists`, "err"); return; }
       Store.renameList(id, name);
-      watchlist(root);
+      renderWlMenu(root);
+      syncPicker(root);
     }));
-    root.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", (e) => {
+    menu.querySelectorAll("[data-delete]").forEach((b) => b.addEventListener("click", (e) => {
       e.stopPropagation();
       const id = b.dataset.delete;
       const l = Store.getList(id);
       if (!l || !confirm(`Delete watchlist "${l.name}"?`)) return;
-      if (wlSelected === id) wlSelected = null;
       Store.deleteList(id);
-      watchlist(root);
+      if (wlSelected === id) {
+        wlSelected = null;
+        loadSelected(root);   // clears the table back to the empty prompt
+      }
+      renderWlMenu(root);
+      syncPicker(root);
     }));
+  }
 
-    // Restore a still-valid selection after a re-render (rename/delete/nav
-    // return) — from cache only, so returning to the tab never re-fetches.
-    if (wlSelected && selectedSet()) {
-      const card = [...root.querySelectorAll(".wl-card")].find((c) => c.dataset.list === wlSelected);
-      if (card) card.classList.add("active");
-      loadSelected(root);
-    } else {
-      wlSelected = null;
+  /* The list picker is a dropdown rather than a grid of cards: the table is the
+     point of this view, so the lists get one header row and give every
+     remaining pixel to the rows below. */
+  async function watchlist(root) {
+    render(root);
+    root.innerHTML = `
+      <div class="view-head wl-head">
+        <div class="wl-picker">
+          <button class="wl-picker-btn" id="wl-pick" aria-haspopup="listbox" aria-expanded="false"
+                  title="Choose a watchlist — rename or delete from the same menu">
+            <span class="wl-picker-name placeholder" id="wl-pick-name">Select a watchlist</span>
+            <span class="wl-picker-count" id="wl-pick-count"></span>
+            <span class="wl-picker-caret">▾</span>
+          </button>
+          <div class="wl-menu hidden" id="wl-menu" role="listbox"></div>
+        </div>
+        <span class="scr-status" id="wl-status"></span>
+        <div class="spacer"></div>
+        <input class="input wl-edit" id="wl-edit" placeholder="Tickers — e.g. AAPL, MSFT"
+               title="Type one or more tickers (comma or space separated), then Add or Remove">
+        <button class="btn btn-sm" id="wl-add" title="Add these tickers to the list">+ Add</button>
+        <button class="btn btn-sm btn-ghost" id="wl-del" title="Remove these tickers from the list">− Remove</button>
+        <button class="btn btn-sm" id="wl-cols" title="Restore the default column order and auto-fit widths">⇔ Reset columns</button>
+        <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
+      </div>
+      ${legendBox()}
+      <div class="table-wrap fill" id="wl-table"></div>`;
+    hydrateFlagLegend(root);
+    renderWlMenu(root);
+    syncPicker(root);
+
+    const pickBtn = root.querySelector("#wl-pick");
+    pickBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const menu = root.querySelector("#wl-menu");
+      const opening = menu.classList.contains("hidden");
+      if (opening) renderWlMenu(root);   // counts may have changed since last open
+      menu.classList.toggle("hidden", !opening);
+      pickBtn.setAttribute("aria-expanded", String(opening));
+    });
+    // Dismiss on an outside click or Escape, like the other transient popups.
+    // Bound once for the app's lifetime — the view re-renders on every list
+    // edit and nav return, and re-binding here would stack duplicate handlers.
+    if (!wlDismissBound) {
+      wlDismissBound = true;
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest(".wl-picker")) closeWlMenu(document);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeWlMenu(document);
+      });
     }
+
+    root.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
+    root.querySelector("#wl-cols").addEventListener("click", () => resetCols(() => wlPaint && wlPaint()));
+
+    // Bulk add/remove: parse the input like the top search box, mutate the
+    // selected list (stars for ★ Starred, the saved list otherwise) and reload.
+    function editList(mode) {
+      const sel = selectedSet();
+      if (!sel) { App.toast("Select a watchlist first", "err"); return; }
+      const id = wlSelected;
+      const arr = App.parseTickers(root.querySelector("#wl-edit").value);
+      if (!arr.length) { App.toast("Enter one or more tickers", "err"); return; }
+      const before = sel.tickers.slice();
+      let after;
+      if (id === STARRED_ID) {
+        if (mode === "add") arr.forEach((t) => { if (!Store.inWatchlist(t)) Store.toggleWatch(t); });
+        else arr.forEach((t) => Store.removeWatch(t));
+        after = Store.getWatchlist();
+      } else {
+        const l = mode === "add" ? Store.addToList(id, arr) : Store.removeFromList(id, arr);
+        if (!l) return;
+        after = l.tickers;
+      }
+      // Carry cached rows over to the new set signature so the table stays
+      // usable without a re-fetch; freshly added tickers are then fetched
+      // automatically by the cache-first load below.
+      const prev = peekRows(before);
+      if (prev && after.length) {
+        const byTicker = new Map(prev.map((r) => [r.ticker, r]));
+        cacheSet(after.join(","), after.map((t) =>
+          byTicker.get(t) || { ticker: t, error: "Not loaded — press ↻ Refresh" }));
+      }
+      const delta = Math.abs(after.length - before.length);
+      if (delta) {
+        App.toast(`${mode === "add" ? "Added" : "Removed"} ${delta} ticker${delta > 1 ? "s" : ""}`, "ok");
+      } else {
+        App.toast(mode === "add" ? "Already in the list" : "None of those are in the list", "err");
+      }
+      // Reload the table without losing the reader's place — editing tickers is
+      // a routine edit to a long list.
+      preserveScroll(() => loadSelected(root));
+    }
+    root.querySelector("#wl-add").addEventListener("click", () => editList("add"));
+    root.querySelector("#wl-del").addEventListener("click", () => editList("remove"));
+    root.querySelector("#wl-edit").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); editList("add"); }
+    });
+
+    // Restore a still-valid selection after a re-render (nav return) — from
+    // cache only, so returning to the tab never re-fetches.
+    if (wlSelected && selectedSet()) loadSelected(root);
+    else { wlSelected = null; loadSelected(root); }
   }
 
   /* =================== DASHBOARD ===================== */
