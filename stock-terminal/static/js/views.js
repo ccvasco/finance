@@ -1903,6 +1903,17 @@ const Views = (() => {
           <div><div>Watchlist data</div><div class="desc">${Store.getWatchlist().length} symbols stored in this browser</div></div>
           <button class="btn btn-sm btn-ghost" id="set-wipe">Clear watchlist</button>
         </div>
+        <div class="set-row">
+          <div><div>Backup</div><div class="desc">Save every watchlist, starred ticker and layout setting to a JSON file</div></div>
+          <button class="btn btn-sm" id="set-backup">↓ Download backup</button>
+        </div>
+        <div class="set-row">
+          <div><div>Restore</div><div class="desc">Load a backup file, replacing what's in the app now</div></div>
+          <div>
+            <input type="file" id="set-restore-file" accept="application/json,.json" hidden>
+            <button class="btn btn-sm btn-ghost" id="set-restore">↑ Restore from backup…</button>
+          </div>
+        </div>
       </div>`;
     root.querySelectorAll("[data-accent]").forEach((sw) =>
       sw.addEventListener("click", () => { Store.setSetting("accent", sw.dataset.accent); App.applyAccent(); settings(root); }));
@@ -1919,6 +1930,51 @@ const Views = (() => {
     setNum("#set-cache-sets", "cacheSets", 25, 1);
     root.querySelector("#set-cache").addEventListener("click", async () => { await API.clearCache(); clearRowsCache(); App.toast("Cache cleared", "ok"); });
     root.querySelector("#set-wipe").addEventListener("click", () => { if (confirm("Clear watchlist?")) { Store.clearWatchlist(); settings(root); } });
+
+    root.querySelector("#set-backup").addEventListener("click", async () => {
+      try {
+        const doc = await Store.exportBackup();
+        const n = (doc.state["st.lists"] || []).length;
+        const stamp = new Date().toISOString().slice(0, 10);
+        API.saveBlob(new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" }),
+                     `bibes-terminal-backup-${stamp}.json`);
+        App.toast(`Backed up ${n} watchlist${n === 1 ? "" : "s"}`, "ok");
+      } catch (e) {
+        App.toast(`Backup failed: ${e.message}`, "err");
+      }
+    });
+
+    const restoreFile = root.querySelector("#set-restore-file");
+    root.querySelector("#set-restore").addEventListener("click", () => restoreFile.click());
+    restoreFile.addEventListener("change", async () => {
+      const file = restoreFile.files && restoreFile.files[0];
+      restoreFile.value = "";     // let the same file be chosen again later
+      if (!file) return;
+      let parsed;
+      try {
+        parsed = Store.parseBackup(await file.text());
+      } catch (e) {
+        App.toast(e.message, "err");
+        return;
+      }
+      // Spell out what's about to land, and what's about to go: a restore is
+      // the one action here that can throw away more than it adds.
+      const { lists, tickers, starred, exportedAt } = parsed.summary;
+      const when = exportedAt ? `\nTaken ${exportedAt.slice(0, 10)}.` : "";
+      const now = Store.getLists().length;
+      if (!confirm(
+        `Restore ${lists} watchlist${lists === 1 ? "" : "s"} (${tickers} tickers) `
+        + `and ${starred} starred ticker${starred === 1 ? "" : "s"}?${when}\n\n`
+        + `This replaces the ${now} watchlist${now === 1 ? "" : "s"} currently in the app. `
+        + `The state being replaced is saved to state-backups/ on the server first.`)) return;
+      try {
+        await Store.applyBackup(parsed);
+        App.toast(`Restored ${lists} watchlist${lists === 1 ? "" : "s"}`, "ok");
+        App.refreshCurrent();
+      } catch (e) {
+        App.toast(`Restore failed: ${e.message}`, "err");
+      }
+    });
   }
 
   /* ===================== ANALYST CHAT — TAB CONTEXT ==================== */

@@ -1052,6 +1052,147 @@ await atest("never adopts an empty server reply", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Store — backup / restore
+// ---------------------------------------------------------------------------
+section("Store — backup / restore");
+
+const goodBackup = (state) => JSON.stringify({
+  kind: "bibes-terminal-state", version: 1,
+  exportedAt: "2026-07-18T12:00:00.000Z", state,
+});
+
+test("rejects a file that isn't JSON", () => {
+  assert.throws(() => Store.parseBackup("not json at all"), /valid JSON/);
+});
+
+test("rejects JSON that isn't one of our backups", () => {
+  assert.throws(() => Store.parseBackup('{"hello":"world"}'), /isn't a Bibes Terminal backup/);
+});
+
+test("rejects a bare array", () => {
+  assert.throws(() => Store.parseBackup("[1,2,3]"), /isn't a Bibes Terminal backup/);
+});
+
+test("rejects a backup from a newer app version", () => {
+  const doc = JSON.stringify({ kind: "bibes-terminal-state", version: 99, state: { "st.lists": [] } });
+  assert.throws(() => Store.parseBackup(doc), /newer version/);
+});
+
+test("rejects malformed watchlists rather than importing them", () => {
+  assert.throws(() => Store.parseBackup(goodBackup({ "st.lists": "oops" })), /malformed/);
+});
+
+test("rejects a backup with none of our keys", () => {
+  assert.throws(() => Store.parseBackup(goodBackup({ "some.other.key": 1 })), /nothing to restore/);
+});
+
+test("summarizes what a backup holds", () => {
+  const { summary } = Store.parseBackup(goodBackup({
+    "st.lists": [{ id: "a", name: "one", tickers: ["AAPL", "MSFT"] },
+                 { id: "b", name: "two", tickers: ["NVDA"] }],
+    "st.watchlist": ["AAPL", "TSLA"],
+  }));
+  assert.equal(summary.lists, 2);
+  assert.equal(summary.tickers, 3);
+  assert.equal(summary.starred, 2);
+  assert.equal(summary.exportedAt, "2026-07-18T12:00:00.000Z");
+});
+
+test("tolerates a list with no tickers array when counting", () => {
+  const { summary } = Store.parseBackup(goodBackup({ "st.lists": [{ id: "a", name: "empty" }] }));
+  assert.equal(summary.tickers, 0);
+});
+
+test("clears keys the backup omits instead of leaving them behind", () => {
+  const { patch } = Store.parseBackup(goodBackup({ "st.lists": [] }));
+  assert.deepEqual(patch["st.lists"], []);
+  assert.equal(patch["st.watchlist"], null);
+  assert.equal(patch["st.colWidths"], null);
+});
+
+await atest("applyBackup pushes to the server and adopts the state", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("before", ["OLD"]);
+  Store.toggleWatch("OLD");
+  const sent = [];
+  const parsed = Store.parseBackup(goodBackup({
+    "st.lists": [{ id: "x", name: "after", tickers: ["NEW"] }],
+  }));
+  await withAPI({ putState: async (p, opts) => { sent.push({ p, opts }); } }, async () => {
+    await Store.applyBackup(parsed);
+  });
+  assert.deepEqual(Store.getLists().map((l) => l.name), ["after"]);
+  // The omitted starred list must actually be cleared, not left at its old value.
+  assert.deepEqual(Store.getWatchlist(), []);
+  assert.equal(sent.length, 1);
+  // A restore must always be undoable, even right after a routine snapshot.
+  assert.equal(sent[0].opts.forceBackup, true);
+});
+
+await atest("restoring clears stale values out of localStorage too", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.toggleWatch("STALE");
+  assert(JSON.parse(localStorage.getItem("st.watchlist")).includes("STALE"));
+  const parsed = Store.parseBackup(goodBackup({ "st.lists": [] }));
+  await withAPI({ putState: async () => {} }, async () => { await Store.applyBackup(parsed); });
+  assert.deepEqual(JSON.parse(localStorage.getItem("st.watchlist")), []);
+});
+
+await atest("exportBackup captures server state, not this tab's copy", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("local-only", ["STALE"]);
+  let doc;
+  await withAPI({
+    getState: async () => ({
+      "st.lists": [{ id: "s", name: "from-server", tickers: ["AAPL"] }],
+      "st.rowsCache": [1, 2, 3],
+    }),
+  }, async () => { doc = await Store.exportBackup(); });
+  assert.equal(doc.kind, "bibes-terminal-state");
+  assert.deepEqual(doc.state["st.lists"].map((l) => l.name), ["from-server"]);
+  // The row cache is megabytes of refetchable data — it has no place in a backup.
+  assert.equal(doc.state["st.rowsCache"], undefined);
+});
+
+await atest("exportBackup falls back to local state when the server is down", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("offline", ["AAPL"]);
+  let doc;
+  await withAPI({ getState: async () => { throw new Error("offline"); } },
+    async () => { doc = await Store.exportBackup(); });
+  assert.deepEqual(doc.state["st.lists"].map((l) => l.name), ["offline"]);
+});
+
+await atest("a backup survives a full export → restore round trip", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("keepers", ["AAPL", "MSFT"]);
+  Store.saveList("others", ["NVDA"]);
+  Store.toggleWatch("TSLA");
+  const server = {
+    "st.lists": Store.getLists(), "st.watchlist": Store.getWatchlist(),
+  };
+  let doc;
+  await withAPI({ getState: async () => server }, async () => { doc = await Store.exportBackup(); });
+
+  // Wipe everything, as if the state had been clobbered.
+  Store.clearWatchlist();
+  Store.getLists().forEach((l) => Store.deleteList(l.id));
+  assert.equal(Store.getLists().length, 0);
+
+  await withAPI({ putState: async () => {} }, async () => {
+    await Store.applyBackup(Store.parseBackup(JSON.stringify(doc)));
+  });
+  assert.deepEqual(Store.getLists().map((l) => l.name), ["keepers", "others"]);
+  assert.deepEqual(Store.getLists().map((l) => l.tickers), [["AAPL", "MSFT"], ["NVDA"]]);
+  assert.deepEqual(Store.getWatchlist(), ["TSLA"]);
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${"─".repeat(50)}`);

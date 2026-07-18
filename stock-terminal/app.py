@@ -112,7 +112,7 @@ def load_state():
         return _read_state_unlocked()
 
 
-def _backup_state_unlocked(force=False):
+def _backup_state_unlocked(force=False, tag=""):
     """Snapshot state.json into state-backups/ before it gets overwritten.
 
     Clients sync last-write-wins with no merge, so a single client holding a
@@ -121,8 +121,9 @@ def _backup_state_unlocked(force=False):
     Backups are the cheap insurance: one timestamped copy at most every
     _STATE_BACKUP_MIN_GAP_S, newest _STATE_BACKUPS_KEPT kept.
 
-    `force` skips the rate limit, for one-off events too important to let a
-    recent snapshot suppress (an unparseable file about to be replaced)."""
+    `force` skips that rate limit, for one-off events too important to let a
+    recent snapshot suppress. `tag` labels the file so the reason it exists is
+    still obvious months later."""
     if not os.path.exists(STATE_PATH):
         return
     try:
@@ -134,21 +135,24 @@ def _backup_state_unlocked(force=False):
             if time.time() - os.path.getmtime(newest) < _STATE_BACKUP_MIN_GAP_S:
                 return
         stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        suffix = "-corrupt" if force else ""
-        shutil.copy2(STATE_PATH, os.path.join(_STATE_BACKUP_DIR, f"state-{stamp}{suffix}.json"))
+        shutil.copy2(STATE_PATH, os.path.join(_STATE_BACKUP_DIR, f"state-{stamp}{tag}.json"))
         for old in backups[:-(_STATE_BACKUPS_KEPT - 1) or None]:
             os.remove(os.path.join(_STATE_BACKUP_DIR, old))
     except OSError:
         pass  # a failed backup must never block the save itself
 
 
-def merge_state(patch):
+def merge_state(patch, force_backup=False):
     """Merge top-level keys of `patch` into the on-disk state and return it.
 
     A key whose value is None is deleted. The write goes through a temp file +
     os.replace so a crash mid-write can't leave a half-written state.json — the
     reader above would recover from that, but it would cost the user their
-    watchlists."""
+    watchlists.
+
+    `force_backup` bypasses the snapshot rate limit. Restoring a backup sets it:
+    that's precisely when the state being overwritten is the one you might want
+    back, so it must not be the write a recent snapshot suppresses."""
     if not isinstance(patch, dict):
         raise ValueError("state must be an object")
     with _STATE_LOCK:
@@ -157,10 +161,11 @@ def merge_state(patch):
         except StateUnreadable:
             # Start from scratch rather than refusing every future write, but
             # keep the damaged file — it may still be salvageable by hand.
-            _backup_state_unlocked(force=True)
+            _backup_state_unlocked(force=True, tag="-corrupt")
             state = {}
         else:
-            _backup_state_unlocked()
+            _backup_state_unlocked(force=force_backup,
+                                   tag="-pre-restore" if force_backup else "")
         for k, v in patch.items():
             if v is None:
                 state.pop(k, None)
@@ -2913,7 +2918,8 @@ class Handler(BaseHTTPRequestHandler):
                     filename=f"{tk}-DCF-{stamp}.xlsx")
             if path == "/api/state":
                 try:
-                    state = merge_state(payload.get("state"))
+                    state = merge_state(payload.get("state"),
+                                        force_backup=bool(payload.get("force_backup")))
                 except ValueError as e:
                     return self._send_json({"error": str(e)}, 400)
                 return self._send_json({"ok": True, "state": state})

@@ -148,6 +148,89 @@ const Store = (() => {
     notify();
   }
 
+  /* ---- backup / restore -------------------------------------------------
+
+     A backup carries the durable, user-authored state: watchlists, starred
+     tickers, settings, column layout. Deliberately left out are the screener
+     row cache (megabytes of refetchable Yahoo data) and the chat log — rolling
+     a conversation back to match an old watchlist file would surprise more
+     than it helps. */
+  const BACKUP_KIND = "bibes-terminal-state";
+  const BACKUP_VERSION = 1;
+  const BACKUP_KEYS = [KEYS.wl, KEYS.lists, KEYS.settings, KEYS.last, KEYS.colw, KEYS.colorder];
+  // What a key falls back to when a backup omits it — restoring has to be able
+  // to clear a value, not just overwrite one.
+  const BACKUP_EMPTY = {
+    [KEYS.wl]: [], [KEYS.lists]: [], [KEYS.settings]: {},
+    [KEYS.last]: [], [KEYS.colw]: {}, [KEYS.colorder]: [],
+  };
+
+  /* Build a backup document from the *server's* state rather than this tab's
+     memory — the server is the shared truth, and a tab open a while may lag it.
+     Falls back to local values only when the server can't be reached. */
+  async function exportBackup() {
+    let state = null;
+    try { state = await API.getState(); } catch { state = null; }
+    if (!state || !Object.keys(state).length) {
+      state = {};
+      BACKUP_KEYS.forEach((k) => { const v = read(k, null); if (v != null) state[k] = v; });
+    }
+    const picked = {};
+    BACKUP_KEYS.forEach((k) => { if (state[k] != null) picked[k] = state[k]; });
+    return { kind: BACKUP_KIND, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), state: picked };
+  }
+
+  /* Validate backup file text. Returns { patch, summary }, or throws an Error
+     whose message is meant to be shown to the user as-is.
+
+     Pure by design: it never touches live state, so a caller can parse, show
+     the user what's in the file, and only then decide to apply it. */
+  function parseBackup(text) {
+    let doc;
+    try { doc = JSON.parse(text); } catch { throw new Error("That file isn't valid JSON."); }
+    const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+    if (!isObj(doc) || doc.kind !== BACKUP_KIND) throw new Error("That file isn't a Bibes Terminal backup.");
+    if (Number(doc.version) > BACKUP_VERSION) {
+      throw new Error(`That backup came from a newer version of the app (v${doc.version}).`);
+    }
+    const state = doc.state;
+    if (!isObj(state)) throw new Error("That backup has no saved state in it.");
+    const lists = state[KEYS.lists], starred = state[KEYS.wl];
+    if (lists !== undefined && !Array.isArray(lists)) throw new Error("That backup's watchlists are malformed.");
+    if (starred !== undefined && !Array.isArray(starred)) throw new Error("That backup's starred tickers are malformed.");
+    if (!BACKUP_KEYS.some((k) => state[k] !== undefined)) throw new Error("That backup contains nothing to restore.");
+
+    // Keys the file omits are cleared rather than left alone: restoring means
+    // ending up matching the backup, not merged with whatever was here before.
+    const patch = {};
+    BACKUP_KEYS.forEach((k) => { patch[k] = state[k] === undefined ? null : state[k]; });
+    return {
+      patch,
+      summary: {
+        lists: Array.isArray(lists) ? lists.length : 0,
+        tickers: Array.isArray(lists)
+          ? lists.reduce((n, l) => n + ((l && Array.isArray(l.tickers) ? l.tickers : []).length), 0) : 0,
+        starred: Array.isArray(starred) ? starred.length : 0,
+        exportedAt: typeof doc.exportedAt === "string" ? doc.exportedAt : null,
+      },
+    };
+  }
+
+  /* Write a parsed backup through to the server, then adopt it here. Asks the
+     server to snapshot unconditionally: a restore is exactly the moment you
+     might discover you picked the wrong file, so it must stay undoable even if
+     a routine snapshot was taken moments ago. */
+  async function applyBackup(parsed) {
+    await API.putState(parsed.patch, { forceBackup: true });
+    // Turn the patch's nulls back into empty values before adopting it —
+    // applyState only assigns keys it's given, so the cleared ones would
+    // otherwise keep their old values in memory and localStorage.
+    const next = {};
+    BACKUP_KEYS.forEach((k) => { next[k] = parsed.patch[k] === null ? BACKUP_EMPTY[k] : parsed.patch[k]; });
+    applyState(next);
+    notify();
+  }
+
   // Serialized view of everything hydrate() can change — cheap way to tell
   // whether a resync actually brought anything new in.
   const snapshot = () =>
@@ -191,6 +274,7 @@ const Store = (() => {
   return {
     hydrate,
     resync,
+    exportBackup, parseBackup, applyBackup,
     onChange(fn) { listeners.push(fn); },
 
     // -- watchlist ---------------------------------------------------------

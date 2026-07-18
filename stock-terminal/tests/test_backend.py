@@ -5190,6 +5190,21 @@ class TestStateBackups(unittest.TestCase):
             app.merge_state({"a": 3})
         self.assertEqual(len([f for f in self._backups() if f.endswith("-corrupt.json")]), 1)
 
+    def test_restore_always_snapshots_what_it_replaces(self):
+        # The write before a restore is often seconds old (the app autosaves),
+        # so without force the rate limit would drop the one snapshot that
+        # matters — the state the user may want back.
+        with patch.object(app, "_STATE_BACKUP_MIN_GAP_S", 900):
+            app.merge_state({"st.lists": ["precious"]})
+            app.merge_state({"st.lists": ["precious", "more"]})   # coalesced
+            before = len(self._backups())
+            app.merge_state({"st.lists": ["restored"]}, force_backup=True)
+        made = [f for f in self._backups() if f.endswith("-pre-restore.json")]
+        self.assertEqual(len(self._backups()), before + 1)
+        self.assertEqual(len(made), 1)
+        with open(os.path.join(self.backup_dir, made[0])) as fh:
+            self.assertEqual(json.load(fh), {"st.lists": ["precious", "more"]})
+
     def test_backup_failure_does_not_block_save(self):
         with patch.object(app.shutil, "copy2", side_effect=OSError("disk full")):
             app.merge_state({"a": 1})

@@ -5,15 +5,9 @@ const API = (() => {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     return r.json();
   }
-  // POST a JSON body to `path`, then save the returned spreadsheet as `filename`.
-  async function downloadXlsx(path, body, filename) {
-    const r = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Export failed");
-    const url = URL.createObjectURL(await r.blob());
+  // Hand a blob to the browser as a download named `filename`.
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
@@ -22,7 +16,18 @@ const API = (() => {
     a.remove();
     URL.revokeObjectURL(url);
   }
+  // POST a JSON body to `path`, then save the returned spreadsheet as `filename`.
+  async function downloadXlsx(path, body, filename) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Export failed");
+    saveBlob(await r.blob(), filename);
+  }
   return {
+    saveBlob,
     health: () => get("/api/health"),
     // Static UI reference data (S1 flag legend), sourced from the grader.
     meta: () => get("/api/meta"),
@@ -65,12 +70,16 @@ const API = (() => {
       return (await get("/api/state")).state || {};
     },
     // Merge `patch` ({storageKey: value}) into the server's state. A null value
-    // deletes that key.
-    async putState(patch) {
+    // deletes that key. `forceBackup` makes the server snapshot what it's about
+    // to replace even if it snapshotted recently — for restores, where the
+    // state being overwritten is the thing you may want back.
+    async putState(patch, { forceBackup = false } = {}) {
+      const body = { state: patch };
+      if (forceBackup) body.force_backup = true;
       const r = await fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state: patch }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
     },

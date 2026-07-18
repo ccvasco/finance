@@ -183,7 +183,16 @@ Export any set of tickers to `.xlsx` with three sheets:
 - **Batch interval** — pause between batches in milliseconds (default 400); raise it to be gentler on the server/Yahoo.
 - **Cached result sets** — how many analyzed ticker-sets to keep in memory (default 25); *each set caches all of its tickers*, so a 500-ticker analysis is one fully-cached set.
 - **Clear cache** — clears both the server-side Yahoo cache and this browser's cached results.
-All settings persist in `localStorage`.
+- **Download backup** — saves every watchlist, starred ticker, setting and column
+  layout to a JSON file. Contents come from the server, so the file matches what
+  every browser sees, not just the tab you clicked in.
+- **Restore from backup** — loads such a file back, replacing what's in the app.
+  The file is validated before anything changes (a non-backup is rejected with an
+  explanation and no side effects), you're shown what it holds and asked to
+  confirm, and the state being replaced is snapshotted to `state-backups/` first —
+  so restoring the wrong file is itself undoable.
+
+Settings persist server-side in `state.json`, cached in `localStorage`.
 
 ---
 
@@ -317,8 +326,11 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   otherwise N/A).
 - **Performance** — price-only returns (split-adjusted, dividend-unadjusted).
   Total return for dividend payers is higher than shown.
-- **Watchlist and settings** — stored in your browser's `localStorage`.
-  Clearing site data resets them.
+- **Watchlist and settings** — the server's `state.json` is the shared source of
+  truth, mirrored into each browser's `localStorage` as a cache. Every write
+  snapshots the previous state into `state-backups/` (newest 20). Both paths are
+  gitignored and live on one disk, so use **Settings → Download backup** for
+  anything you'd hate to lose.
 - **Altman Z-Score** — designed for manufacturers; ignored entirely for
   financials, REITs and mortgage REITs (structurally meaningless for
   balance-sheet businesses), and softened to an advisory flag rather than a
