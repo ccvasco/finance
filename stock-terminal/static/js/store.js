@@ -148,8 +148,49 @@ const Store = (() => {
     notify();
   }
 
+  // Serialized view of everything hydrate() can change — cheap way to tell
+  // whether a resync actually brought anything new in.
+  const snapshot = () =>
+    JSON.stringify([watchlist, lists, lastTickers, colWidths, colOrder, settings]);
+
+  /* Re-pull shared state when this tab returns to the foreground.
+
+     hydrate() runs once at load, so a tab left open all day keeps serving its
+     load-time copy. That matters because writes are whole-value and
+     last-one-wins: editing a list here would push this tab's stale `lists`
+     array over everything the other browser did meanwhile. Re-syncing on focus
+     narrows that window to a single visit.
+
+     Returns true only if something actually changed, so callers can skip a
+     re-render — and the scroll reset that comes with it — in the common case
+     where the tab was already current. */
+  async function resync() {
+    // Land our own queued edits first: applyState() below overwrites memory, so
+    // an unpushed local change would otherwise lose to the server's older copy.
+    clearTimeout(pushTimer);
+    await push();
+    if (pending.size) return false;   // push failed — server is unreachable
+
+    let state;
+    try {
+      state = await API.getState();
+    } catch {
+      return false;
+    }
+    // An empty server is never worth adopting: it means the state file went
+    // missing, and this tab's copy is the better of the two.
+    if (!Object.keys(state).length) return false;
+
+    const before = snapshot();
+    applyState(state);
+    if (snapshot() === before) return false;
+    notify();
+    return true;
+  }
+
   return {
     hydrate,
+    resync,
     onChange(fn) { listeners.push(fn); },
 
     // -- watchlist ---------------------------------------------------------

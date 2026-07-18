@@ -5154,6 +5154,42 @@ class TestStateBackups(unittest.TestCase):
         with open(os.path.join(self.backup_dir, backups[-1])) as fh:
             self.assertEqual(json.load(fh), {"n": 4})   # newest survives
 
+    def test_missing_file_reads_as_empty(self):
+        # A genuinely absent file is how a first run looks, and the client is
+        # meant to answer that by seeding from its own localStorage.
+        self.assertEqual(app.load_state(), {})
+
+    def test_corrupt_file_raises_instead_of_reading_empty(self):
+        app.merge_state({"st.lists": [1, 2, 3]})
+        with open(app.STATE_PATH, "w", encoding="utf-8") as fh:
+            fh.write("{ this is not json")
+        # Must not look like "empty" — that would invite a client to overwrite
+        # the real state with its stale cache.
+        with self.assertRaises(app.StateUnreadable):
+            app.load_state()
+
+    def test_corrupt_file_is_preserved_on_next_write(self):
+        app.merge_state({"st.lists": [1, 2, 3]})
+        with open(app.STATE_PATH, "w", encoding="utf-8") as fh:
+            fh.write("{ this is not json")
+        app.merge_state({"st.lists": ["fresh"]})
+        corrupt = [f for f in self._backups() if f.endswith("-corrupt.json")]
+        self.assertEqual(len(corrupt), 1)
+        with open(os.path.join(self.backup_dir, corrupt[0])) as fh:
+            self.assertEqual(fh.read(), "{ this is not json")
+        self.assertEqual(app.load_state(), {"st.lists": ["fresh"]})
+
+    def test_corrupt_backup_ignores_the_rate_limit(self):
+        # A snapshot taken seconds ago must not suppress preserving a damaged
+        # file — that's the one case where the gap would cost real data.
+        with patch.object(app, "_STATE_BACKUP_MIN_GAP_S", 900):
+            app.merge_state({"a": 1})
+            app.merge_state({"a": 2})           # coalesced, no new snapshot
+            with open(app.STATE_PATH, "w", encoding="utf-8") as fh:
+                fh.write("<corrupt>")
+            app.merge_state({"a": 3})
+        self.assertEqual(len([f for f in self._backups() if f.endswith("-corrupt.json")]), 1)
+
     def test_backup_failure_does_not_block_save(self):
         with patch.object(app.shutil, "copy2", side_effect=OSError("disk full")):
             app.merge_state({"a": 1})

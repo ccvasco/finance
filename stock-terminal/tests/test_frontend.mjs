@@ -22,6 +22,11 @@ globalThis.localStorage = {
   clear: () => { for (const k of Object.keys(_ls)) delete _ls[k]; },
 };
 
+// store.js registers a `pagehide` handler at load time to flush queued writes.
+// Node has no window, so give it one to bind to — without this the whole file
+// throws on import.
+globalThis.window = { addEventListener: () => {} };
+
 // ---------------------------------------------------------------------------
 // Load modules via dynamic import (they use const at top level)
 // ---------------------------------------------------------------------------
@@ -950,6 +955,100 @@ test("column order tolerates junk in localStorage", () => {
   localStorage.setItem("st.colOrder", "[not json");
   loadJS("store.js");   // Store hydrates on load — re-run that read path
   assert.deepEqual(Store.getColOrder(), []);
+});
+
+// ---------------------------------------------------------------------------
+// Store — resync (foreground refresh of shared state)
+// ---------------------------------------------------------------------------
+section("Store — resync");
+
+async function atest(name, fn) {
+  try {
+    await fn();
+    console.log(`  ✓  ${name}`);
+    passed++;
+  } catch (e) {
+    console.error(`  ✗  ${name}`);
+    console.error(`     ${e.message}`);
+    failures.push({ name, msg: e.message });
+    failed++;
+  }
+}
+
+// Swap in a fake API for the duration of one test; restore whatever was there.
+async function withAPI(stub, fn) {
+  const real = globalThis.API;
+  globalThis.API = { ...real, ...stub };
+  try { await fn(); } finally { globalThis.API = real; }
+}
+
+await atest("adopts newer server state and reports the change", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("mine", ["AAPL"]);
+  await withAPI({
+    putState: async () => ({}),
+    getState: async () => ({ "st.lists": [{ id: "x", name: "theirs", tickers: ["MSFT", "NVDA"] }] }),
+  }, async () => {
+    assert.equal(await Store.resync(), true);
+  });
+  assert.deepEqual(Store.getLists().map((l) => l.name), ["theirs"]);
+});
+
+await atest("reports no change when the server matches (skips re-render)", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("same", ["AAPL"]);
+  const mine = Store.getLists();
+  await withAPI({
+    putState: async () => ({}),
+    getState: async () => ({ "st.lists": mine, "st.watchlist": Store.getWatchlist() }),
+  }, async () => {
+    assert.equal(await Store.resync(), false);
+  });
+});
+
+await atest("flushes a queued local edit before pulling", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  const pushed = [];
+  await withAPI({
+    putState: async (batch) => { pushed.push(batch); return {}; },
+    // Server replies with the state as it was *before* our queued edit.
+    getState: async () => ({ "st.watchlist": [] }),
+  }, async () => {
+    Store.toggleWatch("URGENT");          // queued behind the 400ms debounce
+    await Store.resync();
+  });
+  // The edit must reach the server rather than being silently reverted.
+  assert.equal(pushed.length, 1);
+  assert.deepEqual(pushed[0]["st.watchlist"], ["URGENT"]);
+});
+
+await atest("keeps local state when the server is unreachable", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.toggleWatch("KEEP");
+  await withAPI({
+    putState: async () => { throw new Error("offline"); },
+    getState: async () => { throw new Error("offline"); },
+  }, async () => {
+    assert.equal(await Store.resync(), false);
+  });
+  assert(Store.inWatchlist("KEEP"));
+});
+
+await atest("never adopts an empty server reply", async () => {
+  localStorage.clear();
+  loadJS("store.js");
+  Store.saveList("precious", ["AAPL", "MSFT"]);
+  await withAPI({
+    putState: async () => ({}),
+    getState: async () => ({}),          // state file vanished server-side
+  }, async () => {
+    assert.equal(await Store.resync(), false);
+  });
+  assert.deepEqual(Store.getLists().map((l) => l.name), ["precious"]);
 });
 
 // ---------------------------------------------------------------------------

@@ -83,42 +83,59 @@ _STATE_BACKUP_MIN_GAP_S = 15 * 60
 _STATE_LOCK = threading.Lock()
 
 
+class StateUnreadable(Exception):
+    """state.json exists but couldn't be parsed."""
+
+
 def _read_state_unlocked():
+    """Load state.json. Returns {} when the file is *absent*, raises
+    StateUnreadable when it exists but won't parse.
+
+    The distinction matters: an empty reply tells the client the server has
+    nothing yet, and the client answers that by uploading its own localStorage
+    — so reporting a corrupt file as "empty" would let a browser's stale cache
+    overwrite the real state instead of the other way round."""
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
-        # Missing or corrupt state is not fatal — the UI just starts empty and
-        # the next write lays down a good file.
+    except FileNotFoundError:
         return {}
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        raise StateUnreadable(f"{STATE_PATH}: {e}") from e
+    return data if isinstance(data, dict) else {}
 
 
 def load_state():
+    """Read the shared state. Raises StateUnreadable rather than papering over a
+    damaged file — the request fails, and the client keeps its own cache."""
     with _STATE_LOCK:
         return _read_state_unlocked()
 
 
-def _backup_state_unlocked():
+def _backup_state_unlocked(force=False):
     """Snapshot state.json into state-backups/ before it gets overwritten.
 
     Clients sync last-write-wins with no merge, so a single client holding a
     stale copy can wipe out every watchlist in one push — which has actually
     happened, and recovery meant carving old values out of a browser's leveldb.
     Backups are the cheap insurance: one timestamped copy at most every
-    _STATE_BACKUP_MIN_GAP_S, newest _STATE_BACKUPS_KEPT kept."""
+    _STATE_BACKUP_MIN_GAP_S, newest _STATE_BACKUPS_KEPT kept.
+
+    `force` skips the rate limit, for one-off events too important to let a
+    recent snapshot suppress (an unparseable file about to be replaced)."""
     if not os.path.exists(STATE_PATH):
         return
     try:
         os.makedirs(_STATE_BACKUP_DIR, exist_ok=True)
         backups = sorted(f for f in os.listdir(_STATE_BACKUP_DIR)
                          if f.startswith("state-") and f.endswith(".json"))
-        if backups:
+        if backups and not force:
             newest = os.path.join(_STATE_BACKUP_DIR, backups[-1])
             if time.time() - os.path.getmtime(newest) < _STATE_BACKUP_MIN_GAP_S:
                 return
         stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        shutil.copy2(STATE_PATH, os.path.join(_STATE_BACKUP_DIR, f"state-{stamp}.json"))
+        suffix = "-corrupt" if force else ""
+        shutil.copy2(STATE_PATH, os.path.join(_STATE_BACKUP_DIR, f"state-{stamp}{suffix}.json"))
         for old in backups[:-(_STATE_BACKUPS_KEPT - 1) or None]:
             os.remove(os.path.join(_STATE_BACKUP_DIR, old))
     except OSError:
@@ -135,8 +152,15 @@ def merge_state(patch):
     if not isinstance(patch, dict):
         raise ValueError("state must be an object")
     with _STATE_LOCK:
-        _backup_state_unlocked()
-        state = _read_state_unlocked()
+        try:
+            state = _read_state_unlocked()
+        except StateUnreadable:
+            # Start from scratch rather than refusing every future write, but
+            # keep the damaged file — it may still be salvageable by hand.
+            _backup_state_unlocked(force=True)
+            state = {}
+        else:
+            _backup_state_unlocked()
         for k, v in patch.items():
             if v is None:
                 state.pop(k, None)

@@ -373,6 +373,14 @@ const App = (() => {
     // keep nav badge + any open list in sync when watchlist changes
     Store.onChange(() => updateWatchCount());
 
+    // This tab's shared state is only as fresh as its last load, so pull again
+    // whenever it comes back to the foreground — otherwise the first edit made
+    // in a long-idle tab pushes a stale copy over another browser's work.
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState !== "visible") return;
+      if (await Store.resync()) refreshCurrent();
+    });
+
     Tooltip.init();
     updateWatchCount();
     setActiveNav();
