@@ -30,3 +30,4 @@ ENV/
 # Stock Terminal's saved watchlists/settings — local user data, not source
 /stock-terminal/state.json
 /stock-terminal/state.json.tmp
+/stock-terminal/state-backups/

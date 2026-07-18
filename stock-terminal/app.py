@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import shutil
 import sys
 import threading
 import time
@@ -74,6 +75,11 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # the same lists. localStorage stays in play as a client-side cache/fallback.  #
 # --------------------------------------------------------------------------- #
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+_STATE_BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state-backups")
+_STATE_BACKUPS_KEPT = 20
+# Snapshots taken more often than this share the newest backup slot instead of
+# each claiming one, so a burst of saves can't rotate the whole history away.
+_STATE_BACKUP_MIN_GAP_S = 15 * 60
 _STATE_LOCK = threading.Lock()
 
 
@@ -93,6 +99,32 @@ def load_state():
         return _read_state_unlocked()
 
 
+def _backup_state_unlocked():
+    """Snapshot state.json into state-backups/ before it gets overwritten.
+
+    Clients sync last-write-wins with no merge, so a single client holding a
+    stale copy can wipe out every watchlist in one push — which has actually
+    happened, and recovery meant carving old values out of a browser's leveldb.
+    Backups are the cheap insurance: one timestamped copy at most every
+    _STATE_BACKUP_MIN_GAP_S, newest _STATE_BACKUPS_KEPT kept."""
+    if not os.path.exists(STATE_PATH):
+        return
+    try:
+        os.makedirs(_STATE_BACKUP_DIR, exist_ok=True)
+        backups = sorted(f for f in os.listdir(_STATE_BACKUP_DIR)
+                         if f.startswith("state-") and f.endswith(".json"))
+        if backups:
+            newest = os.path.join(_STATE_BACKUP_DIR, backups[-1])
+            if time.time() - os.path.getmtime(newest) < _STATE_BACKUP_MIN_GAP_S:
+                return
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        shutil.copy2(STATE_PATH, os.path.join(_STATE_BACKUP_DIR, f"state-{stamp}.json"))
+        for old in backups[:-(_STATE_BACKUPS_KEPT - 1) or None]:
+            os.remove(os.path.join(_STATE_BACKUP_DIR, old))
+    except OSError:
+        pass  # a failed backup must never block the save itself
+
+
 def merge_state(patch):
     """Merge top-level keys of `patch` into the on-disk state and return it.
 
@@ -103,6 +135,7 @@ def merge_state(patch):
     if not isinstance(patch, dict):
         raise ValueError("state must be an object")
     with _STATE_LOCK:
+        _backup_state_unlocked()
         state = _read_state_unlocked()
         for k, v in patch.items():
             if v is None:

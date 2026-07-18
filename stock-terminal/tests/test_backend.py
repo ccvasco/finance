@@ -5105,5 +5105,61 @@ class TestCompanyProfileEndpoint(unittest.TestCase):
         app.clear_cache()
 
 
+class TestStateBackups(unittest.TestCase):
+    """merge_state snapshots the previous state.json into state-backups/."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        state_path = os.path.join(self.tmp.name, "state.json")
+        backup_dir = os.path.join(self.tmp.name, "state-backups")
+        for name, val in (("STATE_PATH", state_path),
+                          ("_STATE_BACKUP_DIR", backup_dir),
+                          ("_STATE_BACKUP_MIN_GAP_S", 0)):
+            p = patch.object(app, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        self.backup_dir = backup_dir
+
+    def _backups(self):
+        if not os.path.isdir(self.backup_dir):
+            return []
+        return sorted(os.listdir(self.backup_dir))
+
+    def test_first_write_has_nothing_to_back_up(self):
+        app.merge_state({"st.lists": [1]})
+        self.assertEqual(self._backups(), [])
+
+    def test_overwrite_backs_up_previous_state(self):
+        app.merge_state({"st.lists": [1, 2, 3]})
+        app.merge_state({"st.lists": []})   # a clobbering push
+        backups = self._backups()
+        self.assertEqual(len(backups), 1)
+        with open(os.path.join(self.backup_dir, backups[0])) as fh:
+            self.assertEqual(json.load(fh), {"st.lists": [1, 2, 3]})
+
+    def test_min_gap_coalesces_bursts(self):
+        with patch.object(app, "_STATE_BACKUP_MIN_GAP_S", 900):
+            app.merge_state({"a": 1})
+            app.merge_state({"a": 2})
+            app.merge_state({"a": 3})
+        self.assertEqual(len(self._backups()), 1)
+
+    def test_rotation_keeps_newest(self):
+        with patch.object(app, "_STATE_BACKUPS_KEPT", 3):
+            for i in range(6):
+                app.merge_state({"n": i})
+        backups = self._backups()
+        self.assertEqual(len(backups), 3)
+        with open(os.path.join(self.backup_dir, backups[-1])) as fh:
+            self.assertEqual(json.load(fh), {"n": 4})   # newest survives
+
+    def test_backup_failure_does_not_block_save(self):
+        with patch.object(app.shutil, "copy2", side_effect=OSError("disk full")):
+            app.merge_state({"a": 1})
+            state = app.merge_state({"a": 2})
+        self.assertEqual(state, {"a": 2})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
