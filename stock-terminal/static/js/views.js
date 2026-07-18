@@ -336,6 +336,26 @@ const Views = (() => {
 
   function render(root) { root.innerHTML = ""; return root; }
 
+  /* Run `fn` (a re-render) without losing the user's place in the list.
+     Rebuilding a view recreates its scroller — the screener and watchlist scroll
+     inside .table-wrap, the dashboard scrolls .view-root — and a fresh element
+     starts at offset 0, so the list would snap back to the top. Snapshot the
+     offsets, run the render, then put them back. The re-render is synchronous
+     for cache-backed data (the only case that reaches here with rows on screen);
+     the rAF pass re-applies once layout has settled. */
+  function preserveScroll(fn) {
+    const scrollers = [...document.querySelectorAll(".view-root, .table-wrap")];
+    const saved = scrollers.map((el) => [el.scrollTop, el.scrollLeft]);
+    fn();
+    const restore = () => {
+      document.querySelectorAll(".view-root, .table-wrap").forEach((el, i) => {
+        if (saved[i]) { el.scrollTop = saved[i][0]; el.scrollLeft = saved[i][1]; }
+      });
+    };
+    restore();
+    requestAnimationFrame(restore);
+  }
+
   // HTML-escape untrusted text (company names, error strings) before it goes
   // into innerHTML — Yahoo names contain &, and defends against stray markup.
   const escHTML = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
@@ -1038,7 +1058,7 @@ const Views = (() => {
     if (!custom) { App.toast("Columns are already at their default layout", "ok"); return; }
     Store.resetColWidths();
     Store.resetColOrder();
-    rerender();
+    preserveScroll(rerender);
     App.toast("Columns reset to default order and widths", "ok");
   }
 
@@ -1136,7 +1156,7 @@ const Views = (() => {
     root.querySelector("#scr-cols").addEventListener("click", () => resetCols(paint));
     root.querySelector("#scr-addall").addEventListener("click", () => {
       (lastRows || []).forEach((r) => { if (!r.error && !Store.inWatchlist(r.ticker)) Store.toggleWatch(r.ticker); });
-      App.toast("Added to stars", "ok"); paint();
+      App.toast("Added to stars", "ok"); preserveScroll(paint);
     });
     root.querySelector("#scr-save").addEventListener("click", saveAsList);
 
@@ -1324,7 +1344,9 @@ const Views = (() => {
       } else {
         App.toast(mode === "add" ? "Already in the list" : "None of those are in the list", "err");
       }
-      watchlist(root);   // re-render cards (counts) and restore the selection
+      // re-render cards (counts) and restore the selection, without losing the
+      // reader's place — editing tickers is a routine edit to a long list
+      preserveScroll(() => watchlist(root));
     }
     detail.querySelector("#wl-add").addEventListener("click", () => editList("add"));
     detail.querySelector("#wl-del").addEventListener("click", () => editList("remove"));
@@ -1855,7 +1877,7 @@ const Views = (() => {
 
   return { screener, watchlist, dashboard, calendar, settings,
            getChatContext, COLS, PANEL_TIPS, updateCachedRow, gradePayload,
-           openStarPicker };
+           openStarPicker, preserveScroll };
 })();
 
 /* =================== DEEP DIVE OVERLAY ===================== */
@@ -2563,25 +2585,9 @@ const DeepDive = (() => {
     elOverlay().classList.add("hidden");
     elOverlay().innerHTML = "";
     document.removeEventListener("keydown", escClose);
-    // refreshCurrent() rebuilds the view's DOM (to reflect any watchlist stars
-    // toggled in the deep-dive), which would otherwise snap the list back to the
-    // top. Snapshot the scroll offsets — the view scroller (.view-root, used by
-    // the dashboard) and any inner table scroller (.table-wrap, used by the
-    // screener) — and restore them after the cache-backed re-render so the user
-    // lands right where they left off.
-    const scroller = document.querySelector(".view-root");
-    const y = scroller ? scroller.scrollTop : 0;
-    const wraps = [...document.querySelectorAll(".table-wrap")].map((w) => [w.scrollTop, w.scrollLeft]);
-    App.refreshCurrent();   // reflect any watchlist changes
-    const restore = () => {
-      const s = document.querySelector(".view-root");
-      if (s) s.scrollTop = y;
-      document.querySelectorAll(".table-wrap").forEach((w, i) => {
-        if (wraps[i]) { w.scrollTop = wraps[i][0]; w.scrollLeft = wraps[i][1]; }
-      });
-    };
-    restore();
-    requestAnimationFrame(restore);   // re-apply after layout settles
+    // refreshCurrent() rebuilds the view to reflect any watchlist stars toggled
+    // in the deep-dive; keep the user's place in the list across that rebuild.
+    Views.preserveScroll(() => App.refreshCurrent());
   }
 
   return { open, close };
