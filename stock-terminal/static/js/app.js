@@ -338,7 +338,10 @@ const App = (() => {
     catch { dot.className = "status-dot offline"; txt.textContent = "server offline"; }
   }
 
-  function init() {
+  async function init() {
+    // Pull the server's shared watchlists/settings before the first paint, so
+    // we don't render this browser's stale localStorage copy and then swap it.
+    await Store.hydrate();
     applyAccent();
     applyZoom();
     applySidebarCollapse();

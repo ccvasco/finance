@@ -59,6 +59,21 @@ const API = (() => {
         `${ticker}-DCF-${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
     clearCache: () => fetch("/api/cache/clear", { method: "POST" }),
+    // Shared UI state (watchlists/settings/column layout) — see Store's sync
+    // layer. getState resolves to the raw {storageKey: value} map.
+    async getState() {
+      return (await get("/api/state")).state || {};
+    },
+    // Merge `patch` ({storageKey: value}) into the server's state. A null value
+    // deletes that key.
+    async putState(patch) {
+      const r = await fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: patch }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    },
     /* POST /api/chat and stream the agent's reply. Calls onEvent for every
        SSE event: {text} chunks while streaming, then {done,...} or {error}.
        Returns when the stream closes. */

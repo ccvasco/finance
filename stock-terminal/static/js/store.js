@@ -1,5 +1,15 @@
-/* store.js — localStorage-backed watchlist + settings + last screener set.
-   Auto-saves on every mutation; hydrated synchronously on load. */
+/* store.js — watchlist + settings + last screener set, persisted server-side
+   (GET/POST /api/state) with localStorage as a synchronous local cache.
+
+   Why both: localStorage alone is scoped per browser origin and storage
+   partition, so the VSCode Simple Browser webview, Chrome, and localhost vs
+   127.0.0.1 each kept a *separate* set of watchlists. The server file is the
+   shared source of truth; localStorage still hydrates the UI instantly on load
+   and keeps it working if the server is unreachable.
+
+   Auto-saves on every mutation: writes hit localStorage synchronously and are
+   pushed to the server on a short debounce. With two clients open, the last
+   write of a given key wins — there's no merge. */
 const Store = (() => {
   const KEYS = {
     wl: "st.watchlist", settings: "st.settings", last: "st.lastTickers",
@@ -7,6 +17,15 @@ const Store = (() => {
     colw: "st.colWidths", colorder: "st.colOrder",
   };
   const CHAT_MAX = 60;   // keep the last N messages (agent context is capped too)
+
+  // Keys mirrored to the server. Everything durable syncs; the screener row
+  // cache does not — it's megabytes of refetchable data whose whole job is to
+  // make *this* browser's reloads fast.
+  const SYNCED = new Set([
+    KEYS.wl, KEYS.settings, KEYS.last, KEYS.lists, KEYS.chat,
+    KEYS.colw, KEYS.colorder,
+  ]);
+  const PUSH_DEBOUNCE = 400;   // ms
 
   function read(key, fallback) {
     try {
@@ -18,7 +37,38 @@ const Store = (() => {
   }
   function write(key, val) {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+    if (SYNCED.has(key)) markDirty(key, val);
   }
+
+  // -- server sync ---------------------------------------------------------
+  const pending = new Map();   // storage key → latest value awaiting a push
+  let pushTimer = null;
+
+  function markDirty(key, val) {
+    pending.set(key, val);
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(push, PUSH_DEBOUNCE);
+  }
+
+  async function push() {
+    if (!pending.size) return;
+    const batch = Object.fromEntries(pending);
+    pending.clear();
+    try {
+      await API.putState(batch);
+    } catch {
+      // Server unreachable — keep the values queued (without clobbering any
+      // newer write that landed meanwhile) so the next mutation retries them.
+      Object.entries(batch).forEach(([k, v]) => { if (!pending.has(k)) pending.set(k, v); });
+    }
+  }
+  // Don't lose the last few hundred ms of edits when the tab closes.
+  window.addEventListener("pagehide", () => {
+    if (!pending.size) return;
+    const body = JSON.stringify({ state: Object.fromEntries(pending) });
+    navigator.sendBeacon("/api/state", new Blob([body], { type: "application/json" }));
+    pending.clear();
+  });
 
   // hydrate immediately
   let watchlist = read(KEYS.wl, []);
@@ -52,7 +102,54 @@ const Store = (() => {
   const listeners = [];
   const notify = () => listeners.forEach((fn) => fn());
 
+  // Adopt a {storageKey: value} map from the server into memory + localStorage.
+  function applyState(state) {
+    const has = (k) => Object.prototype.hasOwnProperty.call(state, k);
+    if (has(KEYS.wl)) watchlist = state[KEYS.wl] || [];
+    if (has(KEYS.lists)) lists = state[KEYS.lists] || [];
+    if (has(KEYS.last)) lastTickers = state[KEYS.last] || [];
+    if (has(KEYS.colw)) colWidths = state[KEYS.colw] || {};
+    if (has(KEYS.colorder)) colOrder = state[KEYS.colorder] || [];
+    if (has(KEYS.settings)) settings = Object.assign(settings, state[KEYS.settings] || {});
+    // Mirror into localStorage so a later offline load still has it, but skip
+    // write() — these values came *from* the server, pushing them back is noise.
+    Object.entries(state).forEach(([k, v]) => {
+      if (!SYNCED.has(k)) return;
+      try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+    });
+  }
+
+  /* Pull shared state from the server. Call once before the first render.
+
+     Server wins when it has anything: it's the one view every browser shares.
+     When it's empty (first run after this feature landed) we push whatever
+     this browser already had in localStorage, which migrates an existing
+     VSCode-webview or single-browser setup up to the server instead of
+     silently dropping it. */
+  async function hydrate() {
+    let state;
+    try {
+      state = await API.getState();
+    } catch {
+      return;   // server down — carry on with the localStorage hydration
+    }
+    if (Object.keys(state).length) {
+      applyState(state);
+    } else {
+      const local = {};
+      SYNCED.forEach((k) => {
+        const v = read(k, null);
+        if (v != null) local[k] = v;
+      });
+      if (Object.keys(local).length) {
+        try { await API.putState(local); } catch {}
+      }
+    }
+    notify();
+  }
+
   return {
+    hydrate,
     onChange(fn) { listeners.push(fn); },
 
     // -- watchlist ---------------------------------------------------------
@@ -161,9 +258,7 @@ const Store = (() => {
       return Array.isArray(h) ? h : [];
     },
     setChatHistory(history) {
-      const trimmed = (history || []).slice(-CHAT_MAX);
-      try { localStorage.setItem(KEYS.chat, JSON.stringify(trimmed)); }
-      catch { try { localStorage.removeItem(KEYS.chat); } catch {} }
+      write(KEYS.chat, (history || []).slice(-CHAT_MAX));
     },
 
     // -- column widths -----------------------------------------------------

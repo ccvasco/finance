@@ -64,6 +64,59 @@ except Exception:  # pragma: no cover
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # --------------------------------------------------------------------------- #
+# Shared UI state (watchlists, settings, column layout)                        #
+#                                                                              #
+# The UI used to keep all of this in localStorage, which is scoped per browser #
+# origin *and* storage partition — so the VSCode Simple Browser webview and a  #
+# real browser each had their own private set of watchlists, as did            #
+# localhost:8765 vs 127.0.0.1:8765. Persisting it here instead makes the       #
+# server the single source of truth: every client that can reach the port sees #
+# the same lists. localStorage stays in play as a client-side cache/fallback.  #
+# --------------------------------------------------------------------------- #
+STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+_STATE_LOCK = threading.Lock()
+
+
+def _read_state_unlocked():
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        # Missing or corrupt state is not fatal — the UI just starts empty and
+        # the next write lays down a good file.
+        return {}
+
+
+def load_state():
+    with _STATE_LOCK:
+        return _read_state_unlocked()
+
+
+def merge_state(patch):
+    """Merge top-level keys of `patch` into the on-disk state and return it.
+
+    A key whose value is None is deleted. The write goes through a temp file +
+    os.replace so a crash mid-write can't leave a half-written state.json — the
+    reader above would recover from that, but it would cost the user their
+    watchlists."""
+    if not isinstance(patch, dict):
+        raise ValueError("state must be an object")
+    with _STATE_LOCK:
+        state = _read_state_unlocked()
+        for k, v in patch.items():
+            if v is None:
+                state.pop(k, None)
+            else:
+                state[k] = v
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=1, sort_keys=True)
+        os.replace(tmp, STATE_PATH)
+        return state
+
+
+# --------------------------------------------------------------------------- #
 # Tiny TTL cache so we don't hammer Yahoo on every request                     #
 # --------------------------------------------------------------------------- #
 _CACHE = {}
@@ -2684,6 +2737,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/health":
                 return self._send_json({"ok": True})
+            if path == "/api/state":
+                return self._send_json({"state": load_state()})
             if path == "/api/meta":
                 # Static reference data (S1 flag legend) for the UI — generated
                 # from the grader's own flag catalogue so the two can't drift.
@@ -2799,6 +2854,12 @@ class Handler(BaseHTTPRequestHandler):
                     data,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     filename=f"{tk}-DCF-{stamp}.xlsx")
+            if path == "/api/state":
+                try:
+                    state = merge_state(payload.get("state"))
+                except ValueError as e:
+                    return self._send_json({"error": str(e)}, 400)
+                return self._send_json({"ok": True, "state": state})
             if path == "/api/cache/clear":
                 clear_cache()
                 return self._send_json({"ok": True})
