@@ -1069,6 +1069,12 @@ const Views = (() => {
     // container element persists — re-adding the listener each time would stack
     // duplicate handlers. Delegation reads current state, so one binding covers
     // all subsequent re-renders.
+    // The handlers below are bound once, but the watchlist view reuses this
+    // container across list loads, each with its own rerender closing over its
+    // own rows — so the handle must be refreshed on every call and read at
+    // event time, or a sort click would repaint a previously loaded list.
+    container.__rerender = rerender;
+    const repaint = () => container.__rerender();
     if (container.__wired) return;
     container.__wired = true;
     // --- column resize + reorder (must run before the click handler below
@@ -1081,7 +1087,7 @@ const Views = (() => {
       const table = e.target.closest("table.data");
       if (!table) return;
       if (e.target.closest(".col-grip")) startColDrag(e, table);
-      else startColReorder(e, table, rerender);
+      else startColReorder(e, table, repaint);
     });
     container.addEventListener("dblclick", (e) => {
       const grip = e.target.closest(".col-grip");
@@ -1103,7 +1109,7 @@ const Views = (() => {
         if (col && col !== "star" && !th.classList.contains("nosort")) {
           if (sort.key === col) sort.dir *= -1;
           else sort = { key: col, dir: col === "ticker" ? 1 : -1 };
-          rerender();
+          repaint();
         }
         return;
       }
