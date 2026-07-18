@@ -39,8 +39,12 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #2a3744; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* height:100%, not 100vh: the zoom control sets CSS `zoom` on <html>, and vh
+   units are not rescaled by it — at 80% a 100vh shell covers only 80% of the
+   window, stranding a dead band along the bottom. Percentages resolve against
+   the zoomed containing block, so they track the real window at any zoom. */
 #app {
-  display: grid; grid-template-columns: 232px 1fr; height: 100vh;
+  display: grid; grid-template-columns: 232px 1fr; height: 100%;
   transition: grid-template-columns .16s ease;
 }
 #app.sidebar-collapsed { grid-template-columns: 64px 1fr; }
@@ -178,7 +182,11 @@ body {
 .zoom-lvl:hover { background: var(--row-hover); color: var(--text); }
 
 /* ===== View root ========================================================= */
-.view-root { flex: 1; overflow: auto; padding: 22px; }
+/* A column flexbox so a list view can hand its table the whole leftover height
+   (see .table-wrap.fill). Everything else keeps its natural size — without the
+   `flex: none` the fixed spacers and the collapsed legend would be squeezed. */
+.view-root { flex: 1; overflow: auto; padding: 22px; display: flex; flex-direction: column; }
+.view-root > * { flex: none; }
 .view-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
 .view-title { font-size: 18px; font-weight: 700; letter-spacing: .3px; }
 .view-sub { color: var(--text-dim); font-size: 12px; }
@@ -225,7 +233,16 @@ body {
 .kv-row .v { font-family: var(--mono); font-size: 13px; font-weight: 600; }
 
 /* ===== Tables ============================================================ */
-.table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); max-height: calc(100vh - 230px); }
+.table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+/* The list is the point of these views, so it takes every pixel left under the
+   header, toolbar and legend and scrolls inside itself — rather than being cut
+   off at a guessed height that leaves the bottom of the window empty.
+   min-height keeps a few rows visible when the chrome above is unusually tall;
+   past that .view-root scrolls. .fill on a .panel stretches the panel and hands
+   the height down to the table it wraps. */
+.table-wrap.fill, .panel.fill { flex: 1 1 auto; min-height: 240px; }
+.panel.fill { display: flex; flex-direction: column; }
+.panel.fill .table-wrap { flex: 1 1 auto; min-height: 0; }
 table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
 table.data thead th {
   position: sticky; top: 0; z-index: 5;
@@ -520,6 +537,9 @@ svg.chart { width: 100%; display: block; }
   border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; line-height: 1;
 }
 .wl-act:hover { border-color: var(--text-faint); color: var(--text); }
+/* The open list's table is nested one level down, so the detail block is the
+   flex column that reaches the bottom and passes the height on to it. */
+#wl-detail:not(:empty) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 240px; }
 .wl-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .wl-detail-name { font-size: 15px; font-weight: 700; }
 .wl-edit { width: 230px; }

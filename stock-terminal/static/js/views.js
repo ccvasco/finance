@@ -338,7 +338,7 @@ const Views = (() => {
 
   /* Run `fn` (a re-render) without losing the user's place in the list.
      Rebuilding a view recreates its scroller — the screener and watchlist scroll
-     inside .table-wrap, the dashboard scrolls .view-root — and a fresh element
+     inside .table-wrap, which the dashboard does too — and a fresh element
      starts at offset 0, so the list would snap back to the top. Snapshot the
      offsets, run the render, then put them back. The re-render is synchronous
      for cache-backed data (the only case that reaches here with rows on screen);
@@ -1141,7 +1141,7 @@ const Views = (() => {
         <button class="btn btn-sm" id="scr-addall">★ Add all to stars</button>
       </div>
       ${legendBox()}
-      <div class="table-wrap" id="scr-table"><div class="loading-box"><span class="spinner"></span> Fetching market data…</div></div>`;
+      <div class="table-wrap fill" id="scr-table"><div class="loading-box"><span class="spinner"></span> Fetching market data…</div></div>`;
     hydrateFlagLegend(root);
 
     const tableEl = root.querySelector("#scr-table");
@@ -1307,7 +1307,7 @@ const Views = (() => {
         <button class="btn btn-sm" id="wl-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       </div>
       ${legendBox()}
-      <div class="table-wrap" id="wl-table"></div>`;
+      <div class="table-wrap fill" id="wl-table"></div>`;
     hydrateFlagLegend(detail);
     detail.querySelector("#wl-refresh").addEventListener("click", () => loadSelected(root, { force: true }));
     detail.querySelector("#wl-cols").addEventListener("click", () => resetCols(paint));
@@ -1529,9 +1529,9 @@ const Views = (() => {
       <div class="cards" id="dash-cards"></div>
       <div style="height:20px"></div>
       ${(wl.length || last.length) ? legendBox() : ""}
-      <div class="panel">
+      <div class="panel fill">
         <div class="panel-head"><span class="dot"></span>${wl.length ? "Watchlist" : "Recently analyzed"}</div>
-        <div class="table-wrap" style="border:0;max-height:none" id="dash-table"></div>
+        <div class="table-wrap" style="border:0" id="dash-table"></div>
       </div>`;
     hydrateFlagLegend(root);
     root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
@@ -1746,7 +1746,7 @@ const Views = (() => {
           ${ranges.map(([k, l]) => `<span class="chip ${calState.range === k ? "active" : ""}" data-r="${k}">${l}</span>`).join("")}
         </div>
       </div>
-      <div class="table-wrap" id="cal-table"><div class="loading-box"><span class="spinner"></span> Loading calendar…</div></div>`;
+      <div class="table-wrap fill" id="cal-table"><div class="loading-box"><span class="spinner"></span> Loading calendar…</div></div>`;
 
     root.querySelector("#cal-refresh").addEventListener("click", () => calendar(root, { force: true }));
     root.querySelectorAll("[data-cal]").forEach((t) =>
