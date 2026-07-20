@@ -2712,6 +2712,8 @@ const DeepDive = (() => {
             d.panels.reit, fmtMaps.reit,
             d.reit_kind === "mortgage"
               ? "No FFO: this REIT owns securities, not depreciable buildings, so there is no depreciation to add back. Book value is the metric that matters here."
+              : d.reit_kind === "fair-value"
+              ? "No FFO shown: this REIT carries its properties at fair value (IFRS), so there's no depreciation to add back — and the fair-value adjustment isn't cleanly reported, so an FFO can't be reliably built. Net income here includes unrealized property revaluations; book value ≈ NAV, so Price/Book is the more telling gauge."
               : "")}</div>` : ""}
 
         <div class="col-6">${profilePanelHTML(d)}</div>

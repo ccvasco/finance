@@ -76,6 +76,12 @@ It remains an **approximation**, for two reasons worth knowing:
 
 **Treat REIT grades as directional, not precise.** They are for ruling out clearly over-levered or under-covered names, not for fine-ranking REIT against REIT.
 
+### When FFO can't be built (the fallback)
+
+The formula's load-bearing input is the depreciation add-back: **no D&A line, no FFO.** US-GAAP REITs report property depreciation, so they clear this. But REITs reporting under **IFRS — including most Canadian REITs** — carry investment property at **fair value** and never depreciate it, so their cash-flow statement has no D&A line to add back. The proper IFRS adjustment is the reverse (strip the *unrealized fair-value change* on the properties out of net income), and data feeds don't expose that line cleanly, so a reliable FFO simply can't be built from the normalized statements.
+
+These are still equity REITs that own buildings — they are **not** mortgage REITs — so the app tags them a distinct `fair-value` kind (never `mortgage`) and falls back to the **book-value rubric**: for a fair-value REIT, book value ≈ NAV, so Price/Book is the more telling gauge, and reported net income should be read knowing it swings with unrealized property revaluations. The deep-view revenue chart keeps its Net Income bars for these names (it only swaps in FFO for the `equity` kind).
+
 ### Why the adjustments are not optional
 
 They are not a rounding detail. Backing out disposal gains moved Prologis's (PLD) FFO payout from a comfortable-looking 61% to its true 76%, and Federal Realty's (FRT) from 49% to 60% — both cross a scoring band. The impairment add-back moves the other way: Realty Income's (O) 81% (an apparent breach of the ≤80% comfortable band, caused by a $471M write-down) is really 74%.

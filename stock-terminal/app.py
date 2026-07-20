@@ -1657,25 +1657,38 @@ def deepdive(ticker):
         # REIT-specific metrics panel — only for REITs (industry names them
         # "REIT — …"). Equity REITs own buildings, so FFO (Net Income + property
         # depreciation, less sale gains) is their headline metric and P/FFO their
-        # P/E; the panel shows the FFO family. Mortgage REITs own securities, not
-        # buildings — FFO adds nothing for them (screener_row leaves it None by
-        # type), so the panel shows what actually matters instead: book value per
-        # share, P/B, and how well net income covers the (typically over-100%)
-        # dividend. Routed on the business type rather than on whether FFO came
-        # out non-None, so an mREIT that happens to report a D&A line can't land
-        # on the equity branch. See REITs.md.
+        # P/E; the panel shows the FFO family. Two other kinds can't show it and
+        # fall back to a book-value rubric, for opposite reasons the frontend
+        # spells out: mortgage REITs own securities not buildings (FFO is
+        # meaningless — screener_row leaves it None by type), while IFRS
+        # fair-value equity REITs (most Canadian REITs) do own buildings but carry
+        # them at fair value with no depreciation line to add back, so our FFO
+        # can't be built even though the metric would be meaningful. The reit_kind
+        # below distinguishes the three so a fair-value REIT is never mislabeled a
+        # mortgage REIT. See REITs.md.
         reit_panel = reit_kind = None
         if "reit" in (info.get("industry") or "").lower():
             ffo = srow.get("ffo")
             shares = _num(info.get("sharesOutstanding"))
             book_ps = _num(info.get("bookValue"))
             pb = _num(info.get("priceToBook"))
-            # Named for the frontend so the panel can say *which* REIT rubric it
-            # is showing — the FFO family's absence is a deliberate answer for a
-            # mortgage REIT, not missing data, and the title is where a reader
-            # finds that out.
-            reit_kind = "equity" if (_business_type(info) == "reit"
-                                     and ffo is not None) else "mortgage"
+            # Three-way, named for the frontend so the panel can say *which* REIT
+            # rubric it is showing and why the FFO family is (or isn't) there:
+            #   equity      — owns depreciable buildings, FFO computable → FFO panel.
+            #   mortgage    — a true mortgage REIT (industry "REIT — Mortgage", so
+            #                 _business_type == "mreit"): owns securities, not
+            #                 buildings, so FFO is meaningless by design.
+            #   fair-value  — an equity REIT that reports investment property at
+            #                 fair value (IFRS, most Canadian REITs): no depreciation
+            #                 line to add back, so our FFO can't be built. It is NOT a
+            #                 mortgage REIT — it owns buildings — so it must not claim
+            #                 to own securities; the difference is a data/accounting
+            #                 limitation, not a different business. See REITs.md.
+            # Keyed on business type first so an mREIT that happens to report a D&A
+            # line still lands on "mortgage", never on the equity/fair-value branch.
+            reit_kind = ("mortgage" if _business_type(info) == "mreit"
+                         else "equity" if ffo is not None
+                         else "fair-value")
             if reit_kind == "equity":
                 payout = srow.get("ffo_payout")
                 reit_panel = {
@@ -1687,7 +1700,12 @@ def deepdive(ticker):
                     "Book Value/Share": book_ps,
                     "Price/Book": pb,
                 }
-            else:                                     # mortgage REIT — book value
+            else:            # mortgage & fair-value: no usable FFO → book value.
+                # Book value ≈ NAV for a fair-value REIT (property marked to fair
+                # value), so P/B is if anything more meaningful here than for a
+                # depreciated-cost REIT; the frontend note spells out that Net
+                # Income carries unrealized revaluations. For a mortgage REIT the
+                # same fields are its core rubric (see REITs.md).
                 ni = _num(info.get("netIncomeToCommon"))
                 reit_panel = {
                     "Book Value/Share": book_ps,
