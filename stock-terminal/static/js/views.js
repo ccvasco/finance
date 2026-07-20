@@ -452,17 +452,58 @@ const Views = (() => {
      (x cached, y fetched)" / "⚠ n batches failed" summary. */
   const spinHTML = (txt) =>
     `<span class="spinner" style="width:11px;height:11px"></span> ${txt}`;
-  function doneStatusHTML(total, fetched, fromCache, failedBatches) {
+
+  /* Oldest fetch time among `rows`, or null when none carry one (rows cached
+     before _fetchedAt existed, or placeholder/error rows). Oldest — not
+     newest — because a cache-first table is only as fresh as its stalest row. */
+  function rowsFetchedAt(rows) {
+    let oldest = null;
+    (rows || []).forEach((r) => {
+      if (!r || !r._fetchedAt) return;
+      if (oldest == null || r._fetchedAt < oldest) oldest = r._fetchedAt;
+    });
+    return oldest;
+  }
+
+  /* "just now" / "6m ago" / "3h ago" / "Jul 18, 14:03" past a day. */
+  function relTimeText(ms) {
+    const secs = Math.max(0, (Date.now() - ms) / 1000);
+    if (secs < 45) return "just now";
+    if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+    return new Date(ms).toLocaleString([], { month: "short", day: "numeric",
+                                             hour: "2-digit", minute: "2-digit" });
+  }
+
+  function ageHTML(rows) {
+    const at = rowsFetchedAt(rows);
+    if (!at) return "";
+    return ` <span class="age" data-fetched-at="${at}" title="Data fetched ${new Date(at).toLocaleString()}">`
+         + `· updated ${relTimeText(at)}</span>`;
+  }
+
+  // Keep rendered ages honest while a tab sits open — the table stays put but
+  // "just now" quietly becomes half an hour old.
+  setInterval(() => {
+    document.querySelectorAll("[data-fetched-at]").forEach((el) => {
+      const at = Number(el.getAttribute("data-fetched-at"));
+      if (at) el.textContent = `· updated ${relTimeText(at)}`;
+    });
+  }, 30000);
+
+  function doneStatusHTML(total, fetched, fromCache, failedBatches, rows) {
     return failedBatches
       ? `<span class="err">⚠ ${failedBatches} batch${failedBatches > 1 ? "es" : ""} failed — ↻ Refresh to retry</span>`
       : `<span class="ok">✓</span> ${total} loaded` +
-        (fromCache ? ` (${fromCache} cached${fetched ? `, ${fetched} fetched` : ""})` : "");
+        (fromCache ? ` (${fromCache} cached${fetched ? `, ${fetched} fetched` : ""})` : "") +
+        ageHTML(rows);
   }
 
   /* Replace `ticker`'s row in every cached ticker-set. Used by a deep-dive
      refresh to sync that one ticker into the screener/dashboard/watchlist
      tables without re-fetching the whole set. */
   function updateCachedRow(ticker, row) {
+    row._fetchedAt = Date.now();
     rowsCache.forEach((rows) => {
       const i = rows.findIndex((r) => r.ticker === ticker);
       if (i >= 0) rows[i] = row;
@@ -532,6 +573,11 @@ const Views = (() => {
           res = { rows: batches[b].map((t) => ({ ticker: t, error: e.message })) };
         }
         if (fetchRuns.get(key) !== runId) return null;
+        // Stamp each row with its fetch time so the status line can say how
+        // stale the table is — a set assembled from several cached fetches
+        // reports its OLDEST row (see rowsFetchedAt).
+        const at = Date.now();
+        (res.rows || []).forEach((r) => { if (!r.error) r._fetchedAt = at; });
         rows = rows.concat(res.rows || []);
         fanOut({ rows, loaded: rows.length, total: tickers.length,
                  batch: b + 1, batches: batches.length,
@@ -1208,7 +1254,7 @@ const Views = (() => {
       if (hit) {
         lastRows = hit;
         paint();
-        statusEl.innerHTML = `<span class="ok">✓</span> cached`;
+        statusEl.innerHTML = `<span class="ok">✓</span> cached${ageHTML(hit)}`;
       } else {
         tableEl.innerHTML = `<div class="empty"><div class="big">▦</div>Data not loaded.` +
           `<div class="hint">Press <b>Analyze</b> or <b>↻ Refresh</b> to fetch these ${tickers.length} tickers.</div></div>`;
@@ -1218,11 +1264,11 @@ const Views = (() => {
     }
 
     function setStatus(p) {
-      if (p.cached) { statusEl.innerHTML = `<span class="ok">✓</span> cached`; return; }
+      if (p.cached) { statusEl.innerHTML = `<span class="ok">✓</span> cached${ageHTML(p.rows)}`; return; }
       if (p.done) {
         statusEl.innerHTML = p.failedBatches
           ? `<span class="err">⚠ ${p.failedBatches} of ${p.batches} batches failed — use ↻ Refresh to retry</span>`
-          : `<span class="ok">✓</span> all ${p.total} loaded`;
+          : `<span class="ok">✓</span> all ${p.total} loaded${ageHTML(p.rows)}`;
         return;
       }
       const bi = p.batches > 1 ? ` · batch ${p.batch}/${p.batches}` : "";
@@ -1326,7 +1372,7 @@ const Views = (() => {
     wlPaint = paint;
     const spin = spinHTML;
     const finishStatus = (fetched, fromCache, failedBatches) => {
-      statusEl.innerHTML = doneStatusHTML(sel.tickers.length, fetched, fromCache, failedBatches);
+      statusEl.innerHTML = doneStatusHTML(sel.tickers.length, fetched, fromCache, failedBatches, lastRows);
     };
 
     // Cache-first: show every ticker we already have data for immediately,
@@ -1943,7 +1989,7 @@ const Views = (() => {
       paint();
       if (!missing.length && !joiningLiveRefresh) {
         cacheSet(fullKey, lastRows);
-        statusEl.innerHTML = doneStatusHTML(set.length, 0, have.size, 0);
+        statusEl.innerHTML = doneStatusHTML(set.length, 0, have.size, 0, lastRows);
         return;
       }
       const fetchTickers = joiningLiveRefresh ? set : missing;
@@ -1967,7 +2013,7 @@ const Views = (() => {
         paint();
         const failed = (lastP && lastP.failedBatches) || 0;
         if (!failed) cacheSet(fullKey, lastRows);
-        statusEl.innerHTML = doneStatusHTML(set.length, joiningLiveRefresh ? set.length : missing.length, have.size, failed);
+        statusEl.innerHTML = doneStatusHTML(set.length, joiningLiveRefresh ? set.length : missing.length, have.size, failed, lastRows);
       } catch (e) {
         statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
       }
@@ -1991,7 +2037,7 @@ const Views = (() => {
       if (rows == null) return;   // superseded
       lastRows = rows;
       paint();
-      statusEl.innerHTML = doneStatusHTML(set.length, set.length, 0, (lastP && lastP.failedBatches) || 0);
+      statusEl.innerHTML = doneStatusHTML(set.length, set.length, 0, (lastP && lastP.failedBatches) || 0, lastRows);
     } catch (e) {
       statusEl.innerHTML = `<span class="err">⚠ ${e.message}</span>`;
       tableEl.innerHTML = `<div class="empty">${e.message}</div>`;
@@ -2264,6 +2310,7 @@ const Views = (() => {
   const CHAT_SKIP_KEYS = new Set([
     "spark_6mo", "spark_1y", "spark_5y",
     "strategy_1_detail", "strategy_2_detail", "strategy_3_detail",
+    "_fetchedAt",
   ]);
 
   let chatContext = { label: "", rows: [] };

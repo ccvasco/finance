@@ -1193,6 +1193,65 @@ await atest("a backup survives a full export → restore round trip", async () =
 });
 
 // ---------------------------------------------------------------------------
+// Data freshness — mirrors views.js rowsFetchedAt / relTimeText (same reason as
+// the strategy-tooltip mirrors above: views.js is a DOM-coupled IIFE).
+// ---------------------------------------------------------------------------
+function rowsFetchedAt(rows) {
+  let oldest = null;
+  (rows || []).forEach((r) => {
+    if (!r || !r._fetchedAt) return;
+    if (oldest == null || r._fetchedAt < oldest) oldest = r._fetchedAt;
+  });
+  return oldest;
+}
+function relTimeText(ms, now = Date.now()) {
+  const secs = Math.max(0, (now - ms) / 1000);
+  if (secs < 45) return "just now";
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+  return new Date(ms).toLocaleString([], { month: "short", day: "numeric",
+                                           hour: "2-digit", minute: "2-digit" });
+}
+
+section("Data freshness — rowsFetchedAt / relTimeText");
+
+test("reports the oldest row, not the newest", () => {
+  assert.equal(rowsFetchedAt([
+    { ticker: "AAPL", _fetchedAt: 5000 },
+    { ticker: "MSFT", _fetchedAt: 1000 },
+    { ticker: "NVDA", _fetchedAt: 9000 },
+  ]), 1000);
+});
+
+test("ignores placeholder and error rows with no stamp", () => {
+  assert.equal(rowsFetchedAt([
+    { ticker: "AAPL", error: "loading…" },
+    { ticker: "MSFT", _fetchedAt: 4000 },
+  ]), 4000);
+});
+
+test("returns null when nothing carries a fetch time", () => {
+  assert.equal(rowsFetchedAt([{ ticker: "AAPL" }, { ticker: "MSFT" }]), null);
+  assert.equal(rowsFetchedAt([]), null);
+  assert.equal(rowsFetchedAt(null), null);
+});
+
+test("formats ages by magnitude", () => {
+  const now = Date.UTC(2026, 6, 20, 12, 0, 0);
+  assert.equal(relTimeText(now - 10 * 1000, now), "just now");
+  assert.equal(relTimeText(now - 6 * 60 * 1000, now), "6m ago");
+  assert.equal(relTimeText(now - 3 * 3600 * 1000, now), "3h ago");
+  // Past a day it falls back to an absolute date rather than "40h ago".
+  assert.ok(/\d/.test(relTimeText(now - 50 * 3600 * 1000, now)));
+  assert.ok(!/ago/.test(relTimeText(now - 50 * 3600 * 1000, now)));
+});
+
+test("a clock skew into the future reads as just now, never negative", () => {
+  const now = Date.UTC(2026, 6, 20, 12, 0, 0);
+  assert.equal(relTimeText(now + 60 * 1000, now), "just now");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${"─".repeat(50)}`);
