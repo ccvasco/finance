@@ -1663,6 +1663,17 @@ const Views = (() => {
     return `<span class="${v >= 0 ? "pos" : "neg"}">${v >= 0 ? "+" : ""}${fmt(v)}</span>`;
   }
 
+  /* Private mode: money the trade log implies — totals, cost, P&L, position
+     sizes — renders as dots until the user asks for it. Deliberately NOT a
+     persisted setting: it resets to hidden on every load, so an unattended or
+     screen-shared terminal never comes back up showing the numbers. Live
+     prices stay visible; they are public data and say nothing about holdings. */
+  let pfPrivate = true;
+  const MASK = "•••••";
+  const priv = (s) => (pfPrivate ? MASK : s);
+  // Masks a whole <td>, keeping the pos/neg colour off the dots.
+  const privCell = (html) => (pfPrivate ? `<td class="mask">${MASK}</td>` : html);
+
   function portfolioCards(pf) {
     if (!pf.positions.length) {
       return `
@@ -1676,12 +1687,12 @@ const Views = (() => {
     const pnlPct = t.costPriced > 0 ? (t.unreal / t.costPriced) * 100 : null;
     const loading = t.held > t.priced ? ` · ${t.held - t.priced} loading` : "";
     return `
-      ${card("Market Value", t.priced ? money(t.mv) : "—", `${t.held} position${t.held === 1 ? "" : "s"}${loading}`)}
-      ${card("Cost Basis", money(t.cost), "open positions")}
-      ${card("Unrealized P&L", signedMoney(t.unreal, money),
-        pnlPct == null ? "" : `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% of cost`)}
-      ${card("Day P&L", signedMoney(t.day, money),
-        `today · realized ${t.realized >= 0 ? "+" : ""}${money(t.realized)}`)}`;
+      ${card("Market Value", priv(t.priced ? money(t.mv) : "—"), `${t.held} position${t.held === 1 ? "" : "s"}${loading}`)}
+      ${card("Cost Basis", priv(money(t.cost)), "open positions")}
+      ${card("Unrealized P&L", priv(signedMoney(t.unreal, money)),
+        pnlPct == null ? "" : priv(`${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% of cost`))}
+      ${card("Day P&L", priv(signedMoney(t.day, money)),
+        `today · realized ${priv(`${t.realized >= 0 ? "+" : ""}${money(t.realized)}`)}`)}`;
   }
 
   // Tickers whose trade sub-rows are expanded; survives repaints and nav.
@@ -1695,7 +1706,7 @@ const Views = (() => {
       // Sign goes before the currency symbol — Fmt.price would render $-30.30.
       const body = `${v >= 0 ? "+" : "-"}${Fmt.price(Math.abs(v), cur)}` +
         (pct != null ? ` (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)` : "");
-      return `<td class="${v >= 0 ? "pos" : "neg"}">${body}</td>`;
+      return privCell(`<td class="${v >= 0 ? "pos" : "neg"}">${body}</td>`);
     };
     const rows = pf.positions.slice()
       .sort((a, b) => (b.mv || 0) - (a.mv || 0))
@@ -1708,9 +1719,9 @@ const Views = (() => {
             <td></td>
             <td class="text-cell">${Fmt.date(tr.date) || "—"}</td>
             <td class="${tr.side === "buy" ? "pos" : "neg"}">${tr.side === "buy" ? "Buy" : "Sell"}</td>
-            <td>${qty(tr.shares)}</td>
-            <td>${Fmt.price(tr.price, p.currency)}</td>
-            <td>${Fmt.price(tr.shares * tr.price, p.currency)}</td>
+            <td>${priv(qty(tr.shares))}</td>
+            <td>${priv(Fmt.price(tr.price, p.currency))}</td>
+            <td>${priv(Fmt.price(tr.shares * tr.price, p.currency))}</td>
             <td colspan="2"></td>
             <td><button class="btn btn-sm btn-ghost trade-del" data-id="${escHTML(tr.id)}"
                         title="Delete this trade">✕</button></td>
@@ -1719,10 +1730,10 @@ const Views = (() => {
           <tr class="pf-row" data-t="${t}" title="Click to show this position's trades">
             <td class="pf-caret">${open ? "▾" : "▸"}</td>
             <td class="ticker-cell">${t}${p.held ? "" : ' <span class="sub">closed</span>'}</td>
-            <td>${p.held ? qty(p.shares) : "—"}</td>
-            <td>${p.avgCost != null ? Fmt.price(p.avgCost, p.currency) : "—"}</td>
+            <td>${priv(p.held ? qty(p.shares) : "—")}</td>
+            <td>${priv(p.avgCost != null ? Fmt.price(p.avgCost, p.currency) : "—")}</td>
             <td>${p.price != null ? Fmt.price(p.price, p.currency) : "—"}</td>
-            <td>${p.mv != null ? Fmt.price(p.mv, p.currency) : "—"}</td>
+            <td>${priv(p.mv != null ? Fmt.price(p.mv, p.currency) : "—")}</td>
             ${cell(p.unreal, p.currency, pct)}
             ${cell(p.day, p.currency)}
             ${cell(p.realized !== 0 ? p.realized : null, p.currency)}
@@ -1840,6 +1851,7 @@ const Views = (() => {
         <div class="view-sub">Portfolio</div>
         <span class="scr-status" id="dash-status"></span>
         <div class="spacer"></div>
+        <button class="btn btn-sm" id="dash-private"></button>
         <button class="btn btn-sm" id="dash-trade" title="Log a buy or sell">＋ Trade</button>
         <button class="btn btn-sm" id="dash-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button></div>
       <div class="cards" id="dash-cards"></div>
@@ -1851,6 +1863,22 @@ const Views = (() => {
         <div class="table-wrap" style="border:0" id="dash-table"></div>
       </div>`;
     hydrateFlagLegend(root);
+    // Declared before the empty-set early return below so the private-mode
+    // handler can read it without tripping the temporal dead zone.
+    let lastRows = null;
+    const privBtn = root.querySelector("#dash-private");
+    const syncPrivBtn = () => {
+      privBtn.textContent = pfPrivate ? "● Hidden" : "○ Shown";
+      privBtn.title = pfPrivate ? "Show portfolio values" : "Hide portfolio values";
+      privBtn.setAttribute("aria-pressed", String(pfPrivate));
+    };
+    syncPrivBtn();
+    privBtn.addEventListener("click", () => {
+      pfPrivate = !pfPrivate;
+      syncPrivBtn();
+      // Repaint in place — masking is a render concern, no re-fetch needed.
+      if (lastRows) preserveScroll(paint);
+    });
     root.querySelector("#dash-refresh").addEventListener("click", () => dashboard(root, { force: true }));
     root.querySelector("#dash-trade").addEventListener("click", async () => {
       const tr = await tradeModal();
@@ -1877,7 +1905,6 @@ const Views = (() => {
       return;
     }
     const pfEl = root.querySelector("#dash-pf");
-    let lastRows = null;
     function paint() {
       const rowByTicker = new Map(
         lastRows.filter((r) => !r.error).map((r) => [r.ticker, r]));
