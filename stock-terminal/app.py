@@ -705,21 +705,43 @@ def _screener_row(ticker):
     if not shares and market_cap and price:
         shares = market_cap / price      # both trading-ccy -> currency cancels
     dcf_value = dcf_upside = dcf_value_native = None
-    if bt not in ("financial", "reit", "mreit") and shares:
+    # When the DCF can't be produced, spell out why so the blank cell can carry
+    # an explanatory hover instead of a bare N/A. The gating checks below mirror
+    # the None conditions inside _dcf_detail (FCF, WACC) so the reason is exact.
+    dcf_na_reason = None
+    if bt in ("financial", "reit", "mreit"):
+        label = {"financial": "banks", "reit": "REITs",
+                 "mreit": "mortgage REITs"}[bt]
+        dcf_na_reason = (f"An FCF discounted-cash-flow model doesn't fit {label} — "
+                         "their value comes from book value / FFO, not free cash flow.")
+    elif not shares:
+        dcf_na_reason = ("Shares outstanding are unavailable, so a per-share "
+                         "fair value can't be derived.")
+    elif fcf is None or fcf <= 0:
+        dcf_na_reason = ("Latest annual free cash flow is unavailable or not "
+                         "positive, so there's nothing to discount.")
+    elif wacc is None:
+        dcf_na_reason = "WACC (the discount rate) couldn't be computed for this stock."
+    elif wacc <= _DCF_TERMINAL_G + _DCF_WACC_MARGIN:
+        dcf_na_reason = (f"WACC ({wacc:.1f}%) is at or below the {_DCF_TERMINAL_G}% "
+                         "terminal-growth floor, so the discounted value would be unstable.")
+    else:
         dcf_equity = _dcf_equity_value(fcf, _fcf_cagr(cf), wacc, total_debt, total_cash)
-        if dcf_equity is not None:
-            # equity value is in the reporting currency; convert the per-share
-            # figure into the trading currency so it compares against Price
-            # (fx = 1.0 when the currencies match — the common case). Keep the
-            # unconverted per-share figure too (dcf_value_native, in the
-            # reporting currency) so a mismatched-currency ticker can show what
-            # the model actually produced before the FX step, as a hover.
-            fx = _fx_rate(fin_ccy, mkt_ccy) if fx_mismatch else 1.0
-            if fx:
-                dcf_value_native = dcf_equity / shares
-                dcf_value = dcf_value_native * fx
-                if price:
-                    dcf_upside = (dcf_value / price - 1) * 100
+        # equity value is in the reporting currency; convert the per-share
+        # figure into the trading currency so it compares against Price
+        # (fx = 1.0 when the currencies match — the common case). Keep the
+        # unconverted per-share figure too (dcf_value_native, in the
+        # reporting currency) so a mismatched-currency ticker can show what
+        # the model actually produced before the FX step, as a hover.
+        fx = _fx_rate(fin_ccy, mkt_ccy) if fx_mismatch else 1.0
+        if not fx:
+            dcf_na_reason = (f"The {fin_ccy}→{mkt_ccy} exchange rate needed to convert "
+                             "the fair value into the trading currency is unavailable.")
+        else:
+            dcf_value_native = dcf_equity / shares
+            dcf_value = dcf_value_native * fx
+            if price:
+                dcf_upside = (dcf_value / price - 1) * 100
 
     dg = dividend_growth(ticker)
     perf = performance(ticker)
@@ -767,6 +789,9 @@ def _screener_row(ticker):
         # read as a native reporting-currency number.
         "dcf_value_native": _num(dcf_value_native),
         "dcf_upside": _num(dcf_upside),
+        # human-readable reason the DCF is blank (None when it computed); the
+        # frontend shows it as the N/A cell's hover so the gap is self-explaining.
+        "dcf_na_reason": dcf_na_reason,
         "eps": _num(info.get("trailingEps")),       # diluted EPS TTM
         "eps_basic": _num(basic_eps),               # basic EPS TTM
         # profitability / income

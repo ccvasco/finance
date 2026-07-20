@@ -57,7 +57,7 @@ _NON_METRIC_KEYS = {
     # and no multi-year positive-year counts; financials and REITs are
     # deliberately blanked on the FCFF DCF fields).
     "ffo", "p_ffo", "ffo_payout", "ffo_coverage", "bvps_growth", "rps_growth",
-    "dcf_value", "dcf_upside",
+    "dcf_value", "dcf_upside", "dcf_na_reason",
     "ni_positive_years", "ni_years", "fcf_positive_years", "fcf_years",
 }
 

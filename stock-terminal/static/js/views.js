@@ -19,7 +19,7 @@ const Views = (() => {
     pc: "Price / Cash. Market cap ÷ total cash. Lower means more cash backing the valuation.",
     p_fcf: "Price / Free Cash Flow. Market cap ÷ free cash flow.",
     ev_ebitda: "Enterprise Value ÷ EBITDA. A valuation neutral to capital structure (includes debt).",
-    dcf_value: "DCF fair value per share — a 10-year two-stage discounted cash flow. Latest annual free cash flow grown at the company's own historical FCF CAGR (clamped to 0–20%; flat 2.5% when no usable history), fading linearly to 2.5% terminal growth, discounted at this row's WACC, plus a Gordon terminal value; minus debt, plus cash, ÷ shares. Shown in the trading currency, next to Price for a direct read. The cell is colored green when the model reads the stock as below fair value, red when above; hover it for the exact upside % vs. price. Sorting this column sorts by that upside — descending surfaces the most-undervalued names first. N/A for financials and REITs (an FCF model doesn't fit those businesses), when FCF ≤ 0, or when WACC is unavailable or ≤ 3%. The deep-dive Excel export ('⭳ DCF') shows the full working.",
+    dcf_value: "DCF fair value per share — a 10-year two-stage discounted cash flow. Latest annual free cash flow grown at the company's own historical FCF CAGR (clamped to 0–20%; flat 2.5% when no usable history), fading linearly to 2.5% terminal growth, discounted at this row's WACC, plus a Gordon terminal value; minus debt, plus cash, ÷ shares. Shown in the trading currency, next to Price for a direct read. The cell is colored green when the model reads the stock as below fair value, red when above; hover it for the exact upside % vs. price. Sorting this column sorts by that upside — descending surfaces the most-undervalued names first. N/A for financials and REITs (an FCF model doesn't fit those businesses), when FCF ≤ 0, or when WACC is unavailable or ≤ 3% — hover a blank cell for its specific reason. The deep-dive Excel export ('⭳ DCF') shows the full working.",
     eps: "Diluted EPS (TTM). (Net Income − Preferred Dividends) ÷ Diluted Shares Outstanding — denominator = Basic shares + every share that would exist if all options, RSUs, warrants, and convertibles were exercised/converted.",
     eps_basic: "Basic EPS (TTM). (Net Income − Preferred Dividends) ÷ Basic Shares Outstanding — denominator = actual common shares outstanding only, nothing hypothetical added.",
     income: "Net income to common shareholders (Yahoo's trailing-12-month figure). Note: Yahoo's TTM window and definition differ from the fiscal-year statement Net Income, so the two can disagree.",
@@ -823,7 +823,13 @@ const Views = (() => {
         // value, red = above), with the upside % + a one-line legend in the
         // hover tooltip (the standalone DCF Upside column was folded in here).
         const disp = c.fmt ? c.fmt(raw, r) : Fmt.num(raw);
-        if (disp === null) return `<td class="na">N/A</td>`;
+        if (disp === null) {
+          // Blank DCF: carry the backend's reason (financials/REITs, no positive
+          // FCF, unusable WACC, missing FX) as a hover so the gap explains itself.
+          const why = r.dcf_na_reason;
+          if (!why) return `<td class="na">N/A</td>`;
+          return `<td class="na has-tip" data-tip="${escHTML(why)}">N/A</td>`;
+        }
         const up = r.dcf_upside;
         const cls = typeof up === "number" ? (up >= 0 ? "pos" : "neg") : "";
         let tip = "";

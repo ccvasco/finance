@@ -1291,6 +1291,8 @@ class TestScreenerRowDcf(unittest.TestCase):
         self.assertAlmostEqual(row["dcf_value"], expected, places=6)
         self.assertAlmostEqual(row["dcf_upside"],
                                (row["dcf_value"] / 100.0 - 1) * 100, places=6)
+        # A computed DCF carries no blank-reason hover.
+        self.assertIsNone(row["dcf_na_reason"])
 
     def test_shares_fallback_from_market_cap(self):
         # No sharesOutstanding: falls back to market_cap/price = 1e12/100 = 1e10
@@ -1303,20 +1305,52 @@ class TestScreenerRowDcf(unittest.TestCase):
         self.assertAlmostEqual(fallback["dcf_value"], explicit["dcf_value"])
 
     def test_none_when_wacc_unavailable(self):
-        # _BASE_INFO has no beta -> WACC None -> DCF None (keys still present)
+        # _BASE_INFO has no beta -> WACC None -> DCF None (keys still present),
+        # and the blank cell explains itself via dcf_na_reason.
         with _patch_all():
             row = app.screener_row("TST")
         self.assertIsNone(row["dcf_value"])
         self.assertIsNone(row["dcf_upside"])
+        self.assertIn("WACC", row["dcf_na_reason"])
+
+    def test_na_reason_no_positive_fcf(self):
+        # Positive beta (WACC computable) but non-positive FCF -> the reason
+        # points at free cash flow, not WACC.
+        neg_cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [-5e9, -4e9],
+             "Operating Cash Flow": [-2e9, -1e9],
+             "Cash Dividends Paid": [-8e9, -7e9]},
+        )
+        info = {**_BASE_INFO, "beta": 1.0, "sharesOutstanding": 1e10,
+                "freeCashflow": -5e9}
+        app.clear_cache()
+        with patch("app.get_info", return_value=info), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": neg_cf,
+             }.get(attr, None)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}), \
+             patch("app.get_risk_free_rate", return_value=4.0):
+            row = app.screener_row("TST")
+        self.assertIsNone(row["dcf_value"])
+        self.assertIn("free cash flow", row["dcf_na_reason"].lower())
 
     def test_blanked_for_financials_and_reits(self):
         bank = self._row({"sector": "Financial Services",
                           "industry": "Banks — Diversified"})
         self.assertIsNone(bank["dcf_value"])
+        self.assertIn("banks", bank["dcf_na_reason"].lower())
         reit = self._row({"sector": "Real Estate", "industry": "REIT — Retail"})
         self.assertIsNone(reit["dcf_value"])
+        self.assertIn("REIT", reit["dcf_na_reason"])
         mreit = self._row({"sector": "Real Estate", "industry": "REIT — Mortgage"})
         self.assertIsNone(mreit["dcf_value"])
+        self.assertIn("mortgage REIT", mreit["dcf_na_reason"])
 
     def test_fx_mismatch_converts_to_trading_currency(self):
         # Trades USD, reports INR: the per-share DCF (reporting ccy) must come
@@ -1333,6 +1367,7 @@ class TestScreenerRowDcf(unittest.TestCase):
         # Blanked-by-design fields must not count toward Stage-0 quarantine
         self.assertIn("dcf_value", strategies._NON_METRIC_KEYS)
         self.assertIn("dcf_upside", strategies._NON_METRIC_KEYS)
+        self.assertIn("dcf_na_reason", strategies._NON_METRIC_KEYS)
         self.assertIn("financial_currency", strategies._NON_METRIC_KEYS)
 
 
