@@ -840,6 +840,13 @@ const Views = (() => {
           tip = `DCF Upside ${sign}${up.toFixed(1)}% — price is ${read}.\n`
               + `10y two-stage FCFF discounted at WACC. A screen, not a target price.`;
         }
+        // Thin FCF history: the model couldn't measure a growth rate and fell
+        // back to flat 2.5%, so the value is more assumption-heavy than one built
+        // on a real trend — flag it rather than let it read with equal confidence.
+        if (r.dcf_flat_growth) {
+          tip = (tip ? tip + "\n" : "")
+              + `Flat 2.5% growth assumed — too little FCF history to measure a growth rate.`;
+        }
         // Mismatched-currency ticker: DCF Value is shown in the trading currency
         // (next to Price), but the model runs on reporting-currency figures —
         // spell out the unconverted figure so it isn't misread.

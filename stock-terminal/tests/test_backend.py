@@ -1291,8 +1291,39 @@ class TestScreenerRowDcf(unittest.TestCase):
         self.assertAlmostEqual(row["dcf_value"], expected, places=6)
         self.assertAlmostEqual(row["dcf_upside"],
                                (row["dcf_value"] / 100.0 - 1) * 100, places=6)
-        # A computed DCF carries no blank-reason hover.
+        # A computed DCF carries no blank-reason hover; with two positive FCF
+        # periods a real CAGR is measured, so it's not the flat-growth fallback.
         self.assertIsNone(row["dcf_na_reason"])
+        self.assertFalse(row["dcf_flat_growth"])
+
+    def test_flat_growth_fallback_with_single_fcf_period(self):
+        # One annual FCF period: _fcf_cagr can't measure a growth rate, so the
+        # DCF is still produced (flat 2.5% projection) and flags dcf_flat_growth.
+        one_period_cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid"],
+            ["2024-12-31"],
+            {"Free Cash Flow": [40e9], "Operating Cash Flow": [48e9],
+             "Cash Dividends Paid": [-8e9]},
+        )
+        info = {**_BASE_INFO, "beta": 1.0, "sharesOutstanding": 1e10}
+        app.clear_cache()
+        with patch("app.get_info", return_value=info), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": one_period_cf,
+             }.get(attr, None)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}), \
+             patch("app.get_risk_free_rate", return_value=4.0):
+            row = app.screener_row("TST")
+        self.assertIsNotNone(row["dcf_value"])
+        self.assertIsNone(row["dcf_na_reason"])
+        self.assertTrue(row["dcf_flat_growth"])
+        # The value equals a flat (g0=None) projection off the single FCF.
+        expected = app._dcf_equity_value(40e9, None, row["wacc"], 30e9, 10e9) / 1e10
+        self.assertAlmostEqual(row["dcf_value"], expected, places=6)
 
     def test_shares_fallback_from_market_cap(self):
         # No sharesOutstanding: falls back to market_cap/price = 1e12/100 = 1e10
@@ -1368,6 +1399,7 @@ class TestScreenerRowDcf(unittest.TestCase):
         self.assertIn("dcf_value", strategies._NON_METRIC_KEYS)
         self.assertIn("dcf_upside", strategies._NON_METRIC_KEYS)
         self.assertIn("dcf_na_reason", strategies._NON_METRIC_KEYS)
+        self.assertIn("dcf_flat_growth", strategies._NON_METRIC_KEYS)
         self.assertIn("financial_currency", strategies._NON_METRIC_KEYS)
 
 

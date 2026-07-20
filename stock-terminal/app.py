@@ -709,6 +709,10 @@ def _screener_row(ticker):
     # an explanatory hover instead of a bare N/A. The gating checks below mirror
     # the None conditions inside _dcf_detail (FCF, WACC) so the reason is exact.
     dcf_na_reason = None
+    # True when the projection had to fall back to flat terminal-rate growth
+    # because FCF history was too short (or too noisy) to measure a CAGR — the
+    # DCF is still produced, but the frontend flags the weaker assumption on hover.
+    dcf_flat_growth = False
     if bt in ("financial", "reit", "mreit"):
         label = {"financial": "banks", "reit": "REITs",
                  "mreit": "mortgage REITs"}[bt]
@@ -726,7 +730,8 @@ def _screener_row(ticker):
         dcf_na_reason = (f"WACC ({wacc:.1f}%) is at or below the {_DCF_TERMINAL_G}% "
                          "terminal-growth floor, so the discounted value would be unstable.")
     else:
-        dcf_equity = _dcf_equity_value(fcf, _fcf_cagr(cf), wacc, total_debt, total_cash)
+        fcf_g0 = _fcf_cagr(cf)           # None -> flat terminal-rate projection
+        dcf_equity = _dcf_equity_value(fcf, fcf_g0, wacc, total_debt, total_cash)
         # equity value is in the reporting currency; convert the per-share
         # figure into the trading currency so it compares against Price
         # (fx = 1.0 when the currencies match — the common case). Keep the
@@ -740,6 +745,7 @@ def _screener_row(ticker):
         else:
             dcf_value_native = dcf_equity / shares
             dcf_value = dcf_value_native * fx
+            dcf_flat_growth = fcf_g0 is None
             if price:
                 dcf_upside = (dcf_value / price - 1) * 100
 
@@ -792,6 +798,11 @@ def _screener_row(ticker):
         # human-readable reason the DCF is blank (None when it computed); the
         # frontend shows it as the N/A cell's hover so the gap is self-explaining.
         "dcf_na_reason": dcf_na_reason,
+        # True when the computed DCF used the flat 2.5% growth fallback (FCF
+        # history too short to measure a CAGR) — surfaced as a hover caveat so a
+        # thinly-supported value isn't read with the same confidence as one built
+        # on a real growth trend.
+        "dcf_flat_growth": dcf_flat_growth,
         "eps": _num(info.get("trailingEps")),       # diluted EPS TTM
         "eps_basic": _num(basic_eps),               # basic EPS TTM
         # profitability / income
