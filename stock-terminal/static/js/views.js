@@ -2384,6 +2384,14 @@ const DeepDive = (() => {
     { key: "fcf", label: "FCF", color: "#168512", swatch: "#168512",
       desc: "Free cash flow = operating cash flow − capital expenditure." },
   ];
+  // Equity-REIT swap-in for the Net Income bar: property depreciation is a large
+  // non-cash charge that buildings rarely actually lose, so net income understates
+  // a REIT's earning power. FFO (Net Income + D&A − property-sale gains) adds it
+  // back and is the REIT-standard earnings measure. Same slot/color as Net Income
+  // — it replaces that series in FIN_SERIES when reit_kind === "equity" below.
+  const FIN_FFO_SERIES = { key: "ffo", label: "FFO", color: "#5b6f86", swatch: "#5b6f86",
+    tip: (d) => pctTip(d.ffo_margin),
+    desc: "Funds From Operations — the REIT-standard earnings measure, shown here in place of Net Income. Net Income + property depreciation − sale gains + impairments, from the fiscal-year statements. Hover a bar for FFO ÷ revenue. Property depreciation is a large non-cash charge buildings usually don't actually lose, so net income understates a REIT's real earning power; FFO adds it back. Approximate NAREIT FFO, not exact — treat as directional. See REITs.md." };
   // Revenue/Share ($) drawn as a line on the revenue chart's right axis. Its
   // shape tracks revenue, but diverges when the share count changes — a flat or
   // falling line under rising revenue reveals dilution outrunning growth.
@@ -2681,6 +2689,18 @@ const DeepDive = (() => {
       finally { dcfBtn.disabled = false; dcfBtn.textContent = old; }
     });
 
+    // Equity REITs are judged on FFO, not net income (property depreciation is a
+    // non-cash charge that understates their earnings), so swap the Net Income
+    // bars for FFO and rename the panel. Mortgage REITs keep net income — they
+    // own securities, not depreciable buildings, so FFO adds nothing (the backend
+    // leaves it out). See the REIT Metrics panel and REITs.md.
+    const finSeries = d.reit_kind === "equity"
+      ? FIN_SERIES.map((s) => (s.key === "net_income" ? FIN_FFO_SERIES : s))
+      : FIN_SERIES;
+    const finTitle = d.reit_kind === "equity"
+      ? "Revenue · Profit · FFO · FCF"
+      : "Revenue · Profit · Net Income · FCF";
+
     ov.querySelector(".dd-body").innerHTML = `
       <div class="dd-grid">
         <div class="col-3">${panel("Valuation", d.panels.valuation, fmtMaps.valuation, undefined, valuationValueTips)}</div>
@@ -2709,8 +2729,8 @@ const DeepDive = (() => {
         </div></div>
 
         <div class="col-6"><div class="panel">
-          <div class="panel-head"><span class="dot"></span>Revenue · Profit · Net Income · FCF<span class="hint" style="margin-left:auto;font-weight:400">bars: $ (left) · line: Revenue/Share (right) · hover margins for %</span></div>
-          <div class="chart-legend">${legendItems(FIN_SERIES) + legendItems(FIN_LINES, true)}</div>
+          <div class="panel-head"><span class="dot"></span>${finTitle}<span class="hint" style="margin-left:auto;font-weight:400">bars: $ (left) · line: Revenue/Share (right) · hover margins for %</span></div>
+          <div class="chart-legend">${legendItems(finSeries) + legendItems(FIN_LINES, true)}</div>
           <div class="chart-box" id="dd-revni"></div>
         </div></div>
 
@@ -2761,7 +2781,7 @@ const DeepDive = (() => {
 
     // revenue · margins · net income · fcf — all $ bars; margins show % on hover.
     // Revenue/Share rides the right axis as a per-share $ line.
-    Charts.bars(document.getElementById("dd-revni"), d.revenue_net_income, FIN_SERIES,
+    Charts.bars(document.getElementById("dd-revni"), d.revenue_net_income, finSeries,
       { height: 230, lines: FIN_LINES, y2Fmt: (v) => Fmt.price(v, finCur) });
 
     // year-over-year growth bars, grouped by year (last 5Y) + EBITDA margin line

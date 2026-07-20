@@ -1406,6 +1406,21 @@ def deepdive(ticker):
         # treasury holding.
         shares_map = {s["period"]: s["value"]
                       for s in _shares_outstanding_series(balance)[0] if s["value"]}
+        # Per-year FFO — the equity-REIT variant of the revenue chart swaps the
+        # Net Income bars for it. Same approximate NAREIT build screener_row uses
+        # for the TTM figure (Net Income + D&A − property-sale gains + impairments;
+        # the cash-flow signs already add), here across the fiscal-year history.
+        # A year missing the D&A add-back stays out of the map rather than
+        # degenerating to plain net income. Populated for every ticker but only
+        # surfaced when the frontend sees reit_kind == "equity" (see views.js and
+        # the FFO comment in screener_row).
+        da_map = {s["period"]: s["value"] for s in _series_from_stmt(
+            cashflow, "Depreciation And Amortization", "Depreciation Amortization Depletion")}
+        gains_map = {s["period"]: s["value"] for s in _series_from_stmt(cashflow, "Operating Gains Losses")}
+        impair_map = {s["period"]: s["value"] for s in _series_from_stmt(cashflow, "Asset Impairment Charge")}
+        ffo_map = {p: ni_map[p] + da_map[p] + (gains_map.get(p) or 0.0) + (impair_map.get(p) or 0.0)
+                   for p in periods
+                   if ni_map.get(p) is not None and da_map.get(p) is not None}
 
         def _margin(num, den):
             return (num / den * 100) if (num is not None and den) else None
@@ -1418,10 +1433,12 @@ def deepdive(ticker):
             {"period": p[:4], "revenue": rev_map.get(p), "gross_profit": gp_map.get(p),
              "operating_income": oi_map.get(p),
              "net_income": ni_map.get(p), "fcf": fcf_map.get(p),
+             "ffo": ffo_map.get(p),
              "revenue_per_share": _rev_per_share(p),
              "gross_margin": _margin(gp_map.get(p), rev_map.get(p)),
              "operating_margin": _margin(oi_map.get(p), rev_map.get(p)),
-             "net_margin": _margin(ni_map.get(p), rev_map.get(p))}
+             "net_margin": _margin(ni_map.get(p), rev_map.get(p)),
+             "ffo_margin": _margin(ffo_map.get(p), rev_map.get(p))}
             for p in periods[-5:]   # 5-year scope
         ]
 
