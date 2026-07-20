@@ -256,16 +256,26 @@ table.data thead th {
 /* Frozen leading columns while scrolling horizontally through the many metric
    columns: the star (icon-width, centered) then the ticker (left-aligned),
    pinned side by side. The ticker's `left` offset must match the star
-   column's fixed width below, or the two would overlap once scrolled. */
-table.data thead th:nth-child(1),
-table.data tbody td:nth-child(1) {
+   column's fixed width below, or the two would overlap once scrolled.
+   Opt-in via `.pinned-lead`: the 40px box only fits an icon, so a table whose
+   first column carries real text (statement line items, calendar tickers) must
+   not get these — it would clamp that column to 40px and then pin the *second*
+   column on top of the overflow. Such tables use `.pin-first` below. */
+table.data.pinned-lead thead th:nth-child(1),
+table.data.pinned-lead tbody td:nth-child(1) {
   position: sticky; left: 0; z-index: 4;
   width: 40px; min-width: 40px; max-width: 40px; text-align: center;
 }
-table.data thead th:nth-child(2),
-table.data tbody td:nth-child(2) { text-align: left; position: sticky; left: 40px; z-index: 4; }
-table.data thead th:nth-child(1),
-table.data thead th:nth-child(2) { z-index: 6; }
+table.data.pinned-lead thead th:nth-child(2),
+table.data.pinned-lead tbody td:nth-child(2) { text-align: left; position: sticky; left: 40px; z-index: 4; }
+table.data.pinned-lead thead th:nth-child(1),
+table.data.pinned-lead thead th:nth-child(2) { z-index: 6; }
+/* Single frozen label column, width driven by its own content. */
+table.data.pin-first thead th:nth-child(1),
+table.data.pin-first tbody td:nth-child(1) {
+  position: sticky; left: 0; z-index: 4; text-align: left;
+}
+table.data.pin-first thead th:nth-child(1) { z-index: 6; }
 table.data thead th:hover { color: var(--text); }
 table.data thead th .arrow { color: var(--accent); margin-left: 4px; font-size: 10px; }
 /* --- user-resizable columns ---------------------------------------------

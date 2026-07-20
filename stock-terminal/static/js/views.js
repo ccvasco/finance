@@ -777,7 +777,9 @@ const Views = (() => {
 
     const body = rows.map((r) => rowHTML(r, cols)).join("");
     const total = sizedTableWidth();
-    const attrs = total ? ` class="data sized" style="width:${total}px"` : ` class="data"`;
+    const attrs = total
+      ? ` class="data pinned-lead sized" style="width:${total}px"`
+      : ` class="data pinned-lead"`;
     return `<table${attrs}>${colgroupHTML(cols)}` +
       `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -1789,7 +1791,7 @@ const Views = (() => {
       <div class="panel">
         <div class="panel-head"><span class="dot"></span>Portfolio</div>
         <div class="table-wrap" style="border:0">
-          <table class="data pf-table">
+          <table class="data pinned-lead pf-table">
             <thead><tr><th class="nosort"></th><th class="nosort">Ticker</th><th class="nosort">Shares</th>
               <th class="nosort">Avg Cost</th><th class="nosort">Price</th><th class="nosort">Mkt Value</th>
               <th class="nosort">Unrealized</th><th class="nosort">Day</th><th class="nosort">Realized</th></tr></thead>
@@ -2098,7 +2100,7 @@ const Views = (() => {
       }).join("");
       return hdr + trs;
     }).join("");
-    return `<table class="data">${head}<tbody>${body}</tbody></table>`;
+    return `<table class="data pin-first">${head}<tbody>${body}</tbody></table>`;
   }
 
   function splitsTable(items) {
@@ -2123,7 +2125,7 @@ const Views = (() => {
       }).join("");
       return hdr + trs;
     }).join("");
-    return `<table class="data">${head}<tbody>${body}</tbody></table>`;
+    return `<table class="data pin-first">${head}<tbody>${body}</tbody></table>`;
   }
 
   async function calendar(root, opts = {}) {
@@ -2829,7 +2831,7 @@ const DeepDive = (() => {
           const tds = row.values.map((v) => v == null ? `<td class="na">N/A</td>` : `<td>${Fmt.big(v, cur)}</td>`).join("");
           return `<tr><td class="ticker-cell" style="cursor:default">${row.label}</td>${tds}</tr>`;
         }).join("");
-        box.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+        box.innerHTML = `<table class="data pin-first"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
       } catch (e) { box.innerHTML = `<div class="empty">${e.message}</div>`; }
     }
     const tabs = document.getElementById("dd-stmt-tabs");
