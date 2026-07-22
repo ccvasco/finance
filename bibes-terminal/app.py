@@ -631,21 +631,6 @@ def _screener_row(ticker):
     ffo_impair = _stmt_val(cf, "Asset Impairment Charge") or 0.0
     ffo = ((net_income + d_and_a + ffo_gains + ffo_impair)
            if (bt == "reit" and net_income is not None and d_and_a is not None) else None)
-    # Hybrid mortgage REITs — mREITs that also own a meaningful portfolio of
-    # physical property (STWD, LADR, ABR…). Yahoo has no hybrid industry: it
-    # files them all under "REIT — Mortgage", and its normalized balance sheet
-    # drops their property portfolios entirely, so the one usable signal is the
-    # size of the D&A line: buildings depreciate, securities don't. Empirically
-    # the split is wide — pure mREITs report no D&A or ≤1.5% of revenue (NLY,
-    # the documented worst case), property-owning hybrids 10–19% — so 5% sits
-    # comfortably between. Names whose hybrid side is servicing or credit
-    # rather than property (RITM, EFC) intentionally stay plain mREITs.
-    # Label only: hybrids keep the mREIT rubric (the loan book dominates) and
-    # FFO stays unbuilt. None outside the mreit bucket.
-    mreit_rev = _stmt_val(inc, "Total Revenue", "TotalRevenue") or total_revenue
-    mreit_hybrid = (bool(d_and_a and mreit_rev and mreit_rev > 0
-                         and d_and_a / mreit_rev >= 0.05)
-                    if bt == "mreit" else None)
     # Book value per share trend — the mortgage-REIT quality signal (see grader).
     bvps_growth = _bvps_growth(bal)
     # Revenue per share trend — S2's fundamental-compounding signal (see grader).
@@ -867,11 +852,6 @@ def _screener_row(ticker):
         "ffo_coverage": _num(ffo / abs(div_paid)) if (ffo is not None and div_paid) else None,
         # book value per share trend (annualized %), the mortgage-REIT signal
         "bvps_growth": _num(bvps_growth),
-        # mREITs only (None everywhere else): True when the D&A line says this
-        # mortgage REIT also owns meaningful property — a hybrid REIT. Drives
-        # the hybrid tag in the frontend; grading is unaffected (see comment
-        # above and REITs.md).
-        "mreit_hybrid": mreit_hybrid,
         # revenue per share trend (annualized %), S2's fundamental-growth signal
         "rps_growth": _num(rps_growth),
         # dividend
@@ -1770,10 +1750,6 @@ def deepdive(ticker):
             "market_cap_native": _num(market_cap_native),
             # "equity" | "mortgage" | None — which REIT rubric panels.reit holds.
             "reit_kind": reit_kind,
-            # mortgage kind only: True when this mREIT also owns meaningful
-            # property (a hybrid REIT — see _screener_row). Refines the header
-            # badge and panel note; the rubric stays mortgage.
-            "mreit_hybrid": srow.get("mreit_hybrid"),
             "panels": {
                 "valuation": {
                     "Market Cap": _num(market_cap),
