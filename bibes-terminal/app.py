@@ -1672,6 +1672,22 @@ def deepdive(ticker):
             shares = _num(info.get("sharesOutstanding"))
             book_ps = _num(info.get("bookValue"))
             pb = _num(info.get("priceToBook"))
+            # Debt / Gross Book Value — the leverage gauge property REITs
+            # (Canadian ones especially) covenant against; declarations of
+            # trust commonly cap it near 60%. Gross book value = total assets
+            # with accumulated depreciation added back (assets at undepreciated
+            # cost). Yahoo's normalized balance sheet carries REIT property in
+            # "Investment Properties" at *net* value with no accumulated-
+            # depreciation row, so for a US-GAAP REIT the add-back is usually
+            # unavailable and the shown ratio runs a little high (conservative);
+            # a fair-value REIT's total assets already ≈ GBV, so it's exact
+            # there. Property-owner metric only: the mortgage branch stays on
+            # Debt/Equity (its repo leverage isn't fully in Total Debt, and
+            # "gross book" has no meaning for a securities portfolio).
+            acc_dep = _stmt_val(balance, "Accumulated Depreciation")
+            gbv = (total_assets + abs(acc_dep or 0)) if total_assets else None
+            debt_gbv = (_num(total_debt / gbv * 100)
+                        if (total_debt is not None and gbv) else None)
             # Three-way, named for the frontend so the panel can say *which* REIT
             # rubric it is showing and why the FFO family is (or isn't) there:
             #   equity      — owns depreciable buildings, FFO computable → FFO panel.
@@ -1699,6 +1715,7 @@ def deepdive(ticker):
                     "FFO Coverage": srow.get("ffo_coverage"),
                     "Book Value/Share": book_ps,
                     "Price/Book": pb,
+                    "Debt/GBV %": debt_gbv,
                 }
             else:            # mortgage & fair-value: no usable FFO → book value.
                 # Book value ≈ NAV for a fair-value REIT (property marked to fair
@@ -1715,6 +1732,8 @@ def deepdive(ticker):
                     "Div Coverage (NI)": _num(ni / abs(div_paid))
                     if (ni is not None and div_paid) else None,
                 }
+                if reit_kind == "fair-value":
+                    reit_panel["Debt/GBV %"] = debt_gbv
 
         return {
             "ticker": ticker,

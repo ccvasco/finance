@@ -130,6 +130,28 @@ This is one of the most widely used valuation metrics for REITs.
 
 ---
 
+### Debt-to-Gross-Book-Value (Debt/GBV)
+
+The leverage gauge property REITs report — and covenant — against:
+
+```text
+Debt/GBV = Total Debt / Gross Book Value
+Gross Book Value = Total Assets + Accumulated Depreciation (add-back)
+```
+
+Measuring debt against the **undepreciated** asset base matters for the same reason FFO adds depreciation back to earnings: accounting depreciation shrinks the carrying value of buildings that usually haven't lost value, so plain debt-to-assets overstates how levered a property REIT really is. Canadian REIT declarations of trust commonly cap Debt/GBV near **60%**; below ~45% is conservative, 45–55% typical.
+
+Two data caveats, mirroring the FFO discussion above:
+
+- Yahoo's normalized balance sheet carries US-GAAP REIT property in `Investment Properties` at **net** value, with no accumulated-depreciation row to add back — so for those REITs the computed ratio runs a little **high** (conservative).
+- For **fair-value (IFRS) REITs** the figure is exact: their assets already sit at fair value, and Debt/GBV over fair-value assets is precisely how their covenants define it.
+
+The metric applies only to REITs that own property (equity and fair-value kinds). A **mortgage REIT** owns securities — "gross book" has no meaning there, and its repo financing isn't fully captured in `Total Debt` — so its leverage gauge is Debt/Equity (see the mREIT rubric below).
+
+**A note on occupancy.** Occupancy rate sits next to leverage in every REIT supplemental, but it is an *operational* disclosure, not a financial-statement line: no normalized data feed (Yahoo included) carries it, so this app cannot compute or display it. Read it from the REIT's own quarterly supplemental package.
+
+---
+
 ## Why This Is a Better Approach
 
 Using **FFO** instead of Free Cash Flow makes the evaluation much closer to how professional investors analyze REITs because it:

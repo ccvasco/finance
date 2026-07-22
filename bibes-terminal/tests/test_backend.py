@@ -1549,13 +1549,13 @@ class TestDeepdive(unittest.TestCase):
         # _BASE_INFO is Technology/Software -> no "reit" panel.
         self.assertNotIn("reit", self._run()["panels"])
 
-    def _run_reit(self, industry, cashflow, extra_info):
+    def _run_reit(self, industry, cashflow, extra_info, balance=None):
         info = {**_BASE_INFO, "sector": "Real Estate", "industry": industry,
                 **extra_info}
         mock_tk = MagicMock()
         mock_tk.income_stmt = _INCOME_DF
         mock_tk.cash_flow = cashflow
-        mock_tk.balance_sheet = _BAL_DF
+        mock_tk.balance_sheet = _BAL_DF if balance is None else balance
         app.clear_cache()
         with patch("app.get_info", return_value=info), \
              patch("app.yf.Ticker", return_value=mock_tk), \
@@ -1575,7 +1575,8 @@ class TestDeepdive(unittest.TestCase):
                            {"bookValue": 40.0, "sharesOutstanding": 1e9})
         reit = d["panels"]["reit"]
         self.assertEqual(set(reit), {"FFO", "FFO/Share", "P/FFO", "FFO Payout %",
-                                     "FFO Coverage", "Book Value/Share", "Price/Book"})
+                                     "FFO Coverage", "Book Value/Share", "Price/Book",
+                                     "Debt/GBV %"})
         # NI (50e9) + D&A (30e9) = 80e9
         self.assertAlmostEqual(reit["FFO"], 80e9)
         self.assertAlmostEqual(reit["FFO/Share"], 80.0)          # 80e9 / 1e9 shares
@@ -1644,6 +1645,54 @@ class TestDeepdive(unittest.TestCase):
                            {"bookValue": 7.0, "netIncomeToCommon": 4e9})
         self.assertNotIn("FFO", d["panels"]["reit"])
         self.assertIn("Book Value/Share", d["panels"]["reit"])
+
+    def test_equity_reit_debt_to_gross_book_value(self):
+        # GBV = Total Assets + |Accumulated Depreciation| (the asset base at
+        # undepreciated cost); Debt/GBV = 30e9 / (100e9 + 20e9) = 25%.
+        bal = _make_df(
+            ["Stockholders Equity", "Long Term Debt", "Total Debt",
+             "Total Assets", "Accumulated Depreciation"],
+            ["2024-12-31", "2023-12-31"],
+            {"Stockholders Equity": [50e9, 45e9], "Long Term Debt": [25e9, 22e9],
+             "Total Debt": [30e9, 27e9], "Total Assets": [100e9, 95e9],
+             "Accumulated Depreciation": [-20e9, -18e9]})
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [30e9, 28e9]})
+        d = self._run_reit("REIT - Retail", cf,
+                           {"bookValue": 40.0, "sharesOutstanding": 1e9},
+                           balance=bal)
+        self.assertAlmostEqual(d["panels"]["reit"]["Debt/GBV %"], 25.0)
+
+    def test_fair_value_reit_gets_debt_gbv_mortgage_does_not(self):
+        # A fair-value (IFRS) REIT owns buildings, so Debt/GBV applies — and with
+        # property already carried at fair value (no accumulated-depreciation
+        # row), GBV is simply total assets: 30e9 / 100e9 = 30%. A mortgage REIT
+        # owns securities, where "gross book" has no meaning (and repo leverage
+        # isn't fully inside Total Debt), so its panel must not show the row.
+        bal = _make_df(
+            ["Stockholders Equity", "Long Term Debt", "Total Debt", "Total Assets"],
+            ["2024-12-31", "2023-12-31"],
+            {"Stockholders Equity": [50e9, 45e9], "Long Term Debt": [25e9, 22e9],
+             "Total Debt": [30e9, 27e9], "Total Assets": [100e9, 95e9]})
+        cf = _make_df(   # no D&A line -> not the equity branch
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9]})
+        d = self._run_reit("REIT - Retail", cf,
+                           {"bookValue": 40.0, "netIncomeToCommon": 4e9},
+                           balance=bal)
+        self.assertEqual(d["reit_kind"], "fair-value")
+        self.assertAlmostEqual(d["panels"]["reit"]["Debt/GBV %"], 30.0)
+        m = self._run_reit("REIT - Mortgage", cf,
+                           {"bookValue": 7.0, "netIncomeToCommon": 4e9},
+                           balance=bal)
+        self.assertNotIn("Debt/GBV %", m["panels"]["reit"])
 
     def test_valuation_keys(self):
         d = self._run()
