@@ -262,7 +262,7 @@ const Views = (() => {
     { key: "market_cap", label: "Mkt Cap", fmt: (v, r) => Fmt.big(v, r.currency) },
     { key: "enterprise_value", label: "EV", fmt: (v, r) => Fmt.big(v, r.financial_currency || r.currency) },
     { key: "industry", label: "Industry", kind: "text" },
-    // strategy grades (0-100) — see the strategy .md docs in stock-terminal/.
+    // strategy grades (0-100) — see the strategy .md docs in bibes-terminal/.
     // `gradeTip` marks the cell for the derivation-table hover tooltip.
     { key: "strategy_1", label: "S1 Triage", fmt: gradeFmt, cls: gradeClass(65, 45), gradeTip: "1" },
     { key: "strategy_2", label: "S2 Compounder", fmt: gradeFmt, cls: gradeClass(70, 50), gradeTip: "2" },

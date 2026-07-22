@@ -219,7 +219,7 @@ source /home/vc/yfinance/venv/bin/activate
 pip install yfinance openpyxl lxml
 
 # 2. Run the server
-python stock-terminal/app.py
+python bibes-terminal/app.py
 
 # 3. Open in your browser
 #    http://127.0.0.1:8765
@@ -228,7 +228,7 @@ python stock-terminal/app.py
 Options:
 
 ```bash
-python stock-terminal/app.py --port 9000 --host 0.0.0.0
+python bibes-terminal/app.py --port 9000 --host 0.0.0.0
 ```
 
 Server already in use:
@@ -250,7 +250,7 @@ in-repo `yfinance` takes precedence over any installed version:
 
 ```bash
 # From the repo root
-python stock-terminal/app.py
+python bibes-terminal/app.py
 ```
 
 ---
@@ -258,7 +258,7 @@ python stock-terminal/app.py
 ## Project layout
 
 ```
-stock-terminal/
+bibes-terminal/
 ├── app.py                  # stdlib HTTP server: JSON API + static serving + xlsx export
 ├── strategies.py           # strategy graders (pure functions over screener rows)
 ├── chat.py                 # Analyst Chat agent (/api/chat, anthropic SDK)

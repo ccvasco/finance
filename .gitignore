@@ -24,10 +24,10 @@ ENV/
 /doc/source/reference/api
 !yfinance.css
 !/doc/source/development/assets/branches.png
-!/stock-terminal/static/index.html
-!/stock-terminal/static/css/styles.css
+!/bibes-terminal/static/index.html
+!/bibes-terminal/static/css/styles.css
 
 # Stock Terminal's saved watchlists/settings — local user data, not source
-/stock-terminal/state.json
-/stock-terminal/state.json.tmp
-/stock-terminal/state-backups/
+/bibes-terminal/state.json
+/bibes-terminal/state.json.tmp
+/bibes-terminal/state-backups/
