@@ -795,7 +795,16 @@ const Views = (() => {
         // hover blurb: what the company is/does (absent on rows cached
         // before the field existed — reappears after a ↻ Refresh)
         const tipAttr = r.summary ? ` data-tip="${escHTML(r.summary)}"` : "";
-        return `<td class="ticker-cell" data-ticker="${escHTML(r.ticker)}"${tipAttr}>${escHTML(r.ticker)}` +
+        // Mortgage REITs get an explicit tag on the ticker itself: their yield
+        // and P/B invite comparison against equity REITs they should never be
+        // compared with, and the Industry column that would say so may be
+        // scrolled out of view. Same industry test as _business_type (both
+        // "reit" and "mortgage", so mortgage originators don't match).
+        const ind = (r.industry || "").toLowerCase();
+        const mreitTag = ind.includes("reit") && ind.includes("mortgage")
+          ? ` <span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. FFO and the usual REIT metrics don't apply; judge it on book value per share (and its trend), dividend coverage and leverage. See REITs.md.">mREIT</span>`
+          : "";
+        return `<td class="ticker-cell" data-ticker="${escHTML(r.ticker)}"${tipAttr}>${escHTML(r.ticker)}${mreitTag}` +
           `<div class="sub">${escHTML((r.name || "").slice(0, 22))}</div></td>`;
       }
       if (c.kind === "star") return `<td>${starHTML(r.ticker)}</td>`;
@@ -2659,6 +2668,7 @@ const DeepDive = (() => {
       <span class="dd-back" id="dd-back">‹ Back</span>
       <span class="dd-title">${ticker}</span>
       <span class="dd-name">${d.name || ""} · ${d.exchange || ""} ${d.sector ? "· " + d.sector : ""}</span>
+      ${d.reit_kind === "mortgage" ? `<span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. It owns paper, not buildings, so FFO, P/FFO and the usual REIT metrics don't apply. Judge it on book value per share (and its trend), dividend coverage and leverage — see the Mortgage REIT Metrics panel and REITs.md.">MORTGAGE REIT</span>` : ""}
       <span class="dd-price">${Fmt.cell(d.price, (v) => Fmt.price(v, cur))} ${chgTxt}</span>
       <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>

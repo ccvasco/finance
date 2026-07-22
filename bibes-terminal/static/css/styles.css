@@ -435,6 +435,20 @@ table.data tbody td.cov-red    { color: var(--down); background: color-mix(in sr
 .dd-back:hover { color: var(--accent); }
 .dd-title { font-size: 20px; font-weight: 800; letter-spacing: .5px; font-family: var(--mono); }
 .dd-name { color: var(--text-dim); font-size: 13px; }
+/* Mortgage-REIT identity pill — on the deep-dive header and on screener ticker
+   cells. An mREIT is a levered securities fund, not a landlord, and both its
+   sector label ("Real Estate") and its headline yield invite comparison with
+   equity REITs it should never be compared with — so the kind is stamped where
+   it can't be missed, with the full explanation on hover (data-tip). */
+.mreit-tag {
+  flex: none; cursor: help; display: inline-block; vertical-align: 1px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
+  font-size: 9px; font-weight: 700; letter-spacing: .6px;
+  border-radius: 8px; padding: 1px 6px;
+}
+.dd-top .mreit-tag { font-size: 10px; letter-spacing: .8px; border-radius: 10px; padding: 2px 8px; }
 .dd-price { font-family: var(--mono); font-size: 20px; font-weight: 700; margin-left: auto; }
 .dd-body { padding: 22px 26px 60px; max-width: 1320px; margin: 0 auto; }
 .dd-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
