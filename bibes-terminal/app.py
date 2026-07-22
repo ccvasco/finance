@@ -648,6 +648,25 @@ def _screener_row(ticker):
     # quarter) is surfaced separately as debt_to_equity_mrq.
     debt_eq = (total_debt / equity * 100) if (total_debt and equity and equity != 0) else None
     lt_debt_eq = (lt_debt / equity * 100) if (lt_debt and equity and equity != 0) else None
+    # Debt/Total Assets — the leverage gauge the REIT rubrics grade on, in place
+    # of Debt/Equity. Book equity is the worst possible denominator for a
+    # depreciated-cost property business: depreciation erodes it every year (the
+    # same distortion FFO corrects on the earnings side), so D/E drifts upward
+    # with portfolio age, blows up nonlinearly on mature portfolios (SPG ~557%,
+    # BXP ~317%) and goes negative outright when accumulated depreciation
+    # exceeds equity (IRM ~−2010%), where the negative-equity guard hands out a
+    # zero that reflects an accounting artifact rather than a leverage judgment.
+    # Total assets is a far larger and steadier denominator, so the ratio stays
+    # comparable across REITs of different portfolio ages.
+    #
+    # Deliberately NOT Debt/Gross Book Value, the covenant metric the deep view
+    # displays: GBV needs an accumulated-depreciation add-back that Yahoo exposes
+    # for only ~1 REIT in 7, and where present it is worth up to 45% of the ratio
+    # (HST: 43.3% → 23.9%). Grading on it would let a data-feed quirk decide a
+    # score between otherwise identical REITs. Accuracy wins for the displayed
+    # figure, consistency wins for the graded one. See REITs.md.
+    debt_assets = ((total_debt / total_assets * 100)
+                   if (total_debt and total_assets and total_assets > 0) else None)
     fcf_coverage = (fcf / abs(div_paid)) if (fcf is not None and div_paid) else None
     ebitda = _num(info.get("ebitda"))
     debt_ebitda = (total_debt / ebitda) if (total_debt and ebitda and ebitda > 0) else None
@@ -833,6 +852,9 @@ def _screener_row(ticker):
         "debt_to_equity_mrq": _num(info.get("debtToEquity")),
         "debt_ebitda": _num(debt_ebitda),
         "lt_debt_to_equity": _num(lt_debt_eq),
+        # Percentage points. Computed for every ticker, but only the REIT rubrics
+        # currently grade on it (see the derivation comment above).
+        "debt_to_assets": _num(debt_assets),
         "current_ratio": _num(info.get("currentRatio")),
         "quick_ratio": _num(info.get("quickRatio")),
         "total_cash": _num(total_cash),
@@ -1688,6 +1710,14 @@ def deepdive(ticker):
             gbv = (total_assets + abs(acc_dep or 0)) if total_assets else None
             debt_gbv = (_num(total_debt / gbv * 100)
                         if (total_debt is not None and gbv) else None)
+            # Debt/Assets sits beside it as the same ratio without the add-back
+            # — and is the one the strategy grades actually use, precisely
+            # because it is defined identically for every REIT (see
+            # _reit_leverage_frac in strategies.py). For a REIT with no
+            # accumulated-depreciation row the two figures coincide; where they
+            # diverge, the gap *is* the add-back, so showing both makes the
+            # adjustment visible rather than hidden inside one number.
+            debt_assets = srow.get("debt_to_assets")
             # Three-way, named for the frontend so the panel can say *which* REIT
             # rubric it is showing and why the FFO family is (or isn't) there:
             #   equity      — owns depreciable buildings, FFO computable → FFO panel.
@@ -1716,6 +1746,7 @@ def deepdive(ticker):
                     "Book Value/Share": book_ps,
                     "Price/Book": pb,
                     "Debt/GBV %": debt_gbv,
+                    "Debt/Assets %": debt_assets,
                 }
             else:            # mortgage & fair-value: no usable FFO → book value.
                 # Book value ≈ NAV for a fair-value REIT (property marked to fair
@@ -1734,6 +1765,7 @@ def deepdive(ticker):
                 }
                 if reit_kind == "fair-value":
                     reit_panel["Debt/GBV %"] = debt_gbv
+                    reit_panel["Debt/Assets %"] = debt_assets
 
         return {
             "ticker": ticker,

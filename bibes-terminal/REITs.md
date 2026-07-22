@@ -148,6 +148,36 @@ Two data caveats, mirroring the FFO discussion above:
 
 The metric applies only to REITs that own property (equity and fair-value kinds). A **mortgage REIT** owns securities — "gross book" has no meaning there, and its repo financing isn't fully captured in `Total Debt` — so its leverage gauge is Debt/Equity (see the mREIT rubric below).
 
+### Debt/Assets, and why the grades use it instead
+
+The deep view shows a second leverage row beside Debt/GBV:
+
+```text
+Debt/Assets = Total Debt / Total Assets
+```
+
+It is the same ratio without the accumulated-depreciation add-back, so for most REITs the two rows read identically, and where they diverge **the gap is exactly the add-back** (Host Hotels: 43.3% on assets, 23.9% on gross book).
+
+**The strategy grades score on Debt/Assets, not Debt/GBV.** This is a deliberate trade of accuracy for consistency. Debt/GBV is the more accurate number — it is the covenant definition — but it depends on a data row Yahoo exposes for only about **one REIT in seven**, and where present that add-back is worth up to 45% of the ratio. Grading on it would mean two economically identical REITs receiving different scores because one happened to have its accumulated-depreciation line published. A displayed figure can carry that caveat in a tooltip; a comparative rubric cannot. Total assets, by contrast, is reported by every REIT.
+
+Bands are `≤45%` full credit, `≤60%` half, above that zero. They are looser than the 60% covenant line because total assets carries property at *depreciated* cost — a smaller denominator than GBV — so the same REIT reads higher on this measure.
+
+### Why neither one is Debt/Equity
+
+Both replaced `Debt/Equity`, which the rubrics previously used, and the reason is the reason this whole document exists: **depreciation**. Book equity absorbs the full accumulated depreciation charge, so it shrinks every year while the buildings hold their value. Debt/Equity therefore measures portfolio *age* as much as borrowing:
+
+| REIT | Debt/Equity | Debt/Assets | What D/E implied |
+| --- | --- | --- | --- |
+| Simon Property (SPG) | 557% | 71.4% | Same "aggressive" bucket as any distressed name |
+| Boston Properties (BXP) | 317% | 62.5% | Indistinguishable from SPG above the 200% band |
+| Iron Mountain (IRM) | **−2010%** | 93.3% | Negative equity → scored as an accounting artifact |
+| Mid-America (MAA) | 99.9% | 47.4% | Full credit |
+| Ventas (VTR) | 101.6% | 46.1% | Half credit — 1.7pp from MAA, a tenth of the grade |
+
+Three distinct failures are visible here. Above the old ≤200% band D/E could no longer rank anything (SPG and BXP land together). Iron Mountain's decades of depreciation drove book equity negative, so the ratio inverted and the negative-equity guard handed out a zero that reflected accounting, not leverage — Iron Mountain *is* heavily levered at 93% of assets, but the old rubric was right by accident. And at the band edge the metric was knife-edged: MAA and VTR sit 1.7 percentage points apart in a noisy denominator, which flipped a tenth of the grade; on assets they are neighbours, as they should be.
+
+Switching does not reshuffle the rankings — the safe names stay safe and genuinely over-levered REITs still score zero. What it removes is the negative-equity cliff, the compression above 200%, and the boundary fragility.
+
 **A note on occupancy.** Occupancy rate sits next to leverage in every REIT supplemental, but it is an *operational* disclosure, not a financial-statement line: no normalized data feed (Yahoo included) carries it, so this app cannot compute or display it. Read it from the REIT's own quarterly supplemental package.
 
 ---

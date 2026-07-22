@@ -148,20 +148,31 @@ is titled "Mortgage REIT Metrics" for the third:
 | Net Income | Net income to common shareholders. Mortgage and fair-value REITs. | currency | For a fair-value REIT this includes unrealized property revaluations; for an mREIT, mark-to-market swings. Read the trend, not one period. |
 | Div Coverage (NI) | Net income ÷ dividends paid. Mortgage and fair-value REITs. | multiple (×) | <1.0× means distributing more than it earns — a common mREIT warning sign. |
 | Debt/GBV | Total Debt ÷ **gross book value** (total assets with accumulated depreciation added back — the asset base at undepreciated cost). Property REITs only: equity and fair-value kinds. | fraction | <0.45 conservative, 0.45–0.55 typical, >0.60 highly levered. |
+| Debt/Assets | Total Debt ÷ Total Assets — the row above *without* the add-back, and the figure the strategy grades actually score. Property REITs only. | fraction | ≤0.45 conservative, ≤0.60 typical, >0.60 aggressive. |
 
-**Why Debt/GBV rather than plain debt-to-assets.** It is the leverage gauge
-property REITs actually report and covenant against — declarations of trust
-commonly cap it near 60%. Measuring debt against the *undepreciated* asset base
-matters for the same reason FFO adds depreciation back to earnings: accounting
-depreciation shrinks the carrying value of buildings that usually haven't lost
-value, so debt-to-assets overstates how levered a property REIT really is. Two
-data caveats: Yahoo carries US-GAAP REIT property at **net** value with no
-accumulated-depreciation row to add back, so for those REITs the figure runs
-slightly **high** (conservative); for fair-value REITs it is exact, since their
-assets already sit at fair value and that is precisely how their covenants
-define it. Mortgage REITs are excluded — "gross book" has no meaning for a
+**Why two leverage rows.** Debt/GBV is the gauge property REITs report and
+covenant against — declarations of trust commonly cap it near 60% — because
+measuring debt against the *undepreciated* asset base matters for the same
+reason FFO adds depreciation back to earnings: depreciation shrinks the carrying
+value of buildings that usually haven't lost value. It is the more **accurate**
+figure, but it depends on an accumulated-depreciation add-back Yahoo exposes for
+only about one REIT in seven (and where present it is large — Host Hotels:
+0.433 → 0.239). Debt/Assets is the same ratio without the add-back: less
+precise, but defined identically for **every** REIT. The two therefore coincide
+for most REITs, and where they diverge the gap is exactly the add-back.
+
+The **strategy grades score on Debt/Assets**, not Debt/GBV — accuracy wins for a
+figure you read with its caveat in front of you, consistency wins for one that
+assigns scores, where a data-feed quirk must never separate two otherwise
+identical REITs. Neither is Debt/Equity, and that is deliberate: book equity is
+unusable for a depreciated-cost property business, since depreciation erodes it
+every year, so D/E climbs with portfolio age alone and inverts once accumulated
+depreciation exceeds equity (Iron Mountain reads ≈ −2010%).
+
+Mortgage REITs are excluded from both rows — "gross book" has no meaning for a
 securities portfolio, and their repo financing isn't fully captured in Total
-Debt, so the ratio would understate their real leverage.
+Debt, so either ratio would understate their real leverage. They are graded on
+Debt/Equity against wide agency bands instead.
 
 **Occupancy rate is not available.** It is the one headline REIT metric this
 export cannot carry: occupancy is an *operational* disclosure published in each

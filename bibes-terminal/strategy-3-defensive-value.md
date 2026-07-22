@@ -118,8 +118,9 @@ scores are not interchangeable and must never be read on each other's bands.
 
 *Financials* score this pillar on ROA alone (25 pts). *REITs* replace it too:
 Current Ratio and Altman-Z don't apply to a property business and its leverage
-is high by design, so strength is judged on REIT-appropriate D/E bands (≤100%
-conservative, ≤200% typical) plus how well **FFO** covers the mandatory, high
+is high by design, so strength is judged on REIT-appropriate Debt/Total-Assets
+bands (≤45% conservative, ≤60% typical — assets rather than equity, which
+depreciation erodes with portfolio age) plus how well **FFO** covers the mandatory, high
 distribution — GAAP FCF understates a REIT's distributable cash, so it is only
 the fallback when no FFO is available (and is banded more leniently to match).
 See the archetypes section in stock-triage-strategy.md.
@@ -228,7 +229,7 @@ depreciation-distorted for property, so four of the five pillars are rebuilt on
 - **Pillar B — asset backing (15):** P/B (real estate has genuine book value —
   a rough NAV proxy), banded < 1.0 → 15 / < 1.5 → 10 / ≤ 2.5 → 5. The Graham
   P/E × P/B test is dropped (it uses the distorted P/E).
-- **Pillar C — financial strength (25):** REIT D/E bands (≤100% → 12, ≤200% → 6)
+- **Pillar C — financial strength (25):** REIT Debt/Assets bands (≤45% → 12, ≤60% → 6)
   + FFO coverage of the distribution (> 1.5× → 8, > 1.2× → 4) + FFO positive (5).
   The coverage bands sit above Pillar D's because this pillar is buying
   resilience, not just sustainability — and FFO is not AFFO, so it overstates

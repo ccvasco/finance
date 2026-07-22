@@ -223,7 +223,7 @@ asset-light, cyclical, or capital-intensive — and each strategy substitutes
 metrics that don't fit that archetype (see **§6a** below). **Financials** and
 **REITs** get substituted pillars in all three strategies: S1 and S2 swap in
 ROE/net-margin/Piotroski for financials and a dedicated FFO-based rubric for
-REITs (FFO returns, REIT D/E bands, P/FFO — never zeroing them on the
+REITs (FFO returns, REIT Debt/Assets bands, P/FFO — never zeroing them on the
 industrial Debt/EBITDA or a depreciation-inflated P/E); S3 swaps in ROA
 (financials) or FFO-based earnings-yield/quality/dividend pillars (REITs).
 **Cyclical and asset-light** names stay on the standard rubrics across all
@@ -284,16 +284,30 @@ built around **approximate NAREIT FFO**:
 | **P/FFO** | Market cap ÷ FFO | The REIT equivalent of P/E — the standard REIT valuation multiple. | <12× cheap-ish, 12–18× typical, >18× rich (real-world REIT P/FFO commonly runs 10–20×). |
 | **FFO Payout Ratio %** | Dividends paid ÷ FFO | Share of FFO distributed. REITs must legally pay out ~90% of *taxable* income, so this runs structurally higher than a normal payout ratio. | ≤80% comfortable cushion, ≤100% sustainable norm, **>100% paying out more than the business generates** — a real red flag. |
 | **FFO Coverage** | FFO ÷ dividends paid | How many times FFO covers the dividend (inverse of payout ratio, as a multiple). | ≥1.0× sustainable, <1.0× tight to under-covered. |
+| **Debt/Assets %** | Total Debt ÷ Total Assets | **The leverage figure all three REIT rubrics are graded on**, in place of Debt/Equity. Shown in the deep view beside Debt/GBV, which is the same ratio *with* the accumulated-depreciation add-back — so the two coincide for most REITs and the gap between them is exactly that add-back. | **≤45% conservative**, ≤60% typical, **>60% aggressive**. |
 | **Debt/GBV %** | Total Debt ÷ (Total Assets + accumulated-depreciation add-back) | Balance-sheet leverage against **gross book value** — the asset base at undepreciated cost, the gauge property REITs covenant against (declarations of trust commonly cap it near 60%). Deep view only, property REITs only (equity and fair-value kinds; a mortgage REIT's repo leverage isn't fully in Total Debt and "gross book" has no meaning for a securities portfolio). Yahoo carries US-GAAP REIT property at *net* value with no accumulated-depreciation row, so for those the shown ratio runs a little high (conservative); exact for fair-value (IFRS) REITs, whose assets already sit at fair value. | **<45% conservative**, 45–55% typical, **>60% highly levered**. |
 
-> **Why Debt/GBV rather than plain debt-to-assets or Debt/Equity.** It is the
-> leverage gauge property REITs actually report and covenant against. Measuring
-> debt against the *undepreciated* asset base matters for exactly the reason FFO
-> adds depreciation back to earnings: accounting depreciation shrinks the
-> carrying value of buildings that usually haven't lost value, so debt-to-assets
-> overstates how levered a property REIT really is — and Debt/Equity compounds
-> the same distortion in its denominator, since depreciation erodes book equity
-> year after year. Gross book value sidesteps both.
+> **Why two leverage rows, and why neither is Debt/Equity.** Book equity is the
+> worst available denominator for a depreciated-cost property business, for the
+> same reason net income is the wrong earnings measure: depreciation erodes it
+> every year while the buildings hold their value. Debt/Equity therefore climbs
+> with portfolio *age* rather than borrowing (Simon Property ≈557%, Boston
+> Properties ≈317%), and inverts entirely once accumulated depreciation exceeds
+> equity (Iron Mountain ≈ −2010%). Both alternatives below fix that; they differ
+> in what they trade off.
+>
+> **Debt/GBV is the more accurate figure** — gross book value is the
+> undepreciated asset base, and the ≤60% cap REIT declarations of trust draw is
+> written against it. But it needs an accumulated-depreciation add-back that
+> Yahoo exposes for only about **one REIT in seven**, and where present it is
+> worth up to 45% of the ratio (Host Hotels: 43.3% → 23.9%).
+>
+> **Debt/Assets is the more consistent figure** — total assets is reported by
+> every REIT, so it is defined identically across the whole graded population.
+> That is why **the strategy grades score on Debt/Assets** while the deep view
+> *displays* both: accuracy wins for a figure you read with its caveat in front
+> of you, consistency wins for one that assigns scores, where a data-feed quirk
+> must never separate two otherwise identical REITs.
 >
 > **Occupancy rate is deliberately absent.** It sits beside leverage in every
 > REIT supplemental and is a genuine REIT metric, but it is an *operational*

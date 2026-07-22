@@ -1576,7 +1576,7 @@ class TestDeepdive(unittest.TestCase):
         reit = d["panels"]["reit"]
         self.assertEqual(set(reit), {"FFO", "FFO/Share", "P/FFO", "FFO Payout %",
                                      "FFO Coverage", "Book Value/Share", "Price/Book",
-                                     "Debt/GBV %"})
+                                     "Debt/GBV %", "Debt/Assets %"})
         # NI (50e9) + D&A (30e9) = 80e9
         self.assertAlmostEqual(reit["FFO"], 80e9)
         self.assertAlmostEqual(reit["FFO/Share"], 80.0)          # 80e9 / 1e9 shares
@@ -1667,6 +1667,33 @@ class TestDeepdive(unittest.TestCase):
                            {"bookValue": 40.0, "sharesOutstanding": 1e9},
                            balance=bal)
         self.assertAlmostEqual(d["panels"]["reit"]["Debt/GBV %"], 25.0)
+        # Debt/Assets sits beside it without the add-back: 30e9 / 100e9 = 30%.
+        # The gap between the two rows is exactly the add-back, which is the
+        # point of showing both.
+        self.assertAlmostEqual(d["panels"]["reit"]["Debt/Assets %"], 30.0)
+
+    def test_reit_debt_gbv_equals_debt_assets_without_addback(self):
+        # No accumulated-depreciation row (the common case — Yahoo exposes one
+        # for roughly 1 REIT in 7), so gross book value degenerates to total
+        # assets and the two panel rows must agree exactly.
+        bal = _make_df(
+            ["Stockholders Equity", "Long Term Debt", "Total Debt", "Total Assets"],
+            ["2024-12-31", "2023-12-31"],
+            {"Stockholders Equity": [50e9, 45e9], "Long Term Debt": [25e9, 22e9],
+             "Total Debt": [30e9, 27e9], "Total Assets": [100e9, 95e9]})
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [30e9, 28e9]})
+        d = self._run_reit("REIT - Retail", cf,
+                           {"bookValue": 40.0, "sharesOutstanding": 1e9},
+                           balance=bal)
+        r = d["panels"]["reit"]
+        self.assertAlmostEqual(r["Debt/GBV %"], 30.0)
+        self.assertAlmostEqual(r["Debt/Assets %"], r["Debt/GBV %"])
 
     def test_fair_value_reit_gets_debt_gbv_mortgage_does_not(self):
         # A fair-value (IFRS) REIT owns buildings, so Debt/GBV applies — and with
@@ -4056,9 +4083,11 @@ class TestBusinessTypeGrading(unittest.TestCase):
         self.assertIn("no FFO data", by_k["Valuation"]["d"])
 
     def _reit(self, **over):
+        # debt_to_assets (pct points) is what the REIT leverage pillars grade on
+        # — 40% sits inside the ≤45% conservative band, for full leverage credit.
         base = dict(sector="Real Estate", industry="REIT—Residential",
                     ffo=5e9, p_ffo=14.0, ffo_payout=0.7, ffo_coverage=1.4,
-                    total_debt=40e9, total_equity=50e9)
+                    total_debt=40e9, total_equity=50e9, debt_to_assets=40.0)
         base.update(over)
         return _strategy_row(**base)
 
@@ -4073,8 +4102,8 @@ class TestBusinessTypeGrading(unittest.TestCase):
 
     def test_s2_reit_not_zeroed_by_high_debt_ebitda(self):
         # Debt/EBITDA of 8x would zero an industrial's capital-discipline pillar;
-        # a REIT with conservative D/E should still earn its leverage points.
-        row = self._reit(debt_ebitda=8.0, debt_to_equity=80.0)
+        # a REIT with conservative Debt/Assets should still earn its leverage points.
+        row = self._reit(debt_ebitda=8.0, debt_to_assets=40.0)
         _score, _v, pillars = strategies._grade_compounder(row)
         c = next(p for p in pillars if p["k"] == "Capital discipline")
         self.assertGreater(c["p"], 10)          # leverage + FFO-payout points earned
@@ -4104,7 +4133,7 @@ class TestBusinessTypeGrading(unittest.TestCase):
         c = next(p for p in pillars if p["k"] == "Financial strength")
         self.assertIn("FFO cover", c["d"])
         self.assertNotIn("FCF cover", c["d"])
-        self.assertEqual(c["p"], 21.0)          # 12 D/E + 4 half-band + 5 FFO>0
+        self.assertEqual(c["p"], 21.0)          # 12 Debt/Assets + 4 half-band + 5 FFO>0
 
     def test_s3_reit_in_development_not_punished_for_negative_gaap_fcf(self):
         # The bug this guards: a REIT building properties has deeply negative
@@ -4113,7 +4142,7 @@ class TestBusinessTypeGrading(unittest.TestCase):
         dev = self._reit(fcf=-2e9, fcf_coverage=-0.5, ffo_coverage=1.8)
         _s, _v, pillars = strategies._grade_defensive(dev)
         c = next(p for p in pillars if p["k"] == "Financial strength")
-        self.assertEqual(c["p"], 25.0)          # 12 D/E + 8 cover + 5 FFO>0
+        self.assertEqual(c["p"], 25.0)          # 12 Debt/Assets + 8 cover + 5 FFO>0
 
     def test_s3_reit_without_ffo_falls_back_to_fcf_bands(self):
         # No D&A line -> no FFO -> the lenient GAAP-FCF bands still apply, so a
@@ -4123,7 +4152,55 @@ class TestBusinessTypeGrading(unittest.TestCase):
         _s, _v, pillars = strategies._grade_defensive(row)
         c = next(p for p in pillars if p["k"] == "Financial strength")
         self.assertIn("FCF cover", c["d"])
-        self.assertEqual(c["p"], 25.0)          # 12 D/E + 8 (fcf_cov 3.0) + 5 FCF>0
+        self.assertEqual(c["p"], 25.0)          # 12 Debt/Assets + 8 (fcf_cov 3.0) + 5 FCF>0
+
+    def test_reit_leverage_graded_on_assets_not_equity(self):
+        # Debt/Equity is not consulted at all any more: a REIT whose D/E reads
+        # aggressively (250%, past the old ≤200% band that scored zero) still
+        # earns full leverage credit when its Debt/Assets is conservative.
+        # Real case: mature portfolios like SPG/BXP show inflated D/E purely
+        # because accumulated depreciation has eroded book equity.
+        row = self._reit(debt_to_equity=250.0, debt_to_assets=40.0)
+        for fn in (strategies._grade_triage, strategies._grade_compounder,
+                   strategies._grade_defensive):
+            _s, _v, pillars = fn(row)
+            p = next(p for p in pillars
+                     if p["k"] in ("Leverage (REIT)", "Capital discipline",
+                                   "Financial strength"))
+            self.assertIn("Debt/Assets", p["d"], fn.__name__)
+            self.assertNotIn("D/E", p["d"], fn.__name__)
+
+    def test_reit_negative_equity_no_longer_zeroes_leverage(self):
+        # The IRM case (D/E ≈ −2010%): decades of depreciation pushed book
+        # equity below zero, which used to hand out a hard zero on leverage in
+        # all three strategies. That is an accounting artifact of depreciated-
+        # cost accounting, not a solvency signal — with a conservative
+        # Debt/Assets the pillar must now score full.
+        row = self._reit(total_equity=-5e9, debt_to_equity=-2010.0,
+                         debt_to_assets=40.0)
+        _s, _v, pillars = strategies._grade_triage(row)
+        c = next(p for p in pillars if p["k"] == "Leverage (REIT)")
+        self.assertEqual(c["p"], 20.0)
+        self.assertNotIn("neg equity", c["d"])
+
+    def test_reit_leverage_bands_and_genuine_overleverage(self):
+        # Bands: ≤45% full, ≤60% half, above that zero. A genuinely
+        # over-levered REIT still scores zero — the signal survives the switch.
+        for d_assets, expected in ((40.0, 20.0), (45.0, 20.0), (52.0, 10.0),
+                                   (60.0, 10.0), (71.4, 0.0), (93.3, 0.0)):
+            _s, _v, pillars = strategies._grade_triage(
+                self._reit(debt_to_assets=d_assets))
+            c = next(p for p in pillars if p["k"] == "Leverage (REIT)")
+            self.assertEqual(c["p"], expected, f"Debt/Assets {d_assets}")
+
+    def test_reit_leverage_missing_assets_scores_zero(self):
+        # Total assets parses for essentially every REIT, so a blank means the
+        # balance sheet didn't load — no half-credit consolation prize.
+        row = self._reit()
+        row["debt_to_assets"] = None
+        _s, _v, pillars = strategies._grade_triage(row)
+        c = next(p for p in pillars if p["k"] == "Leverage (REIT)")
+        self.assertEqual(c["p"], 0.0)
 
     def test_reit_pillars_resum_across_all_three_strategies(self):
         for fn in (strategies._grade_triage, strategies._grade_compounder,

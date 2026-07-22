@@ -162,8 +162,10 @@ runs high by design, so the pillars are rebuilt on **approximate NAREIT FFO** (s
   (20 pts), plus a lighter ROE band (> 10% / > 6%, 10 pts).
 - **Pillar B — moat (20):** operating (NOI-style) margin only; gross margin
   isn't a meaningful line for a rental business.
-- **Pillar C — discipline (20):** leverage on REIT D/E bands (≤ 100% → 10,
-  ≤ 200% → 5, 10 pts) plus distribution discipline — paying *within* FFO
+- **Pillar C — discipline (20):** leverage on the REIT Debt/Total-Assets bands
+  (≤ 45% → 10, ≤ 60% → 5, 10 pts — assets, never equity, since depreciation
+  erodes a property REIT's book equity with portfolio age; see the leverage-basis
+  note in stock-triage-strategy.md) plus distribution discipline — paying *within* FFO
   (FFO payout ≤ 90% → 10, ≤ 100% → 5, 10 pts). Paying out more than FFO is the
   real red flag, not a high Debt/EBITDA.
 - **Pillar E — valuation (10):** P/FFO (< 15× → 10, ≤ 22× → 5).

@@ -280,6 +280,43 @@ def _cagr_pct(total_return_pct, years):
     return (base ** (1.0 / years) - 1.0) * 100.0
 
 
+def _reit_leverage_frac(d_assets):
+    """Equity-REIT leverage from Debt/Total Assets (pct points), returning
+    1.0 / 0.5 / 0.0 for a pillar to scale.
+
+    Property REITs are graded on assets, not equity. Book equity is the worst
+    available denominator for a depreciated-cost property business: depreciation
+    erodes it every year — the same distortion FFO corrects on the earnings side
+    — so Debt/Equity drifts upward purely with portfolio age, blows up
+    nonlinearly on mature portfolios (SPG ~557%, BXP ~317% against a ≤200% band
+    that cannot discriminate above it), and inverts entirely once accumulated
+    depreciation exceeds equity (IRM ~−2010%), where the negative-equity guard
+    scores an accounting artifact rather than a leverage judgment. It also made
+    the old bands knife-edged: MAA at 99.9% took full credit while VTR at 101.6%
+    took half, a 1.7pp gap in a noisy denominator swinging a tenth of the grade.
+    On assets those two sit at 47.4% and 46.1% — adjacent, as they should be.
+
+    Bands: ≤45% conservative, ≤60% typical for a levered property business,
+    above 60% genuinely aggressive. Note these are looser than the ≤60% covenant
+    line REIT declarations of trust draw against *gross* book value, because
+    total assets carry property at depreciated cost — a smaller denominator than
+    GBV, so the same REIT reads higher here. The deep view shows the true
+    covenant-style Debt/GBV alongside this; see REITs.md for why grading uses
+    the assets version (the GBV add-back is missing for ~6 REITs in 7).
+
+    A missing ratio scores 0.0 rather than half credit: unlike the old D/E path,
+    total assets is present for essentially every REIT, so a blank here means
+    the balance sheet itself didn't parse.
+    """
+    if d_assets is None or d_assets < 0:
+        return 0.0
+    return 1.0 if d_assets <= 45 else (0.5 if d_assets <= 60 else 0.0)
+
+
+def _reit_leverage_txt(d_assets):
+    return f"Debt/Assets {_pct(d_assets)} (REIT bands ≤45% / ≤60%)"
+
+
 # --------------------------------------------------------------------------- #
 # Mortgage-REIT (mreit) scoring fractions. mREITs are leveraged securities    #
 # portfolios in a REIT wrapper — their safety is about whether the dividend   #
@@ -524,7 +561,7 @@ def _grade_triage(row):
         payout = row.get("ffo_payout")
         cash_basis = "FFO" if has_ffo else "FCF"
         cash_val = ffo if has_ffo else fcf
-        d_eq = row.get("debt_to_equity")            # pct points
+        d_assets = row.get("debt_to_assets")        # pct points
         # Pillar A — cash generation (30)
         a = (12 if (cash_val is not None and cash_val > 0) else 0)
         a += 10 if _gt(cov, 1.0) else (5 if _gt(cov, 0.7) else 0)
@@ -553,17 +590,14 @@ def _grade_triage(row):
             payout_txt = "payout —"
         P.append(_pill("Distribution", b, 25,
                        f"yield {_pct(dy, 1)}, {_r(yrs, 0)} yrs ↑, {payout_txt}"))
-        # Pillar C — leverage in REIT context (20). REIT D/E runs high by design;
-        # ≤100% is conservative, ≤200% typical, above that is aggressive.
-        if neg_eq:
-            c = 0.0
-        elif d_eq is None:
-            c = 6.0
-        else:
-            c = 20 if d_eq <= 100 else (10 if d_eq <= 200 else 0)
-        P.append(_pill("Leverage (REIT)", c, 20,
-                       f"D/E {('neg equity → 0' if neg_eq else _pct(d_eq))} "
-                       f"(REIT bands ≤100% / ≤200%)"))
+        # Pillar C — leverage in REIT context (20), on Debt/Total Assets. Note
+        # there is deliberately no negative-equity zero here: for a
+        # depreciated-cost property REIT negative book equity is largely an
+        # artifact of accumulated depreciation, not a solvency signal, and the
+        # assets ratio stays well-defined through it. Where the leverage really
+        # is dangerous the ratio says so on its own (IRM: 93% → 0).
+        c = _reit_leverage_frac(d_assets) * 20
+        P.append(_pill("Leverage (REIT)", c, 20, _reit_leverage_txt(d_assets)))
         # Pillar D — valuation (25). P/FFO is the REIT-standard multiple (mirrors
         # P/E) where FFO is available; P/B backs it up as an asset-backing check.
         # Falls back to lenient P/FCF when FFO is missing.
@@ -1012,16 +1046,12 @@ def _grade_compounder(row):
         P.append(_pill("Capital discipline", c, 20,
                        f"payout {pct_txt}, F-score {_r(row.get('piotroski_f'), 0)}"))
     elif reit:
-        # Debt/EBITDA runs high for REITs by design; judge leverage on REIT D/E
-        # bands and discipline on whether the distribution stays inside FFO
-        # (paying out more than FFO is the real red flag, not a high ratio).
-        d_eq = row.get("debt_to_equity")            # pct points
-        if neg_eq:
-            lev = 0.0
-        elif d_eq is None:
-            lev = 6.0
-        else:
-            lev = 10 if d_eq <= 100 else (5 if d_eq <= 200 else 0)
+        # Debt/EBITDA runs high for REITs by design; judge leverage on the REIT
+        # Debt/Assets bands (see _reit_leverage_frac for why not Debt/Equity)
+        # and discipline on whether the distribution stays inside FFO (paying
+        # out more than FFO is the real red flag, not a high ratio).
+        d_assets = row.get("debt_to_assets")        # pct points
+        lev = _reit_leverage_frac(d_assets) * 10
         fp, cov = row.get("ffo_payout"), row.get("ffo_coverage")
         if fp is not None:
             disc = 10 if fp <= 0.90 else (5 if fp <= 1.0 else 0)
@@ -1031,8 +1061,7 @@ def _grade_compounder(row):
             disc_txt = f"FCF cover {_r(row.get('fcf_coverage'), 2, '×')}"
         c = lev + disc
         P.append(_pill("Capital discipline", c, 20,
-                       f"D/E {('neg equity → 0' if neg_eq else _pct(d_eq))} "
-                       f"(REIT bands), {disc_txt}"))
+                       f"{_reit_leverage_txt(d_assets)}, {disc_txt}"))
     else:
         debt_free = debt == 0
         c = float(10) if (debt_free and de_ratio is None) else _band(de_ratio, 1.5, 3.0, 10, reverse=True)
@@ -1209,16 +1238,11 @@ def _grade_defensive(row):
         P.append(_pill("Financial strength", c, 25, f"ROA {_pct(roa_pct, 1)}"))
     elif reit:
         # REITs carry high leverage by design and Altman-Z / current ratio don't
-        # apply, so strength is judged on REIT-appropriate D/E bands plus how
-        # well the REIT's cash generation covers the (mandatory, high)
-        # distribution.
-        d_eq = row.get("debt_to_equity")            # pct points
-        if neg_eq:
-            c = 0.0
-        elif d_eq is None:
-            c = 6.0
-        else:
-            c = 12 if d_eq <= 100 else (6 if d_eq <= 200 else 0)
+        # apply, so strength is judged on the REIT Debt/Assets bands (see
+        # _reit_leverage_frac for why not Debt/Equity) plus how well the REIT's
+        # cash generation covers the (mandatory, high) distribution.
+        d_assets = row.get("debt_to_assets")        # pct points
+        c = _reit_leverage_frac(d_assets) * 12
         # Coverage is judged on FFO where available, matching S1/S2 — GAAP FCF
         # understates a REIT's distributable cash (capex isn't split into
         # maintenance vs. growth), so a REIT in a development phase reads as
@@ -1237,9 +1261,8 @@ def _grade_defensive(row):
             c += 8 if _gt(cov, 1.2) else (4 if _gt(cov, 0.8) else 0)
             c += 5 if (row.get("fcf") or 0) > 0 else 0
         P.append(_pill("Financial strength", c, 25,
-                       f"D/E {('neg equity → 0' if neg_eq else _pct(d_eq))} "
-                       f"(REIT bands), {'FFO' if has_ffo else 'FCF'} cover "
-                       f"{_r(cov, 2, '×')}"))
+                       f"{_reit_leverage_txt(d_assets)}, "
+                       f"{'FFO' if has_ffo else 'FCF'} cover {_r(cov, 2, '×')}"))
     else:
         debt_free = debt == 0
         # Interest coverage (8) — can it pay the coupon out of operating
