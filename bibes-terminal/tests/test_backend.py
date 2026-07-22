@@ -872,6 +872,130 @@ class TestScreenerRow(unittest.TestCase):
             self.assertIsNone(row[k], f"Expected None for {k}, got {row[k]}")
 
 
+class TestScreenerRowDeepviewParity(unittest.TestCase):
+    """Deep-view panel metrics row-ified so the screener/watchlist/dashboard
+    tables (and the Metrics export they mirror) carry the same figures."""
+
+    def setUp(self):
+        app.clear_cache()
+
+    def _reit_row(self, industry="REIT - Retail", balance=None):
+        info = {**_BASE_INFO, "sector": "Real Estate", "industry": industry,
+                "sharesOutstanding": 1e9, "bookValue": 40.0}
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Depreciation And Amortization"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Depreciation And Amortization": [30e9, 28e9]})
+        bal = balance if balance is not None else _make_df(
+            ["Stockholders Equity", "Long Term Debt", "Total Debt",
+             "Total Assets", "Accumulated Depreciation"],
+            ["2024-12-31", "2023-12-31"],
+            {"Stockholders Equity": [50e9, 45e9], "Long Term Debt": [25e9, 22e9],
+             "Total Debt": [30e9, 27e9], "Total Assets": [100e9, 95e9],
+             "Accumulated Depreciation": [-20e9, -18e9]})
+        with patch("app.get_info", return_value=info), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": bal,
+                 "cash_flow": cf}.get(attr)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}):
+            return app.screener_row("REITX")
+
+    def test_revenue_and_operating_income_ttm(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        # Yahoo TTM figures: totalRevenue and revenue × operatingMargins, the
+        # same derivation as the deep view's Profitability panel.
+        self.assertAlmostEqual(row["revenue"], 400e9)
+        self.assertAlmostEqual(row["operating_income"], 400e9 * 0.20)
+
+    def test_ocf_and_derived_capex(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertAlmostEqual(row["ocf"], 48e9)
+        # No Capital Expenditure statement line -> FCF − OCF = 40e9 − 48e9.
+        self.assertAlmostEqual(row["capex"], -8e9)
+
+    def test_capex_prefers_statement_line(self):
+        cf = _make_df(
+            ["Free Cash Flow", "Operating Cash Flow", "Cash Dividends Paid",
+             "Capital Expenditure"],
+            ["2024-12-31", "2023-12-31"],
+            {"Free Cash Flow": [40e9, 38e9], "Operating Cash Flow": [48e9, 44e9],
+             "Cash Dividends Paid": [-8e9, -7e9],
+             "Capital Expenditure": [-9e9, -6e9]})
+        app.clear_cache()
+        with patch("app.get_info", return_value=_BASE_INFO), \
+             patch("app._get_stmt", side_effect=lambda t, attr: {
+                 "income_stmt": _INCOME_DF, "balance_sheet": _BAL_DF,
+                 "cash_flow": cf}.get(attr)), \
+             patch("app.get_dividends", return_value=_DIVS), \
+             patch("app.get_raw_close", return_value=_CLOSE_SERIES), \
+             patch("app.performance", return_value={
+                 "ytd": 5.0, "1y": 12.0, "3y": 30.0, "5y": 60.0, "10y": 100.0}):
+            row = app.screener_row("TST")
+        self.assertAlmostEqual(row["capex"], -9e9)
+
+    def test_book_value_and_ni_coverage_populated_for_every_ticker(self):
+        # Generic figures (not REIT-gated): bookValue passes through, and
+        # NI dividend coverage = netIncomeToCommon ÷ |dividends paid|.
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertIn("book_value_ps", row)
+        self.assertAlmostEqual(row["div_coverage_ni"], 50e9 / 8e9)
+
+    def test_equity_reit_ffo_per_share_matches_deep_view(self):
+        row = self._reit_row()
+        # FFO = NI (50e9) + D&A (30e9) = 80e9, ÷ 1e9 shares — the deep-view
+        # panel's FFO/Share figure.
+        self.assertAlmostEqual(row["ffo_ps"], 80.0)
+        self.assertAlmostEqual(row["p_ffo"], 12.5)
+
+    def test_equity_reit_debt_gbv_with_addback(self):
+        row = self._reit_row()
+        # 30e9 ÷ (100e9 + |−20e9|) = 25%; Debt/Assets beside it without the
+        # add-back = 30% — the gap is exactly the add-back.
+        self.assertAlmostEqual(row["debt_gbv"], 25.0)
+        self.assertAlmostEqual(row["debt_to_assets"], 30.0)
+
+    def test_debt_gbv_equals_debt_assets_without_addback(self):
+        bal = _make_df(
+            ["Stockholders Equity", "Long Term Debt", "Total Debt", "Total Assets"],
+            ["2024-12-31", "2023-12-31"],
+            {"Stockholders Equity": [50e9, 45e9], "Long Term Debt": [25e9, 22e9],
+             "Total Debt": [30e9, 27e9], "Total Assets": [100e9, 95e9]})
+        row = self._reit_row(balance=bal)
+        self.assertAlmostEqual(row["debt_gbv"], row["debt_to_assets"])
+
+    def test_mortgage_reit_has_no_ffo_ps_or_debt_gbv(self):
+        # FFO is meaningless for a securities portfolio and "gross book" has no
+        # meaning either — both stay None for mREITs, like the deep view.
+        row = self._reit_row(industry="REIT - Mortgage")
+        self.assertIsNone(row["ffo_ps"])
+        self.assertIsNone(row["debt_gbv"])
+
+    def test_non_reit_has_no_ffo_ps_or_debt_gbv(self):
+        with _patch_all():
+            row = app.screener_row("TST")
+        self.assertIsNone(row["ffo_ps"])
+        self.assertIsNone(row["debt_gbv"])
+
+    def test_new_pct_point_keys_export_as_fractions(self):
+        # Same one-convention-per-workbook rule as every other rate column.
+        self.assertAlmostEqual(app._export_val("debt_to_assets", 30.0), 0.30)
+        self.assertAlmostEqual(app._export_val("debt_gbv", 25.0), 0.25)
+        self.assertAlmostEqual(app._export_val("bvps_growth", -4.0), -0.04)
+        # Multiples and already-fraction ratios pass through untouched.
+        self.assertEqual(app._export_val("ffo_coverage", 1.3), 1.3)
+        self.assertEqual(app._export_val("ffo_payout", 0.75), 0.75)
+        self.assertEqual(app._export_val("div_coverage_ni", 6.25), 6.25)
+
+
 # ---------------------------------------------------------------------------
 # 7b. Risk metrics — Altman Z-Score & Piotroski F-Score
 # ---------------------------------------------------------------------------
@@ -3191,7 +3315,10 @@ class TestMetricColsExpanded(unittest.TestCase):
                   "div_growth_3y", "div_growth_5y", "ex_dividend_date",
                   "debt_to_equity_mrq", "debt_ebitda", "ebitda_fcf",
                   "short_interest", "days_to_cover", "altman_z", "piotroski_f",
-                  "dcf_value", "dcf_upside"):
+                  "dcf_value", "dcf_upside",
+                  "revenue", "operating_income", "debt_to_assets", "ocf", "capex",
+                  "ffo", "ffo_ps", "p_ffo", "ffo_payout", "ffo_coverage",
+                  "book_value_ps", "bvps_growth", "div_coverage_ni", "debt_gbv"):
             self.assertIn(k, keys)
 
     def test_ticker_is_first_column(self):

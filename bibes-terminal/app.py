@@ -603,6 +603,13 @@ def _screener_row(ticker):
     tax = _stmt_val(inc, "Tax Provision", "Income Tax Expense")
     net_income = _num(info.get("netIncomeToCommon")) or _stmt_val(inc, "Net Income", "Net Income Common Stockholders")
     fcf = _stmt_val(cf, "Free Cash Flow") or _num(info.get("freeCashflow"))
+    # Operating cash flow and capex, same derivation as deepdive()'s Health
+    # panel: capex is reported negative (an outflow) and falls back to
+    # FCF − OCF when the statement lacks the line (FCF = OCF + Capex).
+    ocf = _stmt_val(cf, "Operating Cash Flow") or _num(info.get("operatingCashflow"))
+    capex = _stmt_val(cf, "Capital Expenditure")
+    if capex is None and ocf is not None and fcf is not None:
+        capex = fcf - ocf
     # Earnings/cash consistency across the statement history (see S3 Pillar D).
     # Same labels the scalars above and piotroski_f resolve, so the counts and
     # the latest-year figures can never disagree about which line they mean.
@@ -667,10 +674,30 @@ def _screener_row(ticker):
     # figure, consistency wins for the graded one. See REITs.md.
     debt_assets = ((total_debt / total_assets * 100)
                    if (total_debt and total_assets and total_assets > 0) else None)
+    # Debt / Gross Book Value — the covenant leverage gauge the deep view's
+    # REIT panel shows (total assets with the accumulated-depreciation
+    # add-back). Property REITs only, mirroring deepdive(): mortgage REITs
+    # stay None ("gross book" has no meaning for a securities portfolio).
+    # Yahoo exposes the add-back for only ~1 REIT in 7, so where it's absent
+    # the figure equals debt_assets and runs a little high (conservative) —
+    # exact for fair-value (IFRS) REITs whose assets already sit at fair
+    # value. See REITs.md.
+    debt_gbv = None
+    if bt == "reit" and total_debt is not None and total_assets and total_assets > 0:
+        gbv = total_assets + abs(_stmt_val(bal, "Accumulated Depreciation") or 0)
+        debt_gbv = total_debt / gbv * 100
     fcf_coverage = (fcf / abs(div_paid)) if (fcf is not None and div_paid) else None
     ebitda = _num(info.get("ebitda"))
     debt_ebitda = (total_debt / ebitda) if (total_debt and ebitda and ebitda > 0) else None
     ebitda_fcf = (ebitda / fcf) if (ebitda and fcf) else None
+    # Operating Income TTM — revenue × operatingMargins (both Yahoo TTM
+    # figures), the same derivation as deepdive()'s Profitability panel so the
+    # screener column and the panel row can never disagree. Yahoo exposes no
+    # plain "operating income TTM" field of its own.
+    op_margin_frac = info.get("operatingMargins")
+    operating_income = (_num(total_revenue * op_margin_frac)
+                        if (total_revenue is not None and op_margin_frac is not None)
+                        else None)
     # Enterprise Value, EV/EBITDA and Price/Sales all combine market cap with
     # statement figures — Yahoo's own passthrough fields for these get the
     # arithmetic wrong for a mismatched-currency ticker, so recompute them
@@ -847,6 +874,11 @@ def _screener_row(ticker):
         # than it pays for capital (value creation), < 0 means value destruction.
         "roic_wacc": _num(roic - wacc) if (roic is not None and wacc is not None) else None,
         "revenue_per_share": _num(info.get("revenuePerShare")),
+        # Revenue and Operating Income, trailing-twelve-month — the same Yahoo
+        # figures deepdive()'s Profitability panel shows (see the
+        # operating_income derivation comment above).
+        "revenue": _num(total_revenue),
+        "operating_income": _num(operating_income),
         # financial health
         "debt_to_equity": _num(debt_eq),
         "debt_to_equity_mrq": _num(info.get("debtToEquity")),
@@ -862,6 +894,10 @@ def _screener_row(ticker):
         "total_equity": _num(equity),
         "ebitda": _num(ebitda),
         "ebitda_fcf": _num(ebitda_fcf),
+        # fiscal-year statement figures (capex negative — an outflow); FCF
+        # above = OCF + Capex.
+        "ocf": _num(ocf),
+        "capex": _num(capex),
         "interest_expense": _num(interest_exp),
         "interest_coverage": _num(interest_coverage),
         # Equity-REIT-only (None everywhere else, mortgage REITs included):
@@ -869,11 +905,19 @@ def _screener_row(ticker):
         # (fraction paid out, mirrors payout_ratio) and FFO coverage (multiple,
         # mirrors fcf_coverage).
         "ffo": _num(ffo),
+        "ffo_ps": _num(ffo / shares) if (ffo and shares) else None,
         "p_ffo": _num(market_cap_native / ffo) if (market_cap_native and ffo and ffo > 0) else None,
         "ffo_payout": _num(abs(div_paid) / ffo) if (ffo and ffo > 0 and div_paid) else None,
         "ffo_coverage": _num(ffo / abs(div_paid)) if (ffo is not None and div_paid) else None,
+        # Book value per share and NI dividend coverage: the deep view surfaces
+        # them in the REIT panel (the mortgage/fair-value rubric), but both are
+        # generic figures, so they're populated for every ticker.
+        "book_value_ps": _num(info.get("bookValue")),
+        "div_coverage_ni": _num(net_income / abs(div_paid)) if (net_income is not None and div_paid) else None,
         # book value per share trend (annualized %), the mortgage-REIT signal
         "bvps_growth": _num(bvps_growth),
+        # property REITs only (see derivation comment above)
+        "debt_gbv": _num(debt_gbv),
         # revenue per share trend (annualized %), S2's fundamental-growth signal
         "rps_growth": _num(rps_growth),
         # dividend
@@ -2224,20 +2268,31 @@ _METRIC_COLS = [
     ("operating_margin", "Operating Margin"), ("ebitda_margin", "EBITDA Margin"),
     ("roe", "ROE"), ("roa", "ROA"), ("roic", "ROIC"), ("roce", "ROCE"), ("wacc", "WACC"),
     ("roic_wacc", "ROIC−WACC"),
-    ("revenue_per_share", "Revenue/Share"), ("income", "Net Income"), ("fcf", "FCF"),
+    ("revenue_per_share", "Revenue/Share"), ("revenue", "Revenue"),
+    ("operating_income", "Operating Income"), ("income", "Net Income"), ("fcf", "FCF"),
     # financial health
     ("debt_to_equity", "Debt/Eq"), ("debt_to_equity_mrq", "Debt/Eq (MRQ)"),
     ("debt_ebitda", "Debt/EBITDA"), ("lt_debt_to_equity", "LT Debt/Eq"),
+    ("debt_to_assets", "Debt/Assets"),
     ("current_ratio", "Current Ratio"), ("quick_ratio", "Quick Ratio"),
     ("total_cash", "Total Cash"), ("total_debt", "Total Debt"),
     ("total_equity", "Total Equity"), ("ebitda", "EBITDA"),
     ("ebitda_fcf", "EBITDA/FCF"),
+    ("ocf", "Operating Cash Flow"), ("capex", "Capital Expenditure"),
     # dividend
     ("div_yield", "Yield"), ("five_year_avg_yield", "5Y Avg Yield"),
     ("payout_ratio", "Payout Ratio"), ("div_growth_3y", "Div Growth 3Y"),
     ("div_growth_5y", "Div Growth 5Y"), ("dividend_estimate", "Div Estimate"),
     ("dividend_ttm", "Div TTM"), ("fcf_coverage", "FCF Coverage"),
     ("years_div_increase", "Yrs Div Increase"), ("ex_dividend_date", "Ex-Dividend Date"),
+    # REIT — the deep view's REIT panel, row-ified. The FFO family is equity-
+    # REIT-only and Debt/GBV property-REIT-only (empty for every other row);
+    # Book Value/Share, Book Value Trend and Div Coverage (NI) — the
+    # mortgage/fair-value rubric — are generic figures populated everywhere.
+    ("ffo", "FFO"), ("ffo_ps", "FFO/Share"), ("p_ffo", "P/FFO"),
+    ("ffo_payout", "FFO Payout"), ("ffo_coverage", "FFO Coverage"),
+    ("book_value_ps", "Book Value/Share"), ("bvps_growth", "Book Value Trend"),
+    ("div_coverage_ni", "Div Coverage (NI)"), ("debt_gbv", "Debt/GBV"),
     # risk
     ("beta", "Beta"), ("short_interest", "Short Interest"),
     ("days_to_cover", "Days to Cover"), ("altman_z", "Altman Z-Score"),
@@ -2255,7 +2310,8 @@ _PCT_KEYS = {
     "roic", "roce", "wacc", "roic_wacc", "dcf_upside", "div_yield",
     "five_year_avg_yield",
     "div_growth_3y", "div_growth_5y", "debt_to_equity", "debt_to_equity_mrq",
-    "lt_debt_to_equity", "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
+    "lt_debt_to_equity", "debt_to_assets", "debt_gbv", "bvps_growth",
+    "perf_ytd", "perf_1y", "perf_3y", "perf_5y", "perf_10y",
 }
 
 # Export columns rendered with an Excel percent number format, so they display as
