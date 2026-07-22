@@ -17,8 +17,10 @@ what it means, and the **units of the raw exported value**.
 >   company's one currency. For a foreign-reporting ticker (an ADR like WIT,
 >   which trades in USD but reports in INR), it isn't one currency: Price,
 >   Market Cap, and Diluted EPS are in the trading currency, while Enterprise
->   Value, Revenue, Cash, Debt, Equity, EBITDA, Net Income, FCF, Basic EPS, and
->   Dividend TTM are in the reporting currency — see the callout below and
+>   Value, Revenue, Operating Income, Cash, Debt, Equity, EBITDA, Net Income,
+>   FCF, Operating Cash Flow, Capital Expenditure, Basic EPS, Dividend TTM, and
+>   the REIT columns (FFO, FFO/Share, Book Value/Share) are in the reporting
+>   currency — see the callout below and
 >   [METRICS.md](METRICS.md) §11. Per-share values (Price, EPS, dividends) are
 >   per single share.
 > - **multiple (×)** — a valuation or coverage ratio (P/E, EV/EBITDA, FCF Coverage).
@@ -54,8 +56,10 @@ what it means, and the **units of the raw exported value**.
 > doesn't label which currency each row's dollar figures are in. For the
 > overwhelming majority of rows that's a non-issue — the whole sheet is one
 > currency (USD). But for a foreign-reporting ticker in the batch (an ADR like
-> WIT), Enterprise Value/Revenue/Cash/Debt/Equity/EBITDA/Net Income/FCF/Basic
-> EPS/Dividend TTM are silently in that company's reporting currency (₹ for
+> WIT), every statement-derived money column — Enterprise Value/Revenue/
+> Operating Income/Cash/Debt/Equity/EBITDA/Net Income/FCF/OCF/Capex/Basic
+> EPS/Dividend TTM/FFO/FFO/Share/Book Value/Share — is silently in that
+> company's reporting currency (₹ for
 > WIT), while Price/Market Cap/Diluted EPS are in its trading currency (USD) —
 > both stored as plain numbers in the same-looking column as every other
 > ticker's dollar figures. The screener **view** and the single-ticker deep
@@ -124,6 +128,8 @@ bands), and book-value-per-share trend, the headline mREIT quality signal.
 | ROCE | `roce` | EBIT ÷ (total assets − current liabilities). Pre-tax sibling of ROIC. | fraction | >0.15 strong. |
 | WACC | `wacc` | Weighted average cost of capital: cost of equity via CAPM (10Y Treasury + Beta × 5.5% equity risk premium — a fixed US-market estimate, applied to every ticker regardless of domicile; see [METRICS.md](METRICS.md) §3) + after-tax cost of debt. | fraction | Benchmark for ROIC; typically ~0.06–0.12. Value is created when ROIC > WACC. |
 | Revenue/Share | `revenue_per_share` | Trailing 12-month revenue ÷ shares outstanding. | currency / share | Rising over time is the signal to want. |
+| Revenue | `revenue` | Total sales (trailing 12 months) — the base the margin columns are computed against. | currency | Compare growth against margins: growing revenue at stable margins compounds. |
+| Operating Income | `operating_income` | Revenue × Operating Margin (both Yahoo TTM figures, so those columns reconcile with this one). Profit after running the business, before interest & tax. | currency | Can differ, even in sign, from the fiscal-year statement figure. |
 | Net Income | `income` | Net income (trailing 12 months). | currency | Profit attributable to shareholders. |
 | FCF | `fcf` | Free cash flow = operating cash flow − capex. | currency | Positive and growing is the goal. |
 
@@ -135,6 +141,7 @@ bands), and book-value-per-share trend, the headline mREIT quality signal.
 | Debt/Eq (MRQ) | `debt_to_equity_mrq` | Yahoo's pre-computed Debt/Equity from its most-recent-quarter balance sheet. | fraction | Same ranges; differs from Debt/Eq when the latest quarter has moved since fiscal year-end. |
 | Debt/EBITDA | `debt_ebitda` | Total Debt ÷ EBITDA — years of EBITDA needed to repay all debt. | multiple (×) | <3× comfortable, 3–4× watch, >4–5× heavily leveraged. |
 | LT Debt/Eq | `lt_debt_to_equity` | Long-term debt ÷ shareholders' equity. | fraction | As above, long-term portion only. |
+| Debt/Assets | `debt_to_assets` | Total debt ÷ total assets — the leverage figure the REIT strategy grades score on, in place of Debt/Equity (which depreciation distorts for property businesses). Computed for every row. | fraction | For REITs: ≤0.45 conservative, ≤0.60 typical, above that aggressive. |
 | Current Ratio | `current_ratio` | Current assets ÷ current liabilities. | ratio | >1 covers near-term bills; 1.5–3 comfortable; <1 possible squeeze. |
 | Quick Ratio | `quick_ratio` | (Current assets − inventory) ÷ current liabilities. | ratio | >1 strong; stricter than current ratio. |
 | Total Cash | `total_cash` | Cash + short-term investments. | currency | Dry powder; compare to total debt. |
@@ -142,6 +149,8 @@ bands), and book-value-per-share trend, the headline mREIT quality signal.
 | Total Equity | `total_equity` | Assets − liabilities (book value). | currency | Negative is a red flag. |
 | EBITDA | `ebitda` | Net Income + Interest + Tax + Depreciation & Amortization — built up from the bottom line, not down from revenue (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | `ebitda_fcf` | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion; high values flag capex/tax/working-capital drag. |
+| Operating Cash Flow | `ocf` | Cash generated by core operations, before investing/financing (fiscal-year statement figure; Yahoo TTM fallback). FCF = this + Capex. | currency | The cash engine the dividend and capex are paid from. |
+| Capital Expenditure | `capex` | Cash spent on property, plant & equipment — negative (an outflow), matching the statement. Derived as FCF − OCF when the statement lacks the line. | currency | Large relative to OCF = capital-intensive business. |
 
 ## Dividends (sustainability matters more than headline yield)
 
@@ -157,6 +166,26 @@ bands), and book-value-per-share trend, the headline mREIT quality signal.
 | FCF Coverage | `fcf_coverage` | Free cash flow ÷ dividends paid. | multiple (×) | ≥1.2 safe, 0.8–1.2 tight, <0.8 under-covered. |
 | Yrs Div Increase | `years_div_increase` | Consecutive completed years of rising dividends. | integer (years) | 10+ strong culture, 25+ "dividend aristocrat". |
 | Ex-Dividend Date | `ex_dividend_date` | Buy before this date to receive the next dividend. | date (YYYY-MM-DD) | — |
+
+## REIT (the deep view's REIT panel, one column each — see [REITs.md](REITs.md))
+
+The FFO family is populated for **equity REITs only** — empty for mortgage
+REITs (whose securities portfolio has no depreciation to add back) and for
+every non-REIT. Debt/GBV is property-REITs-only. Book Value/Share, Book Value
+Trend and Div Coverage (NI) — the mortgage/fair-value REIT rubric — are generic
+figures populated for every row.
+
+| Excel header | Field key | Meaning | Units | Rough read |
+| --- | --- | --- | --- | --- |
+| FFO | `ffo` | Funds From Operations = Net Income + D&A − property-sale gains + impairments — the REIT-standard earnings measure (approximate NAREIT FFO; directional). | currency | The earnings figure REIT payouts are judged against. |
+| FFO/Share | `ffo_ps` | FFO ÷ shares outstanding — the REIT analogue of EPS. | currency / share | The per-share earning power the dividend is paid from. |
+| P/FFO | `p_ffo` | Price ÷ FFO per share — the REIT equivalent of P/E. | multiple (×) | Equity REITs commonly trade around 10–20×. |
+| FFO Payout | `ffo_payout` | Dividends ÷ FFO. Runs higher than a normal payout ratio (REITs must distribute ~90% of taxable income). | fraction | ≤0.80 comfortable, ≤1.0 sustainable, >1.0 paying out more than FFO generates. |
+| FFO Coverage | `ffo_coverage` | FFO ÷ dividends paid (the inverse of FFO Payout). | multiple (×) | ≥1.25 comfortable, ≥1.0 sustainable, <1.0 under-covered. |
+| Book Value/Share | `book_value_ps` | Shareholders' equity ÷ shares outstanding — net asset value per share. | currency / share | The primary metric for a mortgage REIT; ≈ NAV for a fair-value (IFRS) REIT. |
+| Book Value Trend | `bvps_growth` | Annualized least-squares trend of book value per share across all available years. | fraction | The key mortgage-REIT quality signal: negative = the dividend is being paid out of capital. |
+| Div Coverage (NI) | `div_coverage_ni` | Net income ÷ dividends paid. | multiple (×) | <1.0 = distributing more than it earns — a key mREIT warning sign (NI is mark-to-market noisy; read the trend). |
+| Debt/GBV | `debt_gbv` | Total debt ÷ gross book value (total assets + accumulated-depreciation add-back) — the covenant leverage gauge property REITs report against. Yahoo rarely exposes the add-back for US-GAAP REITs, so the figure then equals Debt/Assets and runs slightly high (conservative); exact for fair-value (IFRS) REITs. | fraction | <0.45 conservative, 0.45–0.55 typical, >0.60 highly levered. |
 
 ## Risk (volatility, crowding, distress signals)
 
