@@ -286,10 +286,28 @@ built around **approximate NAREIT FFO**:
 | **FFO Coverage** | FFO ÷ dividends paid | How many times FFO covers the dividend (inverse of payout ratio, as a multiple). | ≥1.0× sustainable, <1.0× tight to under-covered. |
 | **Debt/GBV %** | Total Debt ÷ (Total Assets + accumulated-depreciation add-back) | Balance-sheet leverage against **gross book value** — the asset base at undepreciated cost, the gauge property REITs covenant against (declarations of trust commonly cap it near 60%). Deep view only, property REITs only (equity and fair-value kinds; a mortgage REIT's repo leverage isn't fully in Total Debt and "gross book" has no meaning for a securities portfolio). Yahoo carries US-GAAP REIT property at *net* value with no accumulated-depreciation row, so for those the shown ratio runs a little high (conservative); exact for fair-value (IFRS) REITs, whose assets already sit at fair value. | **<45% conservative**, 45–55% typical, **>60% highly levered**. |
 
-> **This is *Simplified* FFO, not full NAREIT FFO or AFFO — a data ceiling,
-> not a choice.** True NAREIT FFO also backs out gains/losses on property
-> sales, which Yahoo's generic statement templates never expose as a discrete
-> line (only as cash proceeds, commingled inside net income). AFFO further
+> **Why Debt/GBV rather than plain debt-to-assets or Debt/Equity.** It is the
+> leverage gauge property REITs actually report and covenant against. Measuring
+> debt against the *undepreciated* asset base matters for exactly the reason FFO
+> adds depreciation back to earnings: accounting depreciation shrinks the
+> carrying value of buildings that usually haven't lost value, so debt-to-assets
+> overstates how levered a property REIT really is — and Debt/Equity compounds
+> the same distortion in its denominator, since depreciation erodes book equity
+> year after year. Gross book value sidesteps both.
+>
+> **Occupancy rate is deliberately absent.** It sits beside leverage in every
+> REIT supplemental and is a genuine REIT metric, but it is an *operational*
+> disclosure rather than a financial-statement line: no normalized data feed
+> (Yahoo included) carries it, so it cannot be computed or displayed here. Read
+> it from the REIT's own quarterly supplemental package.
+
+> **This is *approximate* NAREIT FFO, not full NAREIT FFO or AFFO — a data
+> ceiling, not a choice.** The property-sale gains and impairments are backed
+> out via the cash flow statement's `Operating Gains Losses` and
+> `Asset Impairment Charge` lines, which is close but not exact: the former is a
+> general non-cash gain/loss adjustment that can also carry debt-extinguishment
+> or derivative items, and the D&A add-back includes intangible and
+> deferred-financing amortization NAREIT would exclude. AFFO further
 > requires splitting capex into maintenance vs. growth spend — a split no
 > structured financial statement provides; real analysts get it from each
 > REIT's own investor disclosures, and AFFO isn't even standardized

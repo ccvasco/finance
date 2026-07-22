@@ -119,6 +119,56 @@ Below that, metrics are grouped into the same panels shown in the app.
 | EBITDA | Net Income + Interest + Tax + Depreciation & Amortization — built up from the bottom line, not down from revenue (Yahoo's TTM figure — the same one behind Debt/EBITDA and EBITDA/FCF). | currency | Proxy for operating cash earnings; compare to debt and FCF. |
 | EBITDA/FCF | EBITDA ÷ Free Cash Flow — how much EBITDA it takes to produce a dollar of free cash. | multiple (×) | Closer to 1× = cleaner cash conversion. |
 
+### REIT Metrics
+
+Present **only for REITs** (the panel is omitted entirely for every other
+company). Which rows appear depends on which of three REIT kinds the company
+is — the app decides this from its industry and its statements, and the panel
+is titled "Mortgage REIT Metrics" for the third:
+
+- **Equity REIT** — owns depreciable buildings under US GAAP, so FFO is
+  computable and the FFO family is shown.
+- **Fair-value REIT** — also owns buildings, but reports them at fair value
+  under IFRS (most Canadian REITs). There is no depreciation line to add back,
+  so FFO can't be built; the book-value rows are shown instead. Book value ≈ NAV
+  here, and Net Income swings with unrealized property revaluations.
+- **Mortgage REIT (mREIT)** — owns mortgage securities, not property. FFO is
+  meaningless by construction, so the book-value rows are shown.
+
+| Metric | Meaning | Units | Rough read |
+| --- | --- | --- | --- |
+| FFO | Funds From Operations = Net Income + D&A − property-sale gains + impairments. The REIT-standard earnings measure: property depreciation is a large non-cash charge that buildings usually don't actually incur, so net income understates a REIT's earning power. Equity REITs only. | currency | Compare to debt and the dividend, as FCF is used elsewhere. |
+| FFO/Share | FFO ÷ shares outstanding — the REIT analogue of EPS. | currency / share | The per-share earning power the dividend comes from. |
+| P/FFO | Market cap ÷ FFO — the REIT equivalent of P/E, and the sector's standard multiple. | multiple (×) | <12× cheap-ish, 12–18× typical, >18× rich. |
+| FFO Payout | Dividends paid ÷ FFO. REITs must distribute ~90% of *taxable* income by law, so this runs structurally higher than a normal payout ratio. | fraction | ≤0.80 comfortable cushion, ≤1.00 sustainable, >1.00 paying out more than FFO generates. |
+| FFO Coverage | FFO ÷ dividends paid (the inverse of FFO Payout). | multiple (×) | ≥1.0× sustainable, <1.0× under-covered. |
+| Book Value/Share | Shareholders' equity ÷ shares outstanding — net asset value per share. | currency / share | The primary gauge for mortgage and fair-value REITs; ≈ NAV for a fair-value REIT. |
+| Book Value Trend | Annualized trend of book value per share, least-squares-fitted across all available years so one anomalous year can't set it. Mortgage and fair-value REITs. | fraction | The single most important mREIT quality signal. >0 compounding; persistently <0 means the dividend is being paid out of capital. |
+| Price/Book | Price ÷ book value per share. | multiple (×) | <0.90 discount to the portfolio, >1.10 premium — the primary valuation anchor for mortgage REITs. |
+| Net Income | Net income to common shareholders. Mortgage and fair-value REITs. | currency | For a fair-value REIT this includes unrealized property revaluations; for an mREIT, mark-to-market swings. Read the trend, not one period. |
+| Div Coverage (NI) | Net income ÷ dividends paid. Mortgage and fair-value REITs. | multiple (×) | <1.0× means distributing more than it earns — a common mREIT warning sign. |
+| Debt/GBV | Total Debt ÷ **gross book value** (total assets with accumulated depreciation added back — the asset base at undepreciated cost). Property REITs only: equity and fair-value kinds. | fraction | <0.45 conservative, 0.45–0.55 typical, >0.60 highly levered. |
+
+**Why Debt/GBV rather than plain debt-to-assets.** It is the leverage gauge
+property REITs actually report and covenant against — declarations of trust
+commonly cap it near 60%. Measuring debt against the *undepreciated* asset base
+matters for the same reason FFO adds depreciation back to earnings: accounting
+depreciation shrinks the carrying value of buildings that usually haven't lost
+value, so debt-to-assets overstates how levered a property REIT really is. Two
+data caveats: Yahoo carries US-GAAP REIT property at **net** value with no
+accumulated-depreciation row to add back, so for those REITs the figure runs
+slightly **high** (conservative); for fair-value REITs it is exact, since their
+assets already sit at fair value and that is precisely how their covenants
+define it. Mortgage REITs are excluded — "gross book" has no meaning for a
+securities portfolio, and their repo financing isn't fully captured in Total
+Debt, so the ratio would understate their real leverage.
+
+**Occupancy rate is not available.** It is the one headline REIT metric this
+export cannot carry: occupancy is an *operational* disclosure published in each
+REIT's quarterly supplemental package, not a financial-statement line, so no
+normalized data feed (Yahoo included) provides it. Read it from the REIT's own
+supplemental. See [REITs.md](REITs.md) for the full REIT methodology.
+
 ### Risk
 
 | Metric | Meaning | Units | Rough read |
