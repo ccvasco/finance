@@ -20,6 +20,9 @@ Operating Cash Flow
    ├── subtract Capital Expenditures (CapEx)
    ▼
 Free Cash Flow
+
+
+
 Which metric is "best"?
 
 
