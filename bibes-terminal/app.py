@@ -2272,6 +2272,23 @@ def _export_val(key, value):
 
 
 def build_workbook(tickers):
+    # Warm the TTL cache in parallel before building the sheets. Every sheet
+    # below walks the tickers serially, so without this the export costs one
+    # round of Yahoo round-trips per ticker per sheet, back to back — the same
+    # work /api/screener already fans out across a thread pool. Each task pulls
+    # exactly what the three sheets read, so the serial loops become cache hits.
+    def warm(tk):
+        for fetch in (lambda: screener_row(tk),
+                      lambda: history(tk, "1y"),
+                      lambda: financials(tk, "income", "annual")):
+            try:
+                fetch()
+            except Exception:
+                pass  # let the sheet-building loop surface it
+
+    with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as ex:
+        list(ex.map(warm, tickers))
+
     wb = Workbook()
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="1F2933")
