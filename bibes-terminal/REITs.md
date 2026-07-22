@@ -289,10 +289,22 @@ This is **the single most important mREIT quality signal**. An mREIT that holds 
 
 Full detail, including how this differs across the three strategies (Triage, Compounder, Defensive Value), is in [stock-triage-strategy.md](stock-triage-strategy.md#business-type-archetypes).
 
+## Hybrid REITs (and how the app spots them)
+
+Some names filed under "REIT — Mortgage" are really **hybrid REITs**: alongside the levered loan/securities book they own a meaningful portfolio of physical property (Starwood STWD, Ladder LADR, Arbor ABR). Yahoo's taxonomy has no hybrid industry — they all carry the REIT — Mortgage label — and its normalized balance sheet drops their property portfolios entirely (STWD's ~$2.4B of buildings simply doesn't appear), so neither the industry field nor the balance sheet can identify them.
+
+The one signal that survives in the normalized statements is **the size of the D&A line**: buildings depreciate, securities don't. Empirically the split is wide — pure mREITs report no D&A at all or ≤1.5% of revenue (NLY, the documented worst case above), while property-owning hybrids run 10–19% — so the app tags an mREIT as **hybrid** when its D&A is at least **5% of revenue**.
+
+Two deliberate consequences:
+
+- **The tag is a label, not a rubric.** Hybrids stay on the mREIT rubric above — the loan book dominates their economics — and FFO is still not built for them: an FFO covering only the property sliver of the business would be more misleading than none.
+- **Servicing/credit "hybrids" stay plain mREITs.** Names like RITM (origination + servicing) or EFC (credit portfolios) diversify within *paper*, not into property, so the D&A test intentionally leaves them untagged.
+
 ## A Caveat on Precision
 
 As with equity-REIT FFO, treat mREIT grades as **directional, not exact**:
 
 - **Coverage uses GAAP net income**, which for an mREIT includes volatile mark-to-market swings on its securities and hedges — not the "core"/"distributable" earnings figure the REIT itself typically highlights to justify its dividend. A single quarter's coverage ratio can look far worse (or better) than the underlying earnings power due to one-off valuation moves; read the trend across several quarters, not one data point.
 - **Book-value trend is computed from a handful of annual balance-sheet snapshots** (shareholders' equity ÷ shares outstanding), not a smoothed or adjusted series.
+- **The hybrid tag is a one-line threshold heuristic.** D&A ≥ 5% of revenue was calibrated on a small sample; an mREIT whose D&A hovers near the line can flip tags between fiscal years, and a hybrid whose property book is small relative to revenue will read as pure.
 - **This app does not distinguish agency from non-agency (credit) mREITs.** The leverage bands above are calibrated for agency-collateral portfolios; a non-agency-focused mREIT running similar leverage carries meaningfully more risk than these bands would suggest.

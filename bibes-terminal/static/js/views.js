@@ -800,10 +800,15 @@ const Views = (() => {
         // compared with, and the Industry column that would say so may be
         // scrolled out of view. Same industry test as _business_type (both
         // "reit" and "mortgage", so mortgage originators don't match).
+        // mreit_hybrid (backend, from the D&A line) refines the tag for the
+        // hybrids Yahoo hides inside REIT — Mortgage: mREITs that also own
+        // meaningful property (absent on rows cached before the field existed
+        // — they show the plain mREIT tag until a ↻ Refresh).
         const ind = (r.industry || "").toLowerCase();
-        const mreitTag = ind.includes("reit") && ind.includes("mortgage")
-          ? ` <span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. FFO and the usual REIT metrics don't apply; judge it on book value per share (and its trend), dividend coverage and leverage. See REITs.md.">mREIT</span>`
-          : "";
+        const mreitTag = !(ind.includes("reit") && ind.includes("mortgage")) ? ""
+          : r.mreit_hybrid
+          ? ` <span class="mreit-tag" data-tip="Hybrid REIT — a mortgage REIT that also owns a meaningful property portfolio (its statements show real property depreciation, which pure mREITs don't have). Yahoo files it under REIT — Mortgage, and it is still graded on the mREIT rubric — book value, dividend coverage, leverage — which its lending side dominates. See REITs.md.">hybrid REIT</span>`
+          : ` <span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. FFO and the usual REIT metrics don't apply; judge it on book value per share (and its trend), dividend coverage and leverage. See REITs.md.">mREIT</span>`;
         return `<td class="ticker-cell" data-ticker="${escHTML(r.ticker)}"${tipAttr}>${escHTML(r.ticker)}${mreitTag}` +
           `<div class="sub">${escHTML((r.name || "").slice(0, 22))}</div></td>`;
       }
@@ -2668,7 +2673,10 @@ const DeepDive = (() => {
       <span class="dd-back" id="dd-back">‹ Back</span>
       <span class="dd-title">${ticker}</span>
       <span class="dd-name">${d.name || ""} · ${d.exchange || ""} ${d.sector ? "· " + d.sector : ""}</span>
-      ${d.reit_kind === "mortgage" ? `<span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. It owns paper, not buildings, so FFO, P/FFO and the usual REIT metrics don't apply. Judge it on book value per share (and its trend), dividend coverage and leverage — see the Mortgage REIT Metrics panel and REITs.md.">MORTGAGE REIT</span>` : ""}
+      ${d.reit_kind !== "mortgage" ? ""
+        : d.mreit_hybrid
+        ? `<span class="mreit-tag" data-tip="Hybrid REIT — a mortgage REIT that also owns a meaningful property portfolio: its cash-flow statement shows real property depreciation, which a pure mREIT (securities only) doesn't have. Yahoo files it under REIT — Mortgage, and it is still judged on the mREIT rubric — book value per share (and its trend), dividend coverage and leverage — which its lending side dominates. See the Mortgage REIT Metrics panel and REITs.md.">HYBRID REIT</span>`
+        : `<span class="mreit-tag" data-tip="Mortgage REIT — a leveraged portfolio of mortgage securities in a REIT wrapper, not a landlord. It owns paper, not buildings, so FFO, P/FFO and the usual REIT metrics don't apply. Judge it on book value per share (and its trend), dividend coverage and leverage — see the Mortgage REIT Metrics panel and REITs.md.">MORTGAGE REIT</span>`}
       <span class="dd-price">${Fmt.cell(d.price, (v) => Fmt.price(v, cur))} ${chgTxt}</span>
       <button class="btn btn-sm" id="dd-refresh" title="Re-pull fresh data from Yahoo">↻ Refresh</button>
       <button class="btn btn-sm" id="dd-export" title="Export ${ticker} to Excel">⭳ Export</button>
@@ -2720,7 +2728,9 @@ const DeepDive = (() => {
         ${d.panels.reit ? `<div class="col-3">${panel(
             d.reit_kind === "mortgage" ? "Mortgage REIT Metrics" : "REIT Metrics",
             d.panels.reit, fmtMaps.reit,
-            d.reit_kind === "mortgage"
+            d.reit_kind === "mortgage" && d.mreit_hybrid
+              ? "A hybrid: this mortgage REIT also owns real property (its statements show property depreciation). No FFO is shown — the loan book dominates the business, so it is judged like a pure mREIT: book value is the metric that matters here."
+              : d.reit_kind === "mortgage"
               ? "No FFO: this REIT owns securities, not depreciable buildings, so there is no depreciation to add back. Book value is the metric that matters here."
               : d.reit_kind === "fair-value"
               ? "No FFO shown: this REIT carries its properties at fair value (IFRS), so there's no depreciation to add back — and the fair-value adjustment isn't cleanly reported, so an FFO can't be reliably built. Net income here includes unrealized property revaluations; book value ≈ NAV, so Price/Book is the more telling gauge."
