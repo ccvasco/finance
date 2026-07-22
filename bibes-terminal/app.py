@@ -3006,7 +3006,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_bytes(
                     data,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    filename=f"stock-terminal-{stamp}.xlsx")
+                    filename=f"bibes-terminal-{stamp}.xlsx")
             if path == "/api/export_deepdive":
                 if not _HAS_OPENPYXL:
                     return self._send_json(

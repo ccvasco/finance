@@ -1,7 +1,7 @@
 # Screener Columns — Data Legend
 
 This document explains every column in the **Screener** tab and in the
-multi-ticker Excel export (the **`Metrics`** sheet of `stock-terminal-YYYYMMDD.xlsx`,
+multi-ticker Excel export (the **`Metrics`** sheet of `bibes-terminal-YYYYMMDD.xlsx`,
 produced by the "⭳ Export .xlsx" button). One row = one company.
 
 It is intended as a reference for a human or an AI assistant interpreting the

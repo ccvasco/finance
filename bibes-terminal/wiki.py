@@ -28,7 +28,7 @@ import requests
 API = "https://en.wikipedia.org/w/api.php"
 PAGE_URL = "https://en.wikipedia.org/wiki/"
 # Wikimedia asks API clients to identify themselves with a descriptive UA.
-HEADERS = {"User-Agent": "stock-terminal/1.0 (personal stock screener)"}
+HEADERS = {"User-Agent": "bibes-terminal/1.0 (personal stock screener)"}
 TIMEOUT = 12
 
 MAX_SECTIONS = 6          # at most this many ethics sections per company

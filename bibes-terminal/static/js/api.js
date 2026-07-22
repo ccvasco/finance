@@ -53,7 +53,7 @@ const API = (() => {
     companyProfile: (t) => get(`/api/company_profile?ticker=${encodeURIComponent(t)}`),
     async exportXlsx(tickers) {
       await downloadXlsx("/api/export", { tickers },
-        `stock-terminal-${new Date().toISOString().slice(0, 10)}.xlsx`);
+        `bibes-terminal-${new Date().toISOString().slice(0, 10)}.xlsx`);
     },
     async exportDeepdive(ticker) {
       await downloadXlsx("/api/export_deepdive", { ticker },
