@@ -214,12 +214,13 @@ Settings persist server-side in `state.json`, cached in `localStorage`.
 ## Quick start
 
 ```bash
-source /home/vc/yfinance/venv/bin/activate
-# 1. Install dependencies (from the repo root)
-pip install yfinance openpyxl lxml
+# 1. Create a virtualenv and install dependencies
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
 # 2. Run the server
-python bibes-terminal/app.py
+python app.py
 
 # 3. Open in your browser
 #    http://127.0.0.1:8765
@@ -228,7 +229,7 @@ python bibes-terminal/app.py
 Options:
 
 ```bash
-python bibes-terminal/app.py --port 9000 --host 0.0.0.0
+python app.py --port 9000 --host 0.0.0.0
 ```
 
 Server already in use:
@@ -241,24 +242,16 @@ sudo kill <PID>
 > the `static/` folder directly (e.g. with `npx serve`) will render the UI
 > but won't fetch any data — always run `app.py`.
 
----
-
-## Running inside the yfinance repo
-
-The server automatically adds the repository root to `sys.path`, so the
-in-repo `yfinance` takes precedence over any installed version:
-
-```bash
-# From the repo root
-python bibes-terminal/app.py
-```
+Analyst Chat additionally needs an `ANTHROPIC_API_KEY`. The server reads it
+from the environment, or from a `.env` file at the repo root — real
+environment variables win.
 
 ---
 
 ## Project layout
 
 ```
-bibes-terminal/
+.
 ├── app.py                  # stdlib HTTP server: JSON API + static serving + xlsx export
 ├── strategies.py           # strategy graders (pure functions over screener rows)
 ├── chat.py                 # Analyst Chat agent (/api/chat, anthropic SDK)
@@ -268,17 +261,28 @@ bibes-terminal/
 ├── stock-triage-strategy.md          # Strategy 1 — Triage
 ├── strategy-2-quality-compounder.md  # Strategy 2 — Quality Compounder
 ├── strategy-3-defensive-value.md     # Strategy 3 — Defensive Value
-└── static/
-    ├── index.html          # app shell (sidebar + topbar + view root)
-    ├── css/
-    │   └── styles.css      # dark terminal theme
-    └── js/
-        ├── api.js          # fetch wrappers + number/price/percent formatters
-        ├── store.js        # localStorage watchlist + settings (auto-save / hydrate)
-        ├── charts.js       # dependency-free SVG line and grouped-bar charts
-        ├── views.js        # Screener, Watchlist, Dashboard, Calendar, Settings, Deep-dive
-        └── app.js          # router, init, top-bar wiring, Excel export
+├── static/
+│   ├── index.html          # app shell (sidebar + topbar + view root)
+│   ├── css/
+│   │   └── styles.css      # dark terminal theme
+│   └── js/
+│       ├── api.js          # fetch wrappers + number/price/percent formatters
+│       ├── store.js        # localStorage watchlist + settings (auto-save / hydrate)
+│       ├── charts.js       # dependency-free SVG line and grouped-bar charts
+│       ├── views.js        # Screener, Watchlist, Dashboard, Calendar, Settings, Deep-dive
+│       └── app.js          # router, init, top-bar wiring, Excel export
+├── tests/
+│   ├── test_backend.py     # backend suite (API, exports, graders, helpers)
+│   └── test_frontend.mjs   # frontend suite (Playwright)
+├── scripts/
+│   └── build_pdfs.py       # renders the Markdown reference docs to PDF
+└── tickers/                # helper tool: spreadsheets -> comma-separated tickers
+    ├── main.py
+    └── tickers.txt
 ```
+
+Not tracked: `state.json` and `state-backups/` (your watchlists and settings),
+`input/` and `tickers/input/` (spreadsheets you drop in), and `venv/`.
 
 ---
 

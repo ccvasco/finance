@@ -1,9 +1,9 @@
 ---
 name: verify
-description: Build, launch and drive Bibes Terminal (bibes-terminal) to observe a change at its real surface — the browser UI and the HTTP API.
+description: Build, launch and drive Bibes Terminal to observe a change at its real surface — the browser UI and the HTTP API.
 ---
 
-# Verifying bibes-terminal changes
+# Verifying Bibes Terminal changes
 
 The app is a stdlib `ThreadingHTTPServer` (`app.py`) serving a JSON API plus a
 static vanilla-JS frontend (`static/js/{app,views,store,api,charts}.js`). No
@@ -12,7 +12,6 @@ build step, no bundler — edit a file, reload the page.
 ## Launch
 
 ```bash
-cd bibes-terminal
 python3 app.py --port 8791 > /tmp/server.log 2>&1 &
 curl -s http://127.0.0.1:8791/api/health      # readiness gate
 ```

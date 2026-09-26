@@ -1,15 +1,19 @@
-__pycache__/*
-yfinance/__pycache__/*
-dist
-yfinance.egg-info
+__pycache__/
 *.pyc
 .coverage
+.pytest_cache/
 .idea/
 .vscode/
 build/
+dist/
+test.ipynb
+
+# The app serves its own HTML/CSS, so the blanket ignores below are
+# re-admitted for the files that are actually source.
 *.html
 *.css
-test.ipynb
+!/static/index.html
+!/static/css/styles.css
 
 # Environments
 .env
@@ -18,16 +22,12 @@ env/
 venv/
 ENV/
 
-# Documentation
-/doc/build/
-/doc/_build/
-/doc/source/reference/api
-!yfinance.css
-!/doc/source/development/assets/branches.png
-!/bibes-terminal/static/index.html
-!/bibes-terminal/static/css/styles.css
-
 # Stock Terminal's saved watchlists/settings — local user data, not source
-/bibes-terminal/state.json
-/bibes-terminal/state.json.tmp
-/bibes-terminal/state-backups/
+/state.json
+/state.json.tmp
+/state-backups/
+
+# Spreadsheets dropped in for the ticker extractor, and the app's own
+# exports filed alongside them — local data. The tool itself is tracked.
+/input/
+/tickers/input/

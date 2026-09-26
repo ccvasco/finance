@@ -1,5 +1,5 @@
 """
-Comprehensive tests for bibes-terminal/app.py.
+Comprehensive tests for app.py.
 
 Covers:
   - Pure helpers: _num, _epoch_to_iso, _parse_tickers, _stmt_val, _series_from_stmt
@@ -38,13 +38,12 @@ import pandas as pd
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Make the bibes-terminal package importable from the tests/ sub-directory.
+# Make the app importable from the tests/ sub-directory.
 # ---------------------------------------------------------------------------
 TERMINAL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(TERMINAL_DIR))   # repo root → yfinance importable
-sys.path.insert(0, TERMINAL_DIR)                     # bibes-terminal/ → app importable
+sys.path.insert(0, TERMINAL_DIR)                     # repo root → app importable
 
-import app  # noqa: E402  (the bibes-terminal app module)
+import app  # noqa: E402  (the Stock Terminal app module)
 import strategies  # noqa: E402  (strategy graders)
 
 
