@@ -64,7 +64,7 @@ body {
 .brand {
   display: flex; align-items: center; gap: 11px; min-width: 0; width: 100%;
   padding: 8px; margin: -8px -8px 12px; border-radius: 9px;
-  background: none; border: none; font: inherit; text-align: left;
+  background: none; border: none; font: inherit; color: inherit; text-align: left;
   cursor: pointer; transition: background .15s ease;
 }
 .brand:hover, .brand:focus-visible { background: var(--row-hover); }
