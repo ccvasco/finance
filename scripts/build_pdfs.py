@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the Markdown reference docs to print-friendly PDFs.
 
-The PDFs committed next to the app (e.g. METRICS.pdf) are generated from their
+The PDFs committed in docs/ (e.g. docs/METRICS.pdf) are generated from their
 Markdown source with this script — there is no LaTeX/pandoc dependency, just
 python-markdown + WeasyPrint.
 
@@ -24,8 +24,9 @@ import markdown
 from weasyprint import HTML
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOC_DIR = os.path.join(APP_DIR, "docs")
 
-# The curated doc set rebuilt by --all (paths relative to the app directory).
+# The curated doc set rebuilt by --all (paths relative to DOC_DIR).
 DOC_SET = ["METRICS.md", "STOCK_METRICS.md", "SCREENER_COLUMNS.md"]
 
 MD_EXTENSIONS = ["tables", "fenced_code", "sane_lists", "attr_list", "md_in_html"]
@@ -82,7 +83,7 @@ td strong { color: #0f1720; }
 
 def _resolve(md_arg):
     """Locate a Markdown source given a CLI arg, trying cwd then the app dir."""
-    for cand in (md_arg, os.path.join(APP_DIR, md_arg)):
+    for cand in (md_arg, os.path.join(DOC_DIR, md_arg), os.path.join(APP_DIR, md_arg)):
         if os.path.isfile(cand):
             return os.path.abspath(cand)
     raise SystemExit(f"error: markdown file not found: {md_arg}")
@@ -101,11 +102,11 @@ def build(md_path):
 
 def main(argv):
     if argv == ["--all"]:
-        docs = [os.path.join(APP_DIR, d) for d in DOC_SET]
+        docs = [os.path.join(DOC_DIR, d) for d in DOC_SET]
     elif argv:
         docs = [_resolve(a) for a in argv]
     else:
-        docs = [os.path.join(APP_DIR, "METRICS.md")]
+        docs = [os.path.join(DOC_DIR, "METRICS.md")]
 
     for md in docs:
         out = build(md)

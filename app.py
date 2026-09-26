@@ -2251,7 +2251,7 @@ _METRIC_COLS = [
     ("dcf_value", "DCF Value"), ("dcf_upside", "DCF Upside"),
     ("market_cap", "Market Cap"), ("enterprise_value", "Enterprise Value"),
     ("industry", "Industry"),
-    # strategy grades (0-100; see the strategy .md docs in this directory)
+    # strategy grades (0-100; see the strategy .md docs in docs/)
     ("strategy_1", "S1 Triage"), ("strategy_2", "S2 Compounder"),
     ("strategy_3", "S3 Defensive"), ("strategy_min", "Strat Min"),
     ("strategy_1_flags", "S1 Flags"),

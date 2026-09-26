@@ -34,18 +34,18 @@ as undervalued and red when overvalued; hover the cell for the exact upside %
 versus price (a small legend rides along). N/A for financials and REITs, where
 an FCF model doesn't fit the business. Assumption-heavy by construction: treat
 it as a screen, not a target price. Full methodology in
-[METRICS.md](METRICS.md) §2.
+[METRICS.md](docs/METRICS.md) §2.
 
 **Strategy grades.** Every row is graded (0–100, server-side) against three
 long-term investing strategies, each documented in this directory:
 
-1. **S1 Triage** — [stock-triage-strategy.md](stock-triage-strategy.md): data
+1. **S1 Triage** — [stock-triage-strategy.md](docs/stock-triage-strategy.md): data
    hygiene → hard kill-switches → quality score. ≥65 Advance · 45–64 Watchlist
    · <45 Discard. N/A = quarantined (missing critical data).
-2. **S2 Compounder** — [strategy-2-quality-compounder.md](strategy-2-quality-compounder.md):
+2. **S2 Compounder** — [strategy-2-quality-compounder.md](docs/strategy-2-quality-compounder.md):
    returns on capital, margin moat, discipline, compounding track record.
    ≥70 Compounder · 50–69 Quality watch · <50 Pass.
-3. **S3 Defensive** — [strategy-3-defensive-value.md](strategy-3-defensive-value.md):
+3. **S3 Defensive** — [strategy-3-defensive-value.md](docs/strategy-3-defensive-value.md):
    Graham-style margin of safety. ≥70 Value candidate · 50–69 Fair · <50 Expensive/weak.
 
 **Strat Min** is the minimum of the three — sort it descending to find the
@@ -66,7 +66,7 @@ mortgage-securities portfolios, not property owners) get their own rubric
 built on dividend coverage, price-to-book, leverage, and book-value-per-share
 trend — the last being the single best signal of whether an mREIT is
 compounding or quietly paying its dividend out of capital. Full table:
-[stock-triage-strategy.md § Business-type archetypes](stock-triage-strategy.md#business-type-archetypes).
+[stock-triage-strategy.md § Business-type archetypes](docs/stock-triage-strategy.md#business-type-archetypes).
 
 **Hover any grade to see how it was derived** — the tooltip shows a per-pillar
 breakdown (points earned / available, and the metric values behind each), so
@@ -248,6 +248,31 @@ environment variables win.
 
 ---
 
+## Reference documentation
+
+Everything in [docs/](docs/). The three column legends explain *what a number
+is*; the three strategy docs define *how it is graded*.
+
+| Doc | Covers |
+|---|---|
+| [METRICS.md](docs/METRICS.md) | Plain-language guide to every metric: how it's calculated, how to read it, rule-of-thumb ranges. Start here. |
+| [SCREENER_COLUMNS.md](docs/SCREENER_COLUMNS.md) | Column legend for the Screener tab and the multi-ticker `.xlsx` export. |
+| [STOCK_METRICS.md](docs/STOCK_METRICS.md) | Metric legend for the single-company deep-dive view and its `.xlsx` export. |
+| [stock-triage-strategy.md](docs/stock-triage-strategy.md) | **S1 Triage** — the kill-switch screen: is this business broken? |
+| [strategy-2-quality-compounder.md](docs/strategy-2-quality-compounder.md) | **S2 Compounder** — is this worth holding for a decade? |
+| [strategy-3-defensive-value.md](docs/strategy-3-defensive-value.md) | **S3 Defensive Value** — is it cheap *and* safe, Graham-style? |
+| [REITs.md](docs/REITs.md) | Why REITs are graded on FFO and book value rather than free cash flow. |
+| [OCF_FCF_OM.md](docs/OCF_FCF_OM.md) | How revenue flows down to operating margin, OCF and FCF. |
+
+`METRICS.md`, `SCREENER_COLUMNS.md` and `STOCK_METRICS.md` also ship as PDFs
+alongside their Markdown. Those are generated, never hand-edited — rebuild them
+after changing the source:
+
+```bash
+pip install -r scripts/requirements-docs.txt
+python scripts/build_pdfs.py --all
+```
+
 ## Project layout
 
 ```
@@ -256,11 +281,7 @@ environment variables win.
 ├── strategies.py           # strategy graders (pure functions over screener rows)
 ├── chat.py                 # Analyst Chat agent (/api/chat, anthropic SDK)
 ├── requirements.txt
-├── METRICS.md              # plain-language guide to every metric and how to read it
-├── SCREENER_COLUMNS.md     # column reference for the screener table
-├── stock-triage-strategy.md          # Strategy 1 — Triage
-├── strategy-2-quality-compounder.md  # Strategy 2 — Quality Compounder
-├── strategy-3-defensive-value.md     # Strategy 3 — Defensive Value
+├── docs/                   # reference documentation (see the table above)
 ├── static/
 │   ├── index.html          # app shell (sidebar + topbar + view root)
 │   ├── css/
@@ -337,7 +358,7 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   (especially emerging-market) names. The deep dive's "ROIC vs Cost of
   Capital" chart shows WACC **historically**, reconstructing every input except
   beta (frozen at today's value) per fiscal year, rather than repeating today's
-  WACC as a flat line. See [METRICS.md](METRICS.md) §3 and §8.
+  WACC as a flat line. See [METRICS.md](docs/METRICS.md) §3 and §8.
 - **Foreign-reporting tickers (ADRs)** — a stock like WIT trades in USD but
   reports its financials in INR. Price/Market Cap/Diluted EPS show in the
   trading currency; Enterprise Value, Revenue, Cash, Debt, Equity, EBITDA, Net
@@ -345,7 +366,7 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   every ratio that combines the two (EV/EBITDA, P/S, P/Cash, P/FCF, WACC,
   Altman Z) is computed from a currency-converted market cap rather than
   Yahoo's own (frequently broken, for these tickers) cross-currency fields.
-  See [METRICS.md](METRICS.md) §11.
+  See [METRICS.md](docs/METRICS.md) §11.
 - **Dividend growth** — computed as the CAGR of completed-calendar-year
   dividend totals (requires ≥ 4 years of history for 3Y CAGR, ≥ 6 for 5Y;
   otherwise N/A).
@@ -360,4 +381,4 @@ The frontend has **zero JavaScript dependencies** — no npm, no build step.
   financials, REITs and mortgage REITs (structurally meaningless for
   balance-sheet businesses), and softened to an advisory flag rather than a
   hard kill for asset-light and cyclical names. See [business-type
-  archetypes](stock-triage-strategy.md#business-type-archetypes).
+  archetypes](docs/stock-triage-strategy.md#business-type-archetypes).
