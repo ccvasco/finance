@@ -37,3 +37,8 @@ ENV/
 /tickers/*.xlsx
 /tickers/*.xls
 /tickers/*.csv
+
+# The extractor's output is the ticker list itself — the same names as the
+# watchlist, so it is personal data rather than source. The tool that builds
+# it (tickers/main.py) stays tracked; what it produces does not.
+/tickers/tickers.txt
