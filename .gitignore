@@ -28,6 +28,12 @@ ENV/
 /state-backups/
 
 # Spreadsheets dropped in for the ticker extractor, and the app's own
-# exports filed alongside them — local data. The tool itself is tracked.
+# exports filed alongside them — local data, wherever in tickers/ they land.
+# The extractor itself (main.py, README.md) and its tickers.txt output stay
+# tracked.
 /input/
 /tickers/input/
+/tickers/*.ods
+/tickers/*.xlsx
+/tickers/*.xls
+/tickers/*.csv
