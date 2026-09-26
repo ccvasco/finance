@@ -1,7 +1,8 @@
 # Stock Terminal — runtime dependencies
-# yfinance is used from the parent repo (this app lives inside it); if you run
-# the app standalone, also `pip install yfinance`.
-yfinance>=1.4.1
+#   pip install -r requirements.txt
+yfinance>=1.4.1   # market data — the app's primary data source
+pandas>=1.3.0     # DataFrames throughout app.py (also a yfinance dependency)
+requests>=2.31    # Wikipedia company context (wiki.py); also a yfinance dependency
 openpyxl>=3.1.0   # Excel (.xlsx) export
 lxml>=4.9.0       # parses the per-ticker earnings-history table (Calendar tab)
 anthropic>=0.116.0  # Analyst Chat (/api/chat) — needs ANTHROPIC_API_KEY at runtime

@@ -25,9 +25,6 @@ from urllib.parse import urlparse, parse_qs
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Make the in-repo yfinance importable when run from the repo root.
-sys.path.insert(0, _REPO_ROOT)
-
 
 def _load_dotenv():
     """Populate os.environ from a .env file (repo root, then CWD) — e.g. for
