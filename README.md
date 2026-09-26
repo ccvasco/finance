@@ -263,6 +263,7 @@ is*; the three strategy docs define *how it is graded*.
 | [strategy-3-defensive-value.md](docs/strategy-3-defensive-value.md) | **S3 Defensive Value** — is it cheap *and* safe, Graham-style? |
 | [REITs.md](docs/REITs.md) | Why REITs are graded on FFO and book value rather than free cash flow. |
 | [OCF_FCF_OM.md](docs/OCF_FCF_OM.md) | How revenue flows down to operating margin, OCF and FCF. |
+| [A-Shares_VS_H-Shares.md](docs/A-Shares_VS_H-Shares.md) | Picking between a Chinese company's A-share, H-share and European listings. |
 
 `METRICS.md`, `SCREENER_COLUMNS.md` and `STOCK_METRICS.md` also ship as PDFs
 alongside their Markdown. Those are generated, never hand-edited — rebuild them
